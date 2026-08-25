@@ -4,11 +4,20 @@ import os
 import shutil
 import tempfile
 
-from aitool import utils
+from aitool import engine, utils
 
 
 def before_scenario(context, scenario):
     """Set up test environment before each scenario."""
+    # Clean up any leftover PID and state files from previous test
+    pid_path = engine.get_inference_pid_path()
+    if os.path.exists(pid_path):
+        os.remove(pid_path)
+
+    state_path = engine.get_inference_state_path()
+    if os.path.exists(state_path):
+        os.remove(state_path)
+
     # Create temporary working directory
     context.temp_dir = tempfile.mkdtemp()
     context.original_dir = os.getcwd()
@@ -25,6 +34,19 @@ def before_scenario(context, scenario):
 
 def after_scenario(context, scenario):
     """Clean up after each scenario."""
+    # Stop any running patches
+    if hasattr(context, "is_running_patch") and context.is_running_patch:
+        context.is_running_patch.stop()
+
+    # Clean up PID and state files
+    pid_path = engine.get_inference_pid_path()
+    if os.path.exists(pid_path):
+        os.remove(pid_path)
+
+    state_path = engine.get_inference_state_path()
+    if os.path.exists(state_path):
+        os.remove(state_path)
+
     # Restore original get_data_home if mocked
     if context.original_get_data_home is not None:
         utils.get_data_home = context.original_get_data_home
