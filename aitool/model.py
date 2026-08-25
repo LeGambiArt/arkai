@@ -1,0 +1,198 @@
+"""Model lifecycle management: download, list, remove, convert, benchmark."""
+
+import os
+import subprocess
+from pathlib import Path
+from typing import Optional
+
+from aitool import utils
+
+
+def get_models_dir() -> str:
+    """Return models directory path."""
+    data_home = utils.get_data_home()
+    if data_home is None:
+        raise RuntimeError("DATA_HOME not available")
+    return os.path.join(data_home, "models")
+
+
+def cmd_model_download(hf_repo: str) -> None:
+    """Download model from HuggingFace using hf CLI.
+
+    Downloads to HuggingFace cache. Use 'aitool model convert' to convert to GGUF format.
+
+    Args:
+        hf_repo: HuggingFace repo path (e.g., 'ibm-granite/granite-4.1-8b-instruct-GGUF')
+    """
+    # Use hf download command (downloads to HuggingFace cache)
+    # No timeout since downloads can be large
+    cmd = ["hf", "download", hf_repo, "--repo-type", "model"]
+    try:
+        subprocess.run(cmd, capture_output=True, text=True, check=True)
+    except subprocess.CalledProcessError as e:
+        error_msg = e.stderr if e.stderr else e.stdout
+        raise RuntimeError(f"Failed to download {hf_repo}:\n{error_msg}")
+    except FileNotFoundError:
+        raise RuntimeError("hf command not found; install huggingface-hub CLI")
+
+    utils.info(f"Downloaded {hf_repo} to HuggingFace cache")
+
+
+def cmd_model_list() -> None:
+    """List local GGUF models and HuggingFace cached models.
+
+    Displays two categories:
+    1. Local GGUF files in ~/.local/share/aitool/models/
+    2. HuggingFace cached models (found via 'hf cache ls')
+    """
+    models_dir = get_models_dir()
+    gguf_files = []
+
+    # Collect local GGUF files
+    if os.path.exists(models_dir):
+        gguf_files = sorted(Path(models_dir).glob("*.gguf"))
+
+    # Collect HuggingFace cached models
+    hf_models = _get_huggingface_cached_models()
+
+    # If neither found, inform user
+    if not gguf_files and not hf_models:
+        utils.info("No models found")
+        return
+
+    # Display local GGUF models
+    if gguf_files:
+        utils.info("Local GGUF models:")
+        for filepath in gguf_files:
+            utils.info(f"  {filepath.name}")
+    else:
+        utils.info("Local GGUF models: none")
+
+    # Display HuggingFace cached models
+    if hf_models:
+        if gguf_files:
+            utils.info("")
+        utils.info("HuggingFace cached models:")
+        for repo_id, _ in hf_models:
+            utils.info(f"  {repo_id}")
+    else:
+        if not gguf_files:
+            # Already printed "No models found" above
+            pass
+        else:
+            utils.info("\nHuggingFace cached models: none")
+
+
+def _get_huggingface_cached_models() -> list:
+    """Get list of HuggingFace cached models.
+
+    Returns:
+        List of tuples (repo_id, size_string) for each cached model.
+        Returns empty list if 'hf' command unavailable or no models cached.
+    """
+    try:
+        code, stdout, stderr = utils.run_command(["hf", "cache", "ls"])
+    except RuntimeError:
+        # hf command not available
+        return []
+
+    if code != 0:
+        # hf cache ls failed
+        return []
+
+    models = []
+    # Parse output: each line after header is a cached model
+    # Format: id<space>size<space>last_accessed<space>last_modified<space>refs
+    lines = stdout.strip().split("\n")
+
+    # Skip header line and summary lines
+    for line in lines:
+        if not line.strip():
+            continue
+        # Skip lines that don't look like model entries (contain "Found" or "Warning")
+        if line.startswith("Found") or line.startswith("Warning"):
+            continue
+        # Skip the header line (starts with "ID") and separator line (dashes)
+        if line.startswith("ID") or line.startswith("-"):
+            continue
+
+        # Parse model line: id<space>size<space>...
+        # Split on whitespace and take first two non-empty parts
+        parts = line.split()
+        if len(parts) >= 2:
+            full_id = parts[0].strip()
+            size = parts[1].strip()
+            # Only include if id_type is "model"
+            if "/" in full_id:
+                id_type, repo_id = full_id.split("/", 1)
+                if id_type == "model":
+                    models.append((repo_id, size))
+
+    return models
+
+
+def cmd_model_remove(model_name: str) -> None:
+    """Remove a model file.
+
+    Args:
+        model_name: Name of model file (e.g., 'model.gguf')
+    """
+    models_dir = get_models_dir()
+    model_path = os.path.join(models_dir, model_name)
+
+    if not os.path.exists(model_path):
+        raise RuntimeError(f"Model not found: {model_name}")
+
+    os.remove(model_path)
+    utils.info(f"Removed {model_name}")
+
+
+def cmd_model_convert(model: str, quantization: str = "Q6_K", output: Optional[str] = None) -> None:
+    """Convert HuggingFace model to GGUF format.
+
+    Args:
+        model: HuggingFace model ID (e.g., 'apple/DiffuCoder-7B'),
+               model name from cache (e.g., 'DiffuCoder-7B'), or path
+        quantization: Quantization level (Q4_K_M, Q5_K_M, Q6_K, etc.)
+        output: Optional output file path (defaults to
+                ~/.local/share/aitool/models/MODEL-QUANTIZATION.gguf)
+    """
+    # Find aitool-convert script using importlib.resources for packaging
+    convert_script: Optional[str] = None
+    try:
+        from importlib.resources import files
+
+        aitool_files = files("aitool")
+        # Access parent directory - may not be available in all typing scenarios
+        # so we handle the AttributeError at runtime
+        if hasattr(aitool_files, "parent"):
+            pkg_parent = getattr(aitool_files, "parent")
+            convert_script = str(pkg_parent.joinpath("bin", "aitool-convert"))
+        else:
+            raise AttributeError("parent not found")
+    except (ImportError, TypeError, AttributeError):
+        # Fallback to direct path search
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        convert_script = os.path.join(script_dir, "..", "bin", "aitool-convert")
+
+    if not os.path.exists(convert_script):
+        raise RuntimeError(f"Conversion script not found: {convert_script}")
+
+    # Build command
+    cmd = [convert_script, model, "-q", quantization]
+    if output:
+        cmd.extend(["-o", output])
+
+    # Run conversion with no timeout
+    import subprocess
+
+    try:
+        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+        # Extract output path from stdout (last line)
+        output_path = result.stdout.strip().split("\n")[-1] if result.stdout else "unknown"
+        utils.info(f"Conversion successful: {output_path}")
+    except subprocess.CalledProcessError as e:
+        error_msg = e.stderr if e.stderr else e.stdout
+        raise RuntimeError(f"Conversion failed:\n{error_msg}")
+    except FileNotFoundError:
+        raise RuntimeError(f"Conversion script not found: {convert_script}")

@@ -5,6 +5,7 @@ import sys
 
 from aitool import __version__
 from aitool import config as config_module
+from aitool import model as model_module
 
 
 def main():
@@ -29,6 +30,29 @@ def main():
     validate_parser.add_argument("--file", help="Config file to validate (default: .aitool.yaml)")
     config_subparsers.add_parser("init", help="Initialize configuration file")
 
+    # Model command
+    model_parser = subparsers.add_parser("model", help="Manage models")
+    model_subparsers = model_parser.add_subparsers(dest="model_cmd")
+    download_parser = model_subparsers.add_parser(
+        "download", help="Download model from HuggingFace"
+    )
+    download_parser.add_argument("hf_repo", help="HuggingFace repo ID")
+    model_subparsers.add_parser("list", help="List available models")
+    remove_parser = model_subparsers.add_parser("remove", help="Remove model")
+    remove_parser.add_argument("model_name", help="Model file name")
+    convert_parser = model_subparsers.add_parser(
+        "convert", help="Convert HuggingFace model to GGUF format"
+    )
+    convert_parser.add_argument("model", help="HuggingFace model ID or path")
+    convert_parser.add_argument(
+        "-q", "--quantization", default="Q6_K", help="Quantization level (default: Q6_K)"
+    )
+    convert_parser.add_argument(
+        "-o",
+        "--output",
+        help="Output file path (default: ~/.local/share/aitool/models/MODEL-QUANTIZATION.gguf)",
+    )
+
     args = parser.parse_args()
 
     try:
@@ -39,6 +63,19 @@ def main():
                 config_module.cmd_config_init()
             else:
                 config_parser.print_help()
+        elif args.command == "model":
+            if args.model_cmd == "list":
+                model_module.cmd_model_list()
+            elif args.model_cmd == "download":
+                model_module.cmd_model_download(args.hf_repo)
+            elif args.model_cmd == "remove":
+                model_module.cmd_model_remove(args.model_name)
+            elif args.model_cmd == "convert":
+                model_module.cmd_model_convert(args.model, args.quantization, args.output)
+            else:
+                model_parser.print_help()
+        else:
+            parser.print_help()
     except Exception as e:
         print(f"fatal: {e}", file=sys.stderr)
         sys.exit(1)
