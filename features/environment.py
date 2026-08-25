@@ -1,8 +1,8 @@
 """Behave test fixtures and setup."""
 
 import os
-import tempfile
 import shutil
+import tempfile
 
 
 def before_scenario(context, scenario):

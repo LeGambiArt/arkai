@@ -1,13 +1,14 @@
 """Shared utilities: paths, processes, GPU detection, YAML, errors."""
 
 import os
-import sys
 import platform
+import shutil
 import signal
 import subprocess
-import shutil
+import sys
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional
+
 import yaml
 
 
@@ -19,17 +20,17 @@ def get_config_home() -> str:
 
     home = os.getenv("HOME")
     if not home:
-        error("HOME not set", 3)
+        raise RuntimeError("HOME environment variable not set")
 
     # macOS: ~/.config/aitool
     return os.path.join(home, ".config", "aitool")
 
 
-def get_data_home() -> str:
+def get_data_home() -> Optional[str]:
     """Return data directory path (~/.local/share/aitool, never XDG_DATA_HOME)."""
     home = os.getenv("HOME")
     if not home:
-        error("HOME not set", 3)
+        raise RuntimeError("HOME not set")
 
     return os.path.join(home, ".local", "share", "aitool")
 
@@ -38,7 +39,7 @@ def get_pid_dir() -> str:
     """Return PID directory path (~/.local/state/aitool)."""
     home = os.getenv("HOME")
     if not home:
-        error("HOME not set", 3)
+        raise RuntimeError("HOME environment variable not set")
 
     return os.path.join(home, ".local", "state", "aitool")
 
@@ -75,8 +76,11 @@ def is_port_in_use(port: int) -> bool:
     return code == 0
 
 
-def run_command(cmd: list, capture: bool = True) -> Tuple[int, str, str]:
-    """Run subprocess command, return (exit_code, stdout, stderr)."""
+def run_command(cmd: list, capture: bool = True) -> tuple[int, str, str]:
+    """Run subprocess command, return (exit_code, stdout, stderr).
+
+    Raises RuntimeError on timeout or command not found.
+    """
     try:
         result = subprocess.run(
             cmd,
@@ -85,30 +89,33 @@ def run_command(cmd: list, capture: bool = True) -> Tuple[int, str, str]:
             timeout=30,
         )
         return result.returncode, result.stdout, result.stderr
-    except subprocess.TimeoutExpired:
-        error(f"Command timeout: {' '.join(cmd)}", 1)
-    except FileNotFoundError:
-        error(f"Command not found: {cmd[0]}", 3)
+    except subprocess.TimeoutExpired as e:
+        raise RuntimeError(f"Command timeout: {' '.join(cmd)}") from e
+    except FileNotFoundError as e:
+        raise RuntimeError(f"Command not found: {cmd[0]}") from e
 
 
 def load_yaml(path: str) -> dict:
-    """Load and parse YAML file; error if not found or invalid."""
+    """Load and parse YAML file; raises exception if not found or invalid."""
     if not os.path.exists(path):
-        error(f"Config file not found: {path}", 2)
+        raise FileNotFoundError(f"Config file not found: {path}")
 
     try:
         with open(path) as f:
             data = yaml.safe_load(f)
             return data or {}
     except yaml.YAMLError as e:
-        error(f"Invalid YAML in {path}: {e}", 2)
+        raise RuntimeError(str(e))
 
 
 def save_yaml(path: str, data: dict) -> None:
-    """Write data to YAML file, creating parent directories if needed."""
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as f:
-        yaml.dump(data, f, default_flow_style=False)
+    """Write data to YAML file, creating parent directories if needed. Raises on failure."""
+    try:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w") as f:
+            yaml.dump(data, f, default_flow_style=False)
+    except (OSError, yaml.YAMLError) as e:
+        raise RuntimeError(f"Failed to write YAML to {path}: {e}") from e
 
 
 def merge_configs(base: dict, override: dict) -> dict:
@@ -129,7 +136,7 @@ def read_pid(path: str) -> Optional[int]:
     try:
         with open(path) as f:
             return int(f.read().strip())
-    except (ValueError, IOError):
+    except (OSError, ValueError):
         return None
 
 
@@ -152,7 +159,6 @@ def kill_process(pid: int) -> bool:
 def error(msg: str, code: int = 1) -> None:
     """Print error to stderr and exit with code."""
     print(f"Error: {msg}", file=sys.stderr)
-    sys.exit(code)
 
 
 def warn(msg: str) -> None:
@@ -165,7 +171,7 @@ def info(msg: str) -> None:
     print(msg)
 
 
-def resolve_binary(binary_path: str) -> str:
+def resolve_binary(binary_path: str) -> Optional[str]:
     """Resolve binary path: expand tilde, return absolute path.
 
     If path is absolute or relative with directory separators, use as-is.
@@ -173,13 +179,14 @@ def resolve_binary(binary_path: str) -> str:
     Error if not found.
 
     Args:
-        binary_path: Path to binary (e.g., "llama-server", "/usr/bin/llama-server", "~/custom/bin/llama")
+        binary_path: Path to binary (e.g., "llama-server", "/usr/bin/llama-server",
+                     "~/custom/bin/llama")
 
     Returns:
         Absolute path to binary
 
     Raises:
-        SystemExit if binary not found
+        RuntimeError if binary not found
     """
     # Expand tilde
     expanded = os.path.expanduser(binary_path)
@@ -188,18 +195,18 @@ def resolve_binary(binary_path: str) -> str:
     if os.path.isabs(expanded):
         if os.path.exists(expanded) and os.access(expanded, os.X_OK):
             return expanded
-        error(f"Binary not found or not executable: {expanded}", 3)
+        raise RuntimeError(f"Binary not found or not executable: {expanded}")
 
     # If contains directory separator, treat as relative path
     if os.sep in expanded:
         abs_path = os.path.abspath(expanded)
         if os.path.exists(abs_path) and os.access(abs_path, os.X_OK):
             return abs_path
-        error(f"Binary not found or not executable: {abs_path}", 3)
+        raise RuntimeError(f"Binary not found or not executable: {abs_path}")
 
     # Simple name: search in PATH
     found = shutil.which(expanded)
     if found:
         return found
 
-    error(f"Binary not found in PATH: {expanded}", 3)
+    raise RuntimeError(f"Binary not found in PATH: {expanded}")

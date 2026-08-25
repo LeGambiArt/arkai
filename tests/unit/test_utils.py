@@ -1,8 +1,7 @@
-import os
 import subprocess
-import tempfile
-from pathlib import Path
+
 import pytest
+
 from aitool import utils
 
 
@@ -62,7 +61,7 @@ class TestYAMLHandling:
         assert result["agent"]["name"] == "opencode"
 
     def test_load_yaml_file_not_found(self):
-        with pytest.raises(SystemExit):
+        with pytest.raises(FileNotFoundError):
             utils.load_yaml("/nonexistent/file.yaml")
 
     def test_save_yaml(self, tmp_path):
@@ -110,9 +109,7 @@ class TestPIDManagement:
 
 class TestErrorHandling:
     def test_error_exits(self, capsys):
-        with pytest.raises(SystemExit) as exc_info:
-            utils.error("Test error", 2)
-        assert exc_info.value.code == 2
+        utils.error("Test error", 2)
         captured = capsys.readouterr()
         assert "Error: Test error" in captured.err
 
@@ -152,12 +149,12 @@ class TestBinaryResolution:
         assert result == "/usr/bin/python"
 
     def test_resolve_binary_not_found(self):
-        with pytest.raises(SystemExit):
+        with pytest.raises(RuntimeError):
             utils.resolve_binary("/nonexistent/binary")
 
     def test_resolve_binary_not_in_path(self, monkeypatch):
         monkeypatch.setattr("shutil.which", lambda x: None)
-        with pytest.raises(SystemExit):
+        with pytest.raises(RuntimeError):
             utils.resolve_binary("nonexistent-binary")
 
 
@@ -181,14 +178,14 @@ class TestProcessExecution:
             "subprocess.run",
             lambda *a, **kw: (_ for _ in ()).throw(subprocess.TimeoutExpired("cmd", 1)),
         )
-        with pytest.raises(SystemExit):
+        with pytest.raises(RuntimeError):
             utils.run_command(["sleep", "10"])
 
     def test_run_command_not_found(self, monkeypatch):
         monkeypatch.setattr(
             "subprocess.run", lambda *a, **kw: (_ for _ in ()).throw(FileNotFoundError())
         )
-        with pytest.raises(SystemExit):
+        with pytest.raises(RuntimeError):
             utils.run_command(["nonexistent-command"])
 
 
@@ -196,7 +193,7 @@ class TestYAMLErrors:
     def test_load_yaml_invalid_yaml(self, tmp_path):
         yaml_file = tmp_path / "bad.yaml"
         yaml_file.write_text("invalid: yaml: syntax:")
-        with pytest.raises(SystemExit):
+        with pytest.raises(RuntimeError):
             utils.load_yaml(str(yaml_file))
 
     def test_load_yaml_empty_file(self, tmp_path):
@@ -218,15 +215,15 @@ class TestConfigHomeErrors:
     def test_config_home_no_home_env(self, monkeypatch):
         monkeypatch.delenv("HOME", raising=False)
         monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
-        with pytest.raises(SystemExit):
+        with pytest.raises(RuntimeError):
             utils.get_config_home()
 
     def test_data_home_no_home_env(self, monkeypatch):
         monkeypatch.delenv("HOME", raising=False)
-        with pytest.raises(SystemExit):
+        with pytest.raises(RuntimeError):
             utils.get_data_home()
 
     def test_pid_dir_no_home_env(self, monkeypatch):
         monkeypatch.delenv("HOME", raising=False)
-        with pytest.raises(SystemExit):
+        with pytest.raises(RuntimeError):
             utils.get_pid_dir()

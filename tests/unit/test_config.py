@@ -1,7 +1,3 @@
-import os
-import tempfile
-from pathlib import Path
-import pytest
 from aitool import config, utils
 
 
@@ -50,16 +46,14 @@ class TestConfigLoading:
 class TestConfigValidation:
     def test_validate_missing_agent_name(self):
         cfg = {"agent": {}, "inference": {"port": 8081, "model": "test.gguf"}}
-        with pytest.raises(SystemExit):
-            config.validate_config(cfg)
+        assert config.validate_config(cfg) is False
 
     def test_validate_invalid_agent_name(self):
         cfg = {
             "agent": {"name": "invalid"},
             "inference": {"port": 8081, "model": "test.gguf"},
         }
-        with pytest.raises(SystemExit):
-            config.validate_config(cfg)
+        assert config.validate_config(cfg) is False
 
     def test_validate_both_model_and_hf(self):
         cfg = {
@@ -70,16 +64,14 @@ class TestConfigValidation:
                 "hf": "repo/model",
             },
         }
-        with pytest.raises(SystemExit):
-            config.validate_config(cfg)
+        assert config.validate_config(cfg) is False
 
     def test_validate_neither_model_nor_hf(self):
         cfg = {
             "agent": {"name": "opencode"},
             "inference": {"port": 8081},
         }
-        with pytest.raises(SystemExit):
-            config.validate_config(cfg)
+        assert config.validate_config(cfg) is False
 
     def test_validate_valid_config(self):
         cfg = {
@@ -91,8 +83,8 @@ class TestConfigValidation:
                 "context_size": 65536,
             },
         }
-        # Should not raise
-        config.validate_config(cfg)
+        # Should return True
+        assert config.validate_config(cfg) is True
 
     def test_validate_invalid_inference_port(self):
         cfg = {
@@ -102,8 +94,7 @@ class TestConfigValidation:
                 "model": "test.gguf",
             },
         }
-        with pytest.raises(SystemExit):
-            config.validate_config(cfg)
+        assert config.validate_config(cfg) is False
 
     def test_validate_invalid_wtmcp_port(self):
         cfg = {
@@ -111,8 +102,7 @@ class TestConfigValidation:
             "inference": {"port": 8081, "model": "test.gguf"},
             "wtmcp": {"port": 99999},  # Too high
         }
-        with pytest.raises(SystemExit):
-            config.validate_config(cfg)
+        assert config.validate_config(cfg) is False
 
     def test_validate_invalid_gpu_layers(self):
         cfg = {
@@ -123,8 +113,7 @@ class TestConfigValidation:
                 "gpu_layers": "invalid",  # Not an int
             },
         }
-        with pytest.raises(SystemExit):
-            config.validate_config(cfg)
+        assert config.validate_config(cfg) is False
 
     def test_validate_invalid_context_size(self):
         cfg = {
@@ -135,8 +124,7 @@ class TestConfigValidation:
                 "context_size": -1,  # Must be positive
             },
         }
-        with pytest.raises(SystemExit):
-            config.validate_config(cfg)
+        assert config.validate_config(cfg) is False
 
 
 class TestGetConfigValue:
@@ -150,9 +138,7 @@ class TestGetConfigValue:
 
     def test_get_nonexistent_value(self):
         cfg = {}
-        assert (
-            config.get_config_value(cfg, "agent.name", default="crush") == "crush"
-        )
+        assert config.get_config_value(cfg, "agent.name", default="crush") == "crush"
 
     def test_get_deeply_nested(self):
         cfg = {"a": {"b": {"c": "value"}}}

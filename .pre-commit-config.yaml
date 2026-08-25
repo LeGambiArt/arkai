@@ -1,13 +1,12 @@
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.1.0
+    rev: v0.16.4
     hooks:
-      - id: ruff
-        args: [--fix]
+      - id: ruff-check
       - id: ruff-format
 
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v5.0.0
+    rev: v6.0.0
     hooks:
       - id: trailing-whitespace
       - id: end-of-file-fixer
@@ -38,9 +37,9 @@ repos:
     hooks:
       - id: ty-check
         name: ty type checker
-        entry: ty check .
+        entry: ty check
         language: system
-        pass_filenames: false
+        pass_filenames: true
         files: \.py$
 
       - id: pytest
@@ -48,7 +47,6 @@ repos:
         entry: pytest tests/unit/
         language: system
         types: [python]
-        stages: [commit]
         pass_filenames: false
 
       - id: behave
@@ -56,5 +54,4 @@ repos:
         entry: behave
         language: system
         types: [python]
-        stages: [commit]
         pass_filenames: false
