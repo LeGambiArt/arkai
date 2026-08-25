@@ -34,18 +34,16 @@ class TestPathResolution:
 class TestGPUDetection:
     def test_detect_gpu_metal_on_macos(self, monkeypatch):
         monkeypatch.setattr("platform.system", lambda: "Darwin")
-        monkeypatch.setattr(
-            "aitool.utils.run_command", lambda cmd, **kw: (0, "1", "")
-        )
+        monkeypatch.setattr("aitool.utils.run_command", lambda cmd, **kw: (0, "1", ""))
         result = utils.detect_gpu()
         assert result == "metal"
 
     def test_detect_gpu_cuda_on_linux(self, monkeypatch):
         monkeypatch.setattr("platform.system", lambda: "Linux")
-        monkeypatch.setattr("shutil.which", lambda x: "/usr/bin/nvidia-smi" if x == "nvidia-smi" else None)
         monkeypatch.setattr(
-            "aitool.utils.run_command", lambda cmd, **kw: (0, "", "")
+            "shutil.which", lambda x: "/usr/bin/nvidia-smi" if x == "nvidia-smi" else None
         )
+        monkeypatch.setattr("aitool.utils.run_command", lambda cmd, **kw: (0, "", ""))
         result = utils.detect_gpu()
         assert result == "cuda"
 
@@ -116,12 +114,12 @@ class TestErrorHandling:
             utils.error("Test error", 2)
         assert exc_info.value.code == 2
         captured = capsys.readouterr()
-        assert "Test error" in captured.err
+        assert "Error: Test error" in captured.err
 
     def test_warn_to_stderr(self, capsys):
         utils.warn("Test warning")
         captured = capsys.readouterr()
-        assert "Test warning" in captured.err
+        assert "Warning: Test warning" in captured.err
 
     def test_info_to_stdout(self, capsys):
         utils.info("Test info")
@@ -179,12 +177,17 @@ class TestProcessExecution:
         assert stdout is None
 
     def test_run_command_timeout(self, monkeypatch):
-        monkeypatch.setattr("subprocess.run", lambda *a, **kw: (_ for _ in ()).throw(subprocess.TimeoutExpired("cmd", 1)))
+        monkeypatch.setattr(
+            "subprocess.run",
+            lambda *a, **kw: (_ for _ in ()).throw(subprocess.TimeoutExpired("cmd", 1)),
+        )
         with pytest.raises(SystemExit):
             utils.run_command(["sleep", "10"])
 
     def test_run_command_not_found(self, monkeypatch):
-        monkeypatch.setattr("subprocess.run", lambda *a, **kw: (_ for _ in ()).throw(FileNotFoundError()))
+        monkeypatch.setattr(
+            "subprocess.run", lambda *a, **kw: (_ for _ in ()).throw(FileNotFoundError())
+        )
         with pytest.raises(SystemExit):
             utils.run_command(["nonexistent-command"])
 

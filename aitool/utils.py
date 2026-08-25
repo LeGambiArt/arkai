@@ -7,7 +7,6 @@ import signal
 import subprocess
 import shutil
 from pathlib import Path
-from datetime import datetime
 from typing import Optional, Tuple
 import yaml
 
@@ -152,23 +151,18 @@ def kill_process(pid: int) -> bool:
 
 def error(msg: str, code: int = 1) -> None:
     """Print error to stderr and exit with code."""
-    print(f"[{timestamp()}] Error: {msg}", file=sys.stderr)
+    print(f"Error: {msg}", file=sys.stderr)
     sys.exit(code)
 
 
 def warn(msg: str) -> None:
     """Print warning to stderr."""
-    print(f"[{timestamp()}] Warning: {msg}", file=sys.stderr)
+    print(f"Warning: {msg}", file=sys.stderr)
 
 
 def info(msg: str) -> None:
     """Print info message to stdout."""
-    print(f"[{timestamp()}] {msg}")
-
-
-def timestamp() -> str:
-    """Return current timestamp in ISO format."""
-    return datetime.now().isoformat(timespec="seconds")
+    print(msg)
 
 
 def resolve_binary(binary_path: str) -> str:
