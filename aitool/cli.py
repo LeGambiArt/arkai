@@ -7,6 +7,7 @@ from aitool import __version__
 from aitool import config as config_module
 from aitool import engine as engine_module
 from aitool import model as model_module
+from aitool import wtmcp as wtmcp_module
 
 
 def main():
@@ -64,6 +65,39 @@ def main():
     engine_subparsers.add_parser("stop", help="Stop inference server")
     engine_subparsers.add_parser("status", help="Show inference server status")
 
+    # wtmcp command
+    wtmcp_parser = subparsers.add_parser("wtmcp", help="Manage wtmcp plugins and server")
+    wtmcp_subparsers = wtmcp_parser.add_subparsers(dest="wtmcp_cmd")
+    list_parser = wtmcp_subparsers.add_parser("list", help="List available plugins")
+    list_parser.add_argument(
+        "--port", type=int, help="Port of running instance to show plugins for"
+    )
+    enable_parser = wtmcp_subparsers.add_parser("enable", help="Enable a plugin")
+    enable_parser.add_argument("plugin", help="Plugin name")
+    disable_parser = wtmcp_subparsers.add_parser("disable", help="Disable a plugin")
+    disable_parser.add_argument("plugin", help="Plugin name")
+    start_parser = wtmcp_subparsers.add_parser("start", help="Start wtmcp server")
+    start_parser.add_argument("--path", help="Override wtmcp binary path from config")
+    start_parser.add_argument("--port", type=int, help="Override port from config")
+    start_parser.add_argument(
+        "--enable",
+        action="append",
+        dest="enable_plugins",
+        help="Enable plugin (can be used multiple times)",
+    )
+    start_parser.add_argument(
+        "--disable",
+        action="append",
+        dest="disable_plugins",
+        help="Disable plugin (can be used multiple times)",
+    )
+    stop_parser = wtmcp_subparsers.add_parser("stop", help="Stop wtmcp server")
+    stop_parser.add_argument("--port", type=int, help="Port of instance to stop")
+    status_parser = wtmcp_subparsers.add_parser("status", help="Show wtmcp server status")
+    status_parser.add_argument(
+        "--port", type=int, help="Port to show status for (or all if not specified)"
+    )
+
     args = parser.parse_args()
 
     try:
@@ -94,6 +128,26 @@ def main():
                 engine_module.cmd_engine_status()
             else:
                 engine_parser.print_help()
+        elif args.command == "wtmcp":
+            if args.wtmcp_cmd == "list":
+                wtmcp_module.cmd_wtmcp_list(args.port)
+            elif args.wtmcp_cmd == "enable":
+                wtmcp_module.cmd_wtmcp_enable(args.plugin)
+            elif args.wtmcp_cmd == "disable":
+                wtmcp_module.cmd_wtmcp_disable(args.plugin)
+            elif args.wtmcp_cmd == "start":
+                wtmcp_module.cmd_wtmcp_start(
+                    args.path,
+                    args.port,
+                    args.enable_plugins,
+                    args.disable_plugins,
+                )
+            elif args.wtmcp_cmd == "stop":
+                wtmcp_module.cmd_wtmcp_stop(args.port)
+            elif args.wtmcp_cmd == "status":
+                wtmcp_module.cmd_wtmcp_status(args.port)
+            else:
+                wtmcp_parser.print_help()
         else:
             parser.print_help()
     except Exception as e:

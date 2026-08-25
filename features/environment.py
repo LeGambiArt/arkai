@@ -18,6 +18,17 @@ def before_scenario(context, scenario):
     if os.path.exists(state_path):
         os.remove(state_path)
 
+    # Clean up all wtmcp PID and state files (port-specific)
+    pid_dir = utils.get_pid_dir()
+    if os.path.exists(pid_dir):
+        for filename in os.listdir(pid_dir):
+            if filename.startswith("wtmcp-") and (
+                filename.endswith(".pid") or filename.endswith(".state")
+            ):
+                filepath = os.path.join(pid_dir, filename)
+                if os.path.exists(filepath):
+                    os.remove(filepath)
+
     # Create temporary working directory
     context.temp_dir = tempfile.mkdtemp()
     context.original_dir = os.getcwd()
@@ -38,6 +49,9 @@ def after_scenario(context, scenario):
     if hasattr(context, "is_running_patch") and context.is_running_patch:
         context.is_running_patch.stop()
 
+    if hasattr(context, "wtmcp_running_patch") and context.wtmcp_running_patch:
+        context.wtmcp_running_patch.stop()
+
     # Clean up PID and state files
     pid_path = engine.get_inference_pid_path()
     if os.path.exists(pid_path):
@@ -46,6 +60,17 @@ def after_scenario(context, scenario):
     state_path = engine.get_inference_state_path()
     if os.path.exists(state_path):
         os.remove(state_path)
+
+    # Clean up all wtmcp files (port-specific)
+    pid_dir = utils.get_pid_dir()
+    if os.path.exists(pid_dir):
+        for filename in os.listdir(pid_dir):
+            if filename.startswith("wtmcp-") and (
+                filename.endswith(".pid") or filename.endswith(".state")
+            ):
+                filepath = os.path.join(pid_dir, filename)
+                if os.path.exists(filepath):
+                    os.remove(filepath)
 
     # Restore original get_data_home if mocked
     if context.original_get_data_home is not None:
