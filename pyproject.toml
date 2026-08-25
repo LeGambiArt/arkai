@@ -1,0 +1,58 @@
+[build-system]
+requires = ["setuptools>=65.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aitool"
+version = "0.1.0"
+description = "Local AI inference workflow management"
+readme = "README.md"
+requires-python = ">=3.9"
+license = {text = "Apache License 2.0"}
+authors = [{name = "aitool contributors"}]
+
+dependencies = [
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "behave>=1.2.6",
+    "ruff>=0.1.0",
+    "ty>=0.0.74",
+    "coverage[toml]>=7.0",
+]
+
+[project.scripts]
+aitool = "aitool.cli:main"
+
+[tool.setuptools]
+packages = ["aitool"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = "-v --cov=aitool --cov-report=term-missing"
+
+[tool.coverage.run]
+branch = true
+source = ["aitool"]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if __name__ == .__main__.:",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "C4"]

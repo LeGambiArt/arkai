@@ -1,0 +1,60 @@
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.1.0
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-added-large-files
+        args: [--maxkb=100]
+      - id: check-merge-conflict
+
+  - repo: https://github.com/koalaman/shellcheck-precommit
+    rev: v0.11.0
+    hooks:
+      - id: shellcheck
+        args:
+          [
+            "-x",
+            "-a",
+            "-o",
+            "all",
+            "-e",
+            "SC2292",
+            "-e",
+            "SC2310",
+            "-e",
+            "SC2311",
+          ]
+        files: \.sh$
+
+  - repo: local
+    hooks:
+      - id: ty-check
+        name: ty type checker
+        entry: ty check .
+        language: system
+        pass_filenames: false
+        files: \.py$
+
+      - id: pytest
+        name: pytest
+        entry: pytest tests/unit/
+        language: system
+        types: [python]
+        stages: [commit]
+        pass_filenames: false
+
+      - id: behave
+        name: behave
+        entry: behave
+        language: system
+        types: [python]
+        stages: [commit]
+        pass_filenames: false
