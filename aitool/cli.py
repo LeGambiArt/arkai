@@ -112,6 +112,7 @@ def main():
     agent_parser.add_argument(
         "-M", "--keep-mcp", action="store_true", help="Keep wtmcp server running after exit"
     )
+    agent_parser.add_argument("--no-mcp", action="store_true", help="Skip wtmcp initialization")
 
     args = parser.parse_args()
 
@@ -164,7 +165,9 @@ def main():
             else:
                 wtmcp_parser.print_help()
         elif args.command == "agent":
-            agent_module.cmd_agent(args.agent, args.model, args.keep_inference, args.keep_mcp)
+            agent_module.cmd_agent(
+                args.agent, args.model, args.keep_inference, args.keep_mcp, args.no_mcp
+            )
         else:
             parser.print_help()
     except Exception as e:

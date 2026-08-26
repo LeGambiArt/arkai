@@ -38,10 +38,8 @@ def _start_wtmcp_server(cfg: dict) -> int:
     return wtmcp_port
 
 
-def _start_agent_opencode(agent_path: str, cfg: dict) -> None:
+def _start_agent_opencode(agent_path: str, cfg: dict, wtmcp_port: Optional[int]) -> None:
     """Start opencode agent."""
-    wtmcp_port = _start_wtmcp_server(cfg)
-
     # Generate unique config file for this execution
     config_dir = os.path.expanduser("~/.local/state/aitool/opencode")
     os.makedirs(config_dir, exist_ok=True)
@@ -58,7 +56,7 @@ def _start_agent_opencode(agent_path: str, cfg: dict) -> None:
         inference_backend = config.get_config_value(cfg, "inference.backend", "llama-cpp")
         model_name = _get_model_name(cfg)
 
-        config_data = {
+        config_data: dict = {
             "$schema": "https://opencode.ai/config.json",
             "provider": {
                 "local-llm": {
@@ -68,15 +66,16 @@ def _start_agent_opencode(agent_path: str, cfg: dict) -> None:
                     "models": {model_name: {"name": model_name}},
                 }
             },
-            "mcp": {
+            "model": f"local-llm/{model_name}",
+        }
+        if wtmcp_port is not None:
+            config_data["mcp"] = {
                 "wtmcp": {
                     "type": "remote",
                     "url": f"http://127.0.0.1:{wtmcp_port}/mcp",
                     "oauth": False,
                 }
-            },
-            "model": f"local-llm/{model_name}",
-        }
+            }
         json.dump(config_data, f, indent=2)
 
     env = os.environ.copy()
@@ -107,10 +106,8 @@ def _start_agent_opencode(agent_path: str, cfg: dict) -> None:
     # Infrastructure services stay running
 
 
-def _start_agent_crush(agent_path: str, cfg: dict) -> None:
+def _start_agent_crush(agent_path: str, cfg: dict, wtmcp_port: Optional[int]) -> None:
     """Start crush agent."""
-    wtmcp_port = _start_wtmcp_server(cfg)
-
     # Generate unique config file for this execution
     config_dir = os.path.expanduser("~/.local/state/aitool")
     os.makedirs(config_dir, exist_ok=True)
@@ -126,7 +123,7 @@ def _start_agent_crush(agent_path: str, cfg: dict) -> None:
         inference_port = config.get_config_value(cfg, "inference.port", 8081)
         model_name = _get_model_name(cfg)
 
-        config_data = {
+        config_data: dict = {
             "providers": {
                 "local-llm": {
                     "type": "llamacpp",
@@ -137,8 +134,11 @@ def _start_agent_crush(agent_path: str, cfg: dict) -> None:
                 "large": {"model": model_name, "provider": "local-llm"},
                 "small": {"model": model_name, "provider": "local-llm"},
             },
-            "mcp": {"wtmcp": {"type": "http", "url": f"http://127.0.0.1:{wtmcp_port}/mcp"}},
         }
+        if wtmcp_port is not None:
+            config_data["mcp"] = {
+                "wtmcp": {"type": "http", "url": f"http://127.0.0.1:{wtmcp_port}/mcp"}
+            }
         json.dump(config_data, f, indent=2)
 
     env = os.environ.copy()
@@ -169,28 +169,10 @@ def _start_agent_crush(agent_path: str, cfg: dict) -> None:
     # Infrastructure services stay running
 
 
-def _start_agent_claude(agent_path: str, cfg: dict) -> None:
+def _start_agent_claude(agent_path: str, cfg: dict, wtmcp_port: Optional[int]) -> None:
     """Start claude agent."""
     inference_port = config.get_config_value(cfg, "inference.port", 8081)
-    wtmcp_port = _start_wtmcp_server(cfg)
     model_name = _get_model_name(cfg)
-
-    # Generate unique MCP config file for this execution
-    config_dir = os.path.expanduser("~/.local/state/aitool")
-    os.makedirs(config_dir, exist_ok=True)
-
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        dir=config_dir,
-        prefix=".mcp-",
-        suffix=".json",
-        delete=False,
-    ) as f:
-        mcp_config = f.name
-        config_data = {
-            "mcpServers": {"wtmcp": {"type": "url", "url": f"http://127.0.0.1:{wtmcp_port}/mcp"}}
-        }
-        json.dump(config_data, f, indent=2)
 
     env = os.environ.copy()
     env["ANTHROPIC_BASE_URL"] = f"http://127.0.0.1:{inference_port}"
@@ -198,7 +180,30 @@ def _start_agent_claude(agent_path: str, cfg: dict) -> None:
     env["ANTHROPIC_API_KEY"] = "local"
     env["CLAUDE_CODE_ATTRIBUTION_HEADER"] = "0"
 
-    cmd = [agent_path, "--model", model_name, "--mcp-config", mcp_config]
+    cmd = [agent_path, "--model", model_name]
+    mcp_config: Optional[str] = None
+
+    if wtmcp_port is not None:
+        # Generate unique MCP config file for this execution
+        config_dir = os.path.expanduser("~/.local/state/aitool")
+        os.makedirs(config_dir, exist_ok=True)
+
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            dir=config_dir,
+            prefix=".mcp-",
+            suffix=".json",
+            delete=False,
+        ) as f:
+            mcp_config = f.name
+            config_data = {
+                "mcpServers": {
+                    "wtmcp": {"type": "url", "url": f"http://127.0.0.1:{wtmcp_port}/mcp"}
+                }
+            }
+            json.dump(config_data, f, indent=2)
+
+        cmd.extend(["--mcp-config", mcp_config])
 
     print("Starting claude...", file=sys.stderr)
     try:
@@ -214,11 +219,11 @@ def _start_agent_claude(agent_path: str, cfg: dict) -> None:
         utils.error(str(e), 3)
         sys.exit(3)
     finally:
-        # Clean up temp config file
-        try:
-            os.remove(mcp_config)
-        except FileNotFoundError:
-            pass
+        if mcp_config is not None:
+            try:
+                os.remove(mcp_config)
+            except FileNotFoundError:
+                pass
     # Don't exit - let the caller decide what to do
     # Infrastructure services stay running
 
@@ -228,12 +233,16 @@ def cmd_agent(
     model: Optional[str] = None,
     keep_inference: bool = False,
     keep_mcp: bool = False,
+    no_mcp: bool = False,
 ) -> None:
     """Start interactive agent session (requires TTY).
 
     Args:
         agent_name: Override agent from config
         model: Override model from config
+        keep_inference: Keep inference server running after exit
+        keep_mcp: Keep wtmcp server running after exit
+        no_mcp: Skip wtmcp initialization regardless of config
 
     Raises:
         RuntimeError: If not in TTY or config invalid
@@ -260,6 +269,9 @@ def cmd_agent(
         utils.error(f"Unsupported agent: {agent_name} (supported: opencode, crush, claude)", 2)
         sys.exit(2)
 
+    # Determine whether to use MCP: config key agent.mcp (default True) and --no-mcp flag
+    use_mcp = bool(config.get_config_value(cfg, "agent.mcp", True)) and not no_mcp
+
     # Ensure inference is running
     if not engine.is_inference_running():
         try:
@@ -267,6 +279,9 @@ def cmd_agent(
         except RuntimeError as e:
             utils.error(str(e), 1)
             sys.exit(1)
+
+    # Start wtmcp if MCP is enabled
+    wtmcp_port: Optional[int] = _start_wtmcp_server(cfg) if use_mcp else None
 
     # Resolve agent binary
     agent_bin = config.get_config_value(cfg, "agent.path", agent_name)
@@ -283,23 +298,23 @@ def cmd_agent(
     # Start interactive agent
     try:
         if agent_name == "opencode":
-            _start_agent_opencode(agent_path, cfg)
+            _start_agent_opencode(agent_path, cfg, wtmcp_port)
         elif agent_name == "crush":
-            _start_agent_crush(agent_path, cfg)
+            _start_agent_crush(agent_path, cfg, wtmcp_port)
         elif agent_name == "claude":
-            _start_agent_claude(agent_path, cfg)
+            _start_agent_claude(agent_path, cfg, wtmcp_port)
     finally:
         # Cleanup services unless user requested to keep them
         from aitool import wtmcp
 
-        wtmcp_port = config.get_config_value(cfg, "wtmcp.port", 8080)
-        if keep_mcp and wtmcp.is_wtmcp_running(wtmcp_port):
-            print(f"wtmcp still running on port {wtmcp_port}", file=sys.stderr)
-        elif not keep_mcp and wtmcp.is_wtmcp_running(wtmcp_port):
-            try:
-                wtmcp.cmd_wtmcp_stop(wtmcp_port)
-            except Exception:
-                pass
+        if wtmcp_port is not None:
+            if keep_mcp and wtmcp.is_wtmcp_running(wtmcp_port):
+                print(f"wtmcp still running on port {wtmcp_port}", file=sys.stderr)
+            elif not keep_mcp and wtmcp.is_wtmcp_running(wtmcp_port):
+                try:
+                    wtmcp.cmd_wtmcp_stop(wtmcp_port)
+                except Exception:
+                    pass
 
         if keep_inference and engine.is_inference_running():
             inference_port = config.get_config_value(cfg, "inference.port", 8081)
