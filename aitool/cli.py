@@ -56,15 +56,15 @@ def main():
         help="Output file path (default: ~/.local/share/aitool/models/MODEL-QUANTIZATION.gguf)",
     )
 
-    # Engine command
-    engine_parser = subparsers.add_parser("engine", help="Manage inference engine")
-    engine_subparsers = engine_parser.add_subparsers(dest="engine_cmd")
-    start_parser = engine_subparsers.add_parser("start", help="Start inference server")
+    # Inference command
+    inference_parser = subparsers.add_parser("inference", help="Manage inference engine")
+    inference_subparsers = inference_parser.add_subparsers(dest="inference_cmd")
+    start_parser = inference_subparsers.add_parser("start", help="Start inference server")
     start_parser.add_argument("--model", help="Override model from config")
     start_parser.add_argument("--gpu-layers", type=int, help="Override GPU layers")
     start_parser.add_argument("--context", type=int, help="Override context size")
-    engine_subparsers.add_parser("stop", help="Stop inference server")
-    engine_subparsers.add_parser("status", help="Show inference server status")
+    inference_subparsers.add_parser("stop", help="Stop inference server")
+    inference_subparsers.add_parser("status", help="Show inference server status")
 
     # wtmcp command
     wtmcp_parser = subparsers.add_parser("wtmcp", help="Manage wtmcp plugins and server")
@@ -134,15 +134,15 @@ def main():
                 model_module.cmd_model_convert(args.model, args.quantization, args.output)
             else:
                 model_parser.print_help()
-        elif args.command == "engine":
-            if args.engine_cmd == "start":
+        elif args.command == "inference":
+            if args.inference_cmd == "start":
                 engine_module.cmd_engine_start(args.model, args.gpu_layers, args.context)
-            elif args.engine_cmd == "stop":
+            elif args.inference_cmd == "stop":
                 engine_module.cmd_engine_stop()
-            elif args.engine_cmd == "status":
+            elif args.inference_cmd == "status":
                 engine_module.cmd_engine_status()
             else:
-                engine_parser.print_help()
+                inference_parser.print_help()
         elif args.command == "wtmcp":
             if args.wtmcp_cmd == "list":
                 wtmcp_module.cmd_wtmcp_list(args.port)

@@ -33,9 +33,9 @@ def step_server_running(context):
     context.is_running_mock = context.is_running_patch
 
 
-@when('I run "aitool engine {cmd}"')  # ty: ignore[call-non-callable]
+@when('I run "aitool inference {cmd}"')  # ty: ignore[call-non-callable]
 def step_run_aitool_engine(context, cmd):
-    """Run aitool engine command and capture output."""
+    """Run aitool inference command and capture output."""
     old_stdout = sys.stdout
     old_stderr = sys.stderr
     stdout_capture = StringIO()
