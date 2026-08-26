@@ -19,7 +19,7 @@ def step_valid_config_mcp_disabled(context):
     utils.save_yaml(".aitool.yaml", config_data)
 
 
-def _run_agent_in_tty(context, no_mcp: bool = False) -> None:
+def _run_agent_in_tty(context, no_mcp: bool = False, no_sandbox: bool = False) -> None:
     """Run agent with a mocked TTY and capture output."""
     old_stdout = sys.stdout
     old_stderr = sys.stderr
@@ -34,16 +34,22 @@ def _run_agent_in_tty(context, no_mcp: bool = False) -> None:
     mock_proc.pid = 12345
     mock_proc.wait.return_value = 0
 
+    popen_cmd: list = []
+
+    def capture_popen(cmd, **kwargs):
+        popen_cmd.extend(cmd)
+        return mock_proc
+
     with (
         patch.object(sys.stdin, "isatty", return_value=True),
         patch.object(engine, "is_inference_running", return_value=True),
         patch.object(wtmcp, "is_wtmcp_running", return_value=False),
         patch.object(wtmcp, "cmd_wtmcp_start") as mock_wtmcp_start,
         patch.object(utils, "resolve_binary", return_value="/usr/bin/fake-agent"),
-        patch("subprocess.Popen", return_value=mock_proc),
+        patch("subprocess.Popen", side_effect=capture_popen),
     ):
         try:
-            agent.cmd_agent(no_mcp=no_mcp)
+            agent.cmd_agent(no_mcp=no_mcp, no_sandbox=no_sandbox)
         except SystemExit as e:
             context.exit_code = e.code if e.code else 1
         except Exception as e:
@@ -51,11 +57,24 @@ def _run_agent_in_tty(context, no_mcp: bool = False) -> None:
             stderr_capture.write(str(e))
         finally:
             context.wtmcp_start_called = mock_wtmcp_start.called
+            # sandbox was used if the command starts with the arapuca prefix ("fake-agent run ...")
+            context.sandbox_used = len(popen_cmd) >= 2 and popen_cmd[1] == "run"
 
     sys.stdout = old_stdout
     sys.stderr = old_stderr
     context.stdout = stdout_capture.getvalue()
     context.stderr = stderr_capture.getvalue()
+
+
+@given("a valid .aitool.yaml file with sandbox disabled")  # ty: ignore[call-non-callable]
+def step_valid_config_sandbox_disabled(context):
+    """Create a valid config file with sandbox.disable set to true."""
+    config_data = {
+        "agent": {"name": "opencode"},
+        "inference": {"model": "test.gguf"},
+        "sandbox": {"disable": True},
+    }
+    utils.save_yaml(".aitool.yaml", config_data)
 
 
 @when('I run "aitool agent" with "--no-mcp" in a TTY')  # ty: ignore[call-non-callable]
@@ -64,10 +83,16 @@ def step_run_agent_no_mcp_flag(context):
     _run_agent_in_tty(context, no_mcp=True)
 
 
+@when('I run "aitool agent" with "--no-sandbox" in a TTY')  # ty: ignore[call-non-callable]
+def step_run_agent_no_sandbox_flag(context):
+    """Run aitool agent with --no-sandbox in a TTY."""
+    _run_agent_in_tty(context, no_sandbox=True)
+
+
 @when('I run "aitool agent" in a TTY')  # ty: ignore[call-non-callable]
 def step_run_agent_tty(context):
     """Run aitool agent in a TTY."""
-    _run_agent_in_tty(context, no_mcp=False)
+    _run_agent_in_tty(context)
 
 
 @then("wtmcp was not started")  # ty: ignore[call-non-callable]
@@ -76,6 +101,12 @@ def step_wtmcp_not_started(context):
     assert not context.wtmcp_start_called, (
         "wtmcp.cmd_wtmcp_start was called but should not have been"
     )
+
+
+@then("the agent was not sandboxed")  # ty: ignore[call-non-callable]
+def step_agent_not_sandboxed(context):
+    """Assert that the agent was launched without arapuca."""
+    assert not context.sandbox_used, "Agent was launched in sandbox but should not have been"
 
 
 @when('I run "aitool agent" with stdin piped')  # ty: ignore[call-non-callable]

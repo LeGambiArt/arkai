@@ -113,6 +113,14 @@ def main():
         "-M", "--keep-mcp", action="store_true", help="Keep wtmcp server running after exit"
     )
     agent_parser.add_argument("--no-mcp", action="store_true", help="Skip wtmcp initialization")
+    agent_parser.add_argument("--no-sandbox", action="store_true", help="Skip arapuca sandbox")
+    cwd_group = agent_parser.add_mutually_exclusive_group()
+    cwd_group.add_argument(
+        "--no-cwd", action="store_true", help="Do not mount the current directory in the sandbox"
+    )
+    cwd_group.add_argument(
+        "--cwd", metavar="PATH", help="Override the directory mounted as cwd in the sandbox"
+    )
 
     args = parser.parse_args()
 
@@ -166,7 +174,14 @@ def main():
                 wtmcp_parser.print_help()
         elif args.command == "agent":
             agent_module.cmd_agent(
-                args.agent, args.model, args.keep_inference, args.keep_mcp, args.no_mcp
+                args.agent,
+                args.model,
+                args.keep_inference,
+                args.keep_mcp,
+                args.no_mcp,
+                args.no_sandbox,
+                args.no_cwd,
+                args.cwd,
             )
         else:
             parser.print_help()

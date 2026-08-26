@@ -16,3 +16,15 @@ Feature: Agent Execution
     When I run "aitool agent" in a TTY
     Then the exit code is 0
     And wtmcp was not started
+
+  Scenario: Agent skips sandbox with --no-sandbox flag
+    Given a valid .aitool.yaml file
+    When I run "aitool agent" with "--no-sandbox" in a TTY
+    Then the exit code is 0
+    And the agent was not sandboxed
+
+  Scenario: Agent skips sandbox when config disables it
+    Given a valid .aitool.yaml file with sandbox disabled
+    When I run "aitool agent" in a TTY
+    Then the exit code is 0
+    And the agent was not sandboxed
