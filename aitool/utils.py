@@ -171,6 +171,57 @@ def info(msg: str) -> None:
     print(msg)
 
 
+VALID_VOLUME_FLAGS = {"ro", ""}
+
+
+def validate_volumes(volumes: list) -> Optional[str]:
+    """Validate a list of volume mount strings.
+
+    Args:
+        volumes: List of volume strings in format "/path" or "/path:ro"
+
+    Returns:
+        Error message string if invalid, None if valid.
+    """
+    seen_paths: dict = {}
+    for vol in volumes:
+        if not isinstance(vol, str) or not vol:
+            return f"Volume entry must be a non-empty string, got {vol!r}"
+        parts = vol.split(":", 1)
+        path = parts[0]
+        flag = parts[1] if len(parts) > 1 else ""
+        if not path.startswith("/"):
+            return f"Volume path must be absolute, got {path!r}"
+        if flag not in VALID_VOLUME_FLAGS:
+            return f"Unsupported volume flag {flag!r} in {vol!r}; supported: 'ro'"
+        if path in seen_paths:
+            if seen_paths[path] != flag:
+                return (
+                    f"Volume path {path!r} specified with conflicting flags: "
+                    f"{seen_paths[path]!r} and {flag!r}"
+                )
+        else:
+            seen_paths[path] = flag
+    return None
+
+
+def validate_environment(environment: object) -> Optional[str]:
+    """Validate a sandbox environment dict.
+
+    Args:
+        environment: Value from config; must be a dict with scalar values.
+
+    Returns:
+        Error message string if invalid, None if valid.
+    """
+    if not isinstance(environment, dict):
+        return f"environment must be a mapping, got {type(environment).__name__}"
+    for key, value in environment.items():
+        if isinstance(value, (dict, list)):
+            return f"environment value for key {key!r} must be a scalar, got {type(value).__name__}"
+    return None
+
+
 def resolve_binary(binary_path: str) -> Optional[str]:
     """Resolve binary path: expand tilde, return absolute path.
 

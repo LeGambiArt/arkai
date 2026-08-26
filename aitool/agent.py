@@ -11,6 +11,82 @@ from typing import Optional
 from aitool import config, engine, utils
 
 
+def _merge_volumes(profile_volumes: list, cli_volumes: Optional[list] = None) -> list:
+    """Merge profile and CLI volumes with deduplication.
+
+    Args:
+        profile_volumes: Volumes from the resolved profile
+        cli_volumes: Volumes from CLI arguments (optional)
+
+    Returns:
+        Merged and deduplicated volume list
+
+    Raises:
+        RuntimeError: If same path appears with different flags
+    """
+    from aitool import sandbox as sandbox_module
+
+    merged = list(profile_volumes) if profile_volumes else []
+    if cli_volumes:
+        merged.extend(cli_volumes)
+
+    return sandbox_module._deduplicate_volumes(merged)
+
+
+def _merge_environment(profile_env: Optional[dict], cli_env: Optional[dict]) -> dict:
+    """Merge profile and CLI environment variables; CLI values override profile.
+
+    Args:
+        profile_env: Environment variables from the resolved profile
+        cli_env: Environment variables from CLI arguments (optional)
+
+    Returns:
+        Merged environment dict
+    """
+    merged = dict(profile_env) if profile_env else {}
+    if cli_env:
+        merged.update(cli_env)
+    return merged
+
+
+def _resolve_sandbox_profile(cfg: dict, profile_name: Optional[str] = None) -> dict:
+    """Resolve active sandbox profile from CLI, config, or defaults.
+
+    Priority: CLI --sandbox flag > config sandbox.active_profile > defaults
+
+    Args:
+        cfg: Loaded configuration
+        profile_name: Profile name from --sandbox CLI flag (highest priority)
+
+    Returns:
+        Resolved profile dict with keys: path, memory_mb, cpus, pids, timeout
+
+    Raises:
+        RuntimeError: If specified profile does not exist
+    """
+    from aitool import sandbox as sandbox_module
+
+    # Priority 1: CLI flag
+    if profile_name:
+        profile = sandbox_module._get_profile(cfg, profile_name)
+        if not profile:
+            raise RuntimeError(f"Sandbox profile not found: {profile_name}")
+        return profile
+
+    # Priority 2: Config active_profile
+    active_profile_name = config.get_config_value(cfg, "sandbox.active_profile")
+    if active_profile_name:
+        profile = sandbox_module._get_profile(cfg, active_profile_name)
+        if not profile:
+            raise RuntimeError(
+                f"Sandbox active_profile '{active_profile_name}' not found in config"
+            )
+        return profile
+
+    # Priority 3: Defaults
+    return sandbox_module._get_default_profile(cfg)
+
+
 def _get_model_name(cfg: dict) -> str:
     """Extract model name from config."""
     model_file = config.get_config_value(cfg, "inference.model")
@@ -44,6 +120,9 @@ def _build_sandbox_cmd(
     workdir: Optional[str],
     config_dir: Optional[str],
     wtmcp_port: Optional[int],
+    sandbox_profile: Optional[str] = None,
+    cli_volumes: Optional[list] = None,
+    cli_environment: Optional[dict] = None,
 ) -> list:
     """Build the arapuca sandbox command prefix for an agent invocation.
 
@@ -61,17 +140,31 @@ def _build_sandbox_cmd(
     Raises:
         RuntimeError: If arapuca binary cannot be found
     """
-    arapuca_bin = config.get_config_value(cfg, "sandbox.path", "arapuca")
+    # Resolve the active sandbox profile
+    profile = _resolve_sandbox_profile(cfg, sandbox_profile)
+
+    arapuca_bin = profile.get("path", "arapuca")
     try:
         arapuca_path = utils.resolve_binary(arapuca_bin)
     except RuntimeError as e:
         raise RuntimeError(f"arapuca not found: {e}. Install arapuca or use --no-sandbox") from e
 
-    memory = config.get_config_value(cfg, "sandbox.memory_mb", 2048)
-    cpus = config.get_config_value(cfg, "sandbox.cpus", 200)
-    pids = config.get_config_value(cfg, "sandbox.pids", 256)
-    timeout = config.get_config_value(cfg, "sandbox.timeout", 0)
+    memory = profile.get("memory_mb", 2048)
+    cpus_value = profile.get("cpus", 2)
+    pids = profile.get("pids", 256)
+    timeout = profile.get("timeout", 0)
     inference_port = config.get_config_value(cfg, "inference.port", 8081)
+
+    # Merge profile and CLI volumes
+    profile_volumes = profile.get("volume", [])
+    try:
+        volumes = _merge_volumes(profile_volumes, cli_volumes)
+    except RuntimeError as e:
+        raise RuntimeError(f"Volume configuration error: {e}") from e
+
+    # Merge profile and CLI environment variables
+    profile_environment = profile.get("environment")
+    environment = _merge_environment(profile_environment, cli_environment)
 
     cmd: list = [arapuca_path, "run"]
 
@@ -85,6 +178,10 @@ def _build_sandbox_cmd(
         if not workdir_abs or not config_dir_abs.startswith(workdir_abs + os.sep):
             cmd += ["-v", f"{config_dir_abs}:rw"]
 
+    # Add profile and CLI volumes
+    for vol in volumes:
+        cmd += ["-v", vol]
+
     if platform.system() == "Linux":
         cmd += ["--allow-host", f"127.0.0.1:{inference_port}"]
         if wtmcp_port is not None:
@@ -93,7 +190,7 @@ def _build_sandbox_cmd(
     else:
         cmd += ["--seccomp", "baseline"]
 
-    cmd += ["--memory", str(memory), "--cpus", str(cpus), "--pids", str(pids)]
+    cmd += ["--memory", str(memory), "--cpus", str(cpus_value * 100), "--pids", str(pids)]
 
     if workdir:
         cmd += ["--cwd", workdir]
@@ -104,6 +201,9 @@ def _build_sandbox_cmd(
     colorterm = os.environ.get("COLORTERM")
     if colorterm:
         cmd += ["--env", f"COLORTERM={colorterm}"]
+
+    for env_key, env_val in environment.items():
+        cmd += ["--env", f"{env_key}={env_val}"]
 
     if timeout and int(timeout) > 0:
         cmd += ["--timeout", str(timeout)]
@@ -118,6 +218,9 @@ def _start_agent_opencode(
     wtmcp_port: Optional[int],
     use_sandbox: bool,
     workdir: Optional[str],
+    sandbox_profile: Optional[str] = None,
+    cli_volumes: Optional[list] = None,
+    cli_environment: Optional[dict] = None,
 ) -> None:
     """Start opencode agent."""
     if use_sandbox:
@@ -161,7 +264,9 @@ def _start_agent_opencode(
         json.dump(config_data, f, indent=2)
 
     if use_sandbox:
-        sandbox_prefix = _build_sandbox_cmd(cfg, workdir, config_dir, wtmcp_port)
+        sandbox_prefix = _build_sandbox_cmd(
+            cfg, workdir, config_dir, wtmcp_port, sandbox_profile, cli_volumes, cli_environment
+        )
         cmd = sandbox_prefix + ["env", f"OPENCODE_CONFIG={config_file}", agent_path]
         env = os.environ.copy()
     else:
@@ -196,6 +301,9 @@ def _start_agent_crush(
     wtmcp_port: Optional[int],
     use_sandbox: bool,
     workdir: Optional[str],
+    sandbox_profile: Optional[str] = None,
+    cli_volumes: Optional[list] = None,
+    cli_environment: Optional[dict] = None,
 ) -> None:
     """Start crush agent."""
     if use_sandbox:
@@ -234,7 +342,9 @@ def _start_agent_crush(
         json.dump(config_data, f, indent=2)
 
     if use_sandbox:
-        sandbox_prefix = _build_sandbox_cmd(cfg, workdir, config_dir, wtmcp_port)
+        sandbox_prefix = _build_sandbox_cmd(
+            cfg, workdir, config_dir, wtmcp_port, sandbox_profile, cli_volumes, cli_environment
+        )
         cmd = sandbox_prefix + [
             "env",
             f"CRUSH_CONFIG={config_file}",
@@ -275,6 +385,9 @@ def _start_agent_claude(
     wtmcp_port: Optional[int],
     use_sandbox: bool,
     workdir: Optional[str],
+    sandbox_profile: Optional[str] = None,
+    cli_volumes: Optional[list] = None,
+    cli_environment: Optional[dict] = None,
 ) -> None:
     """Start claude agent."""
     inference_port = config.get_config_value(cfg, "inference.port", 8081)
@@ -319,7 +432,15 @@ def _start_agent_claude(
         sandbox_config_dir = (
             os.path.join(workdir or os.getcwd(), ".aitool-session") if mcp_config else None
         )
-        sandbox_prefix = _build_sandbox_cmd(cfg, workdir, sandbox_config_dir, wtmcp_port)
+        sandbox_prefix = _build_sandbox_cmd(
+            cfg,
+            workdir,
+            sandbox_config_dir,
+            wtmcp_port,
+            sandbox_profile,
+            cli_volumes,
+            cli_environment,
+        )
         env_pairs = [f"{k}={v}" for k, v in anthropic_env.items()]
         cmd = sandbox_prefix + ["env"] + env_pairs + agent_args
         env = os.environ.copy()
@@ -359,6 +480,9 @@ def cmd_agent(
     no_sandbox: bool = False,
     no_cwd: bool = False,
     sandbox_cwd: Optional[str] = None,
+    sandbox_profile: Optional[str] = None,
+    sandbox_volume: Optional[list] = None,
+    sandbox_environment: Optional[dict] = None,
 ) -> None:
     """Start interactive agent session (requires TTY).
 
@@ -371,6 +495,9 @@ def cmd_agent(
         no_sandbox: Skip arapuca sandbox regardless of config
         no_cwd: Do not mount the current directory in the sandbox
         sandbox_cwd: Override the directory mounted and set as cwd in the sandbox
+        sandbox_profile: Use specific sandbox profile for this run
+        sandbox_volume: List of volumes to mount in the sandbox
+        sandbox_environment: Dict of environment variables to set in the sandbox
 
     Raises:
         RuntimeError: If not in TTY or config invalid
@@ -439,11 +566,38 @@ def cmd_agent(
     # Start interactive agent
     try:
         if agent_name == "opencode":
-            _start_agent_opencode(agent_path, cfg, wtmcp_port, use_sandbox, workdir)
+            _start_agent_opencode(
+                agent_path,
+                cfg,
+                wtmcp_port,
+                use_sandbox,
+                workdir,
+                sandbox_profile,
+                sandbox_volume,
+                sandbox_environment,
+            )
         elif agent_name == "crush":
-            _start_agent_crush(agent_path, cfg, wtmcp_port, use_sandbox, workdir)
+            _start_agent_crush(
+                agent_path,
+                cfg,
+                wtmcp_port,
+                use_sandbox,
+                workdir,
+                sandbox_profile,
+                sandbox_volume,
+                sandbox_environment,
+            )
         elif agent_name == "claude":
-            _start_agent_claude(agent_path, cfg, wtmcp_port, use_sandbox, workdir)
+            _start_agent_claude(
+                agent_path,
+                cfg,
+                wtmcp_port,
+                use_sandbox,
+                workdir,
+                sandbox_profile,
+                sandbox_volume,
+                sandbox_environment,
+            )
     finally:
         # Cleanup services unless user requested to keep them
         from aitool import wtmcp

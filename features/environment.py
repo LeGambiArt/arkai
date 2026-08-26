@@ -60,6 +60,16 @@ def before_scenario(context, scenario):
     context.config_dir = os.path.join(context.temp_dir, ".aitool")
     os.makedirs(context.config_dir, exist_ok=True)
 
+    # Mock get_config_home to return temp directory for sandbox config
+    context.get_config_home_patch = patch.object(
+        utils, "get_config_home", return_value=context.config_dir
+    )
+    context.get_config_home_patch.start()
+
+    # Set XDG_CONFIG_HOME so subprocess calls (e.g., in sandbox BDD tests) use the temp dir
+    context._original_xdg_config_home = os.environ.get("XDG_CONFIG_HOME")
+    os.environ["XDG_CONFIG_HOME"] = context.config_dir
+
     # Initialize models_dir to None; steps can set it as needed
     context.models_dir = None
     context.original_get_data_home = None
@@ -72,6 +82,7 @@ def after_scenario(context, scenario):
         "port_in_use_patch",
         "is_running_patch",
         "wtmcp_running_patch",
+        "get_config_home_patch",
     ]
     for patch_name in patches_to_stop:
         if hasattr(context, patch_name):

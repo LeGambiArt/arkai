@@ -76,6 +76,11 @@ def step_check_error(context, text):
     assert text in context.stderr, f"'{text}' not found in stderr:\n{context.stderr}"
 
 
+@then('the output does not contain "{text}"')  # ty: ignore[call-non-callable]
+def step_check_output_not_contains(context, text):
+    assert text not in context.stdout, f"'{text}' unexpectedly found in stdout:\n{context.stdout}"
+
+
 @then("the file .aitool.yaml exists with default values")  # ty: ignore[call-non-callable]
 def step_check_config_created(context):
     assert os.path.exists(".aitool.yaml"), ".aitool.yaml was not created"

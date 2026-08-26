@@ -127,6 +127,97 @@ class TestConfigValidation:
         assert config.validate_config(cfg) is False
 
 
+class TestValidateVolumes:
+    """Test volume validation in config."""
+
+    BASE_CFG = {
+        "agent": {"name": "opencode"},
+        "inference": {"model": "test.gguf"},
+    }
+
+    def _cfg_with_sandbox(self, sandbox: dict) -> dict:
+        return {**self.BASE_CFG, "sandbox": sandbox}
+
+    def test_valid_volume_path_only(self) -> None:
+        """A plain path volume is valid."""
+        cfg = self._cfg_with_sandbox({"volume": ["/data"]})
+        assert config.validate_config(cfg) is True
+
+    def test_valid_volume_with_ro_flag(self) -> None:
+        """A volume with :ro flag is valid."""
+        cfg = self._cfg_with_sandbox({"volume": ["/data:ro"]})
+        assert config.validate_config(cfg) is True
+
+    def test_invalid_volume_not_absolute(self) -> None:
+        """A relative path volume is invalid."""
+        cfg = self._cfg_with_sandbox({"volume": ["data/subdir"]})
+        assert config.validate_config(cfg) is False
+
+    def test_invalid_volume_bad_flag(self) -> None:
+        """An unsupported flag is invalid."""
+        cfg = self._cfg_with_sandbox({"volume": ["/data:rw"]})
+        assert config.validate_config(cfg) is False
+
+    def test_invalid_volume_conflicting_flags(self) -> None:
+        """Same path with different flags is invalid."""
+        cfg = self._cfg_with_sandbox({"volume": ["/data", "/data:ro"]})
+        assert config.validate_config(cfg) is False
+
+    def test_valid_profile_volumes(self) -> None:
+        """Profile volumes are also validated."""
+        cfg = self._cfg_with_sandbox({"profiles": {"gpu": {"volume": ["/data:ro", "/logs"]}}})
+        assert config.validate_config(cfg) is True
+
+    def test_invalid_profile_volume_conflict(self) -> None:
+        """Conflicting volumes in a profile are invalid."""
+        cfg = self._cfg_with_sandbox({"profiles": {"gpu": {"volume": ["/data", "/data:ro"]}}})
+        assert config.validate_config(cfg) is False
+
+
+class TestValidateEnvironment:
+    """Test environment variable validation in config."""
+
+    BASE_CFG = {
+        "agent": {"name": "opencode"},
+        "inference": {"model": "test.gguf"},
+    }
+
+    def _cfg_with_sandbox(self, sandbox: dict) -> dict:
+        return {**self.BASE_CFG, "sandbox": sandbox}
+
+    def test_valid_environment_dict(self) -> None:
+        """A valid environment dict passes."""
+        cfg = self._cfg_with_sandbox({"environment": {"FOO": "bar", "COUNT": 42}})
+        assert config.validate_config(cfg) is True
+
+    def test_invalid_environment_not_dict(self) -> None:
+        """environment must be a dict, not a list."""
+        cfg = self._cfg_with_sandbox({"environment": ["FOO=bar"]})
+        assert config.validate_config(cfg) is False
+
+    def test_invalid_environment_non_scalar_value(self) -> None:
+        """environment values must be scalar (not dict or list)."""
+        cfg = self._cfg_with_sandbox({"environment": {"FOO": {"nested": "dict"}}})
+        assert config.validate_config(cfg) is False
+
+    def test_invalid_environment_list_value(self) -> None:
+        """environment values must not be lists."""
+        cfg = self._cfg_with_sandbox({"environment": {"FOO": ["a", "b"]}})
+        assert config.validate_config(cfg) is False
+
+    def test_valid_profile_environment(self) -> None:
+        """Profile environment dict is also validated."""
+        cfg = self._cfg_with_sandbox(
+            {"profiles": {"gpu": {"environment": {"CUDA_VISIBLE_DEVICES": "0"}}}}
+        )
+        assert config.validate_config(cfg) is True
+
+    def test_invalid_profile_environment_not_dict(self) -> None:
+        """Profile environment must be a dict."""
+        cfg = self._cfg_with_sandbox({"profiles": {"gpu": {"environment": "FOO=bar"}}})
+        assert config.validate_config(cfg) is False
+
+
 class TestGetConfigValue:
     def test_get_simple_value(self):
         cfg = {"agent": {"name": "opencode"}}

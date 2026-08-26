@@ -8,6 +8,7 @@ from aitool import agent as agent_module
 from aitool import config as config_module
 from aitool import engine as engine_module
 from aitool import model as model_module
+from aitool import sandbox as sandbox_module
 from aitool import wtmcp as wtmcp_module
 
 
@@ -99,6 +100,49 @@ def main():
         "--port", type=int, help="Port to show status for (or all if not specified)"
     )
 
+    # Sandbox command
+    sandbox_parser = subparsers.add_parser("sandbox", help="Manage sandbox profiles")
+    sandbox_subparsers = sandbox_parser.add_subparsers(dest="sandbox_cmd")
+
+    list_parser = sandbox_subparsers.add_parser("list", help="List sandbox profiles")
+    list_parser = list_parser  # noqa: F841 - keep reference for consistency
+
+    show_parser = sandbox_subparsers.add_parser("show", help="Show sandbox profile details")
+    show_parser.add_argument("profile_name", help="Profile name to show (or 'default'/'active')")
+
+    create_parser = sandbox_subparsers.add_parser("create", help="Create sandbox profile")
+    create_parser.add_argument("name", help="Profile name")
+    create_parser.add_argument("--from", dest="from_profile", help="Base profile to copy from")
+    create_parser.add_argument("--path", help="Path to arapuca binary")
+    create_parser.add_argument("--memory", type=int, help="Memory in MB")
+    create_parser.add_argument("--cpus", type=int, help="CPU count")
+    create_parser.add_argument("--pids", type=int, help="PID limit")
+    create_parser.add_argument("--timeout", type=int, help="Timeout in seconds")
+    create_parser.add_argument(
+        "-v",
+        "--volume",
+        action="append",
+        dest="volumes",
+        help="Mount a volume in the sandbox (format: /path or /path:ro)",
+    )
+    create_parser.add_argument(
+        "-e",
+        "--env",
+        action="append",
+        dest="environment",
+        metavar="KEY=VALUE",
+        help="Set an environment variable in the sandbox (KEY=VALUE). Can be used multiple times",
+    )
+
+    delete_parser = sandbox_subparsers.add_parser("delete", help="Delete sandbox profile")
+    delete_parser.add_argument("name", help="Profile name")
+
+    setdef_parser = sandbox_subparsers.add_parser("set-default", help="Set profile as default")
+    setdef_parser.add_argument("name", help="Profile name")
+
+    active_parser = sandbox_subparsers.add_parser("active", help="Set active profile")
+    active_parser.add_argument("profile_name", nargs="?", help="Profile name (or empty to clear)")
+
     # Agent command
     agent_parser = subparsers.add_parser("agent", help="Start interactive agent")
     agent_parser.add_argument("--agent", help="Override agent")
@@ -114,6 +158,26 @@ def main():
     )
     agent_parser.add_argument("--no-mcp", action="store_true", help="Skip wtmcp initialization")
     agent_parser.add_argument("--no-sandbox", action="store_true", help="Skip arapuca sandbox")
+    agent_parser.add_argument(
+        "--sandbox",
+        metavar="PROFILE",
+        help="Use specific sandbox profile for this run",
+    )
+    agent_parser.add_argument(
+        "-v",
+        "--volume",
+        action="append",
+        dest="volumes",
+        help="Mount a volume in the sandbox (format: /path or /path:ro)",
+    )
+    agent_parser.add_argument(
+        "-e",
+        "--env",
+        action="append",
+        dest="environment",
+        metavar="KEY=VALUE",
+        help="Set an environment variable in the sandbox (KEY=VALUE). Can be used multiple times",
+    )
     cwd_group = agent_parser.add_mutually_exclusive_group()
     cwd_group.add_argument(
         "--no-cwd", action="store_true", help="Do not mount the current directory in the sandbox"
@@ -172,7 +236,42 @@ def main():
                 wtmcp_module.cmd_wtmcp_status(args.port)
             else:
                 wtmcp_parser.print_help()
+        elif args.command == "sandbox":
+            if args.sandbox_cmd == "create":
+                create_env = (
+                    {k: v for e in args.environment for k, _, v in [e.partition("=")]}
+                    if args.environment
+                    else None
+                )
+                sandbox_module.cmd_sandbox_create(
+                    args.name,
+                    args.from_profile,
+                    args.path,
+                    args.memory,
+                    args.cpus,
+                    args.pids,
+                    args.timeout,
+                    args.volumes,
+                    create_env,
+                )
+            elif args.sandbox_cmd == "list":
+                sandbox_module.cmd_sandbox_list()
+            elif args.sandbox_cmd == "show":
+                sandbox_module.cmd_sandbox_show(args.profile_name)
+            elif args.sandbox_cmd == "delete":
+                sandbox_module.cmd_sandbox_delete(args.name)
+            elif args.sandbox_cmd == "set-default":
+                sandbox_module.cmd_sandbox_set_default(args.name)
+            elif args.sandbox_cmd == "active":
+                sandbox_module.cmd_sandbox_active(args.profile_name)
+            else:
+                sandbox_parser.print_help()
         elif args.command == "agent":
+            agent_env = (
+                {k: v for e in args.environment for k, _, v in [e.partition("=")]}
+                if args.environment
+                else None
+            )
             agent_module.cmd_agent(
                 args.agent,
                 args.model,
@@ -182,6 +281,9 @@ def main():
                 args.no_sandbox,
                 args.no_cwd,
                 args.cwd,
+                args.sandbox,
+                args.volumes,
+                agent_env,
             )
         else:
             parser.print_help()

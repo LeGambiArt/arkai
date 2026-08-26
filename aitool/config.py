@@ -1,5 +1,6 @@
 """Configuration loading, merging, and validation."""
 
+import copy
 import os
 import sys
 from typing import Any, Optional
@@ -23,11 +24,13 @@ DEFAULTS = {
     },
     "sandbox": {
         "enabled": True,
-        "bin": "arapuca",
+        "path": "arapuca",
         "memory_mb": 2048,
-        "cpus": 200,
+        "cpus": 2,
         "pids": 256,
         "timeout": 0,
+        "active_profile": None,
+        "profiles": {},
     },
 }
 
@@ -39,8 +42,8 @@ def load_config(project_dir: str = ".") -> dict:
 
     Precedence: defaults < user config < project config
     """
-    # Start with defaults
-    config = DEFAULTS.copy()
+    # Start with defaults (deep copy to prevent mutation of module-level DEFAULTS)
+    config = copy.deepcopy(DEFAULTS)
 
     # Load user config if exists
     user_config_path = os.path.join(utils.get_config_home(), "aitool.yaml")
@@ -105,6 +108,41 @@ def validate_config(config: dict) -> bool:
     if not isinstance(context_size, int) or context_size <= 0:
         utils.error(f"inference.context_size must be positive integer, got {context_size}")
         valid = False
+
+    # Validate sandbox volumes at root level
+    root_volumes = get_config_value(config, "sandbox.volume", [])
+    if root_volumes:
+        err = utils.validate_volumes(root_volumes)
+        if err:
+            utils.error(f"sandbox.volume: {err}")
+            valid = False
+
+    # Validate sandbox environment at root level
+    root_env = get_config_value(config, "sandbox.environment")
+    if root_env is not None:
+        err = utils.validate_environment(root_env)
+        if err:
+            utils.error(f"sandbox.environment: {err}")
+            valid = False
+
+    # Validate volumes and environment in each sandbox profile
+    profiles = get_config_value(config, "sandbox.profiles", {})
+    if profiles:
+        for profile_name, profile in profiles.items():
+            if not isinstance(profile, dict):
+                continue
+            profile_vols = profile.get("volume", [])
+            if profile_vols:
+                err = utils.validate_volumes(profile_vols)
+                if err:
+                    utils.error(f"sandbox.profiles.{profile_name}.volume: {err}")
+                    valid = False
+            profile_env = profile.get("environment")
+            if profile_env is not None:
+                err = utils.validate_environment(profile_env)
+                if err:
+                    utils.error(f"sandbox.profiles.{profile_name}.environment: {err}")
+                    valid = False
 
     return valid
 
