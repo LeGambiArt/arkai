@@ -1,7 +1,6 @@
 """Step definitions for engine management features."""
 
 import os
-import socket
 import sys
 from io import StringIO
 from unittest.mock import patch
@@ -13,10 +12,11 @@ from aitool import engine, utils
 
 @given("port {port:d} is in use")  # ty: ignore[call-non-callable]
 def step_port_in_use(context, port):
-    """Bind a socket to the port to make it unavailable."""
-    sock = socket.socket()
-    sock.bind(("127.0.0.1", port))
-    context.port_socket = sock
+    """Mock the port as in use so the test is independent of real port state."""
+    if hasattr(context, "port_in_use_patch") and context.port_in_use_patch:
+        context.port_in_use_patch.stop()
+    context.port_in_use_patch = patch.object(utils, "is_port_in_use", return_value=True)
+    context.port_in_use_patch.start()
 
 
 @given("the inference server is running")  # ty: ignore[call-non-callable]

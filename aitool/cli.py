@@ -4,6 +4,7 @@ import argparse
 import sys
 
 from aitool import __version__
+from aitool import agent as agent_module
 from aitool import config as config_module
 from aitool import engine as engine_module
 from aitool import model as model_module
@@ -98,6 +99,20 @@ def main():
         "--port", type=int, help="Port to show status for (or all if not specified)"
     )
 
+    # Agent command
+    agent_parser = subparsers.add_parser("agent", help="Start interactive agent")
+    agent_parser.add_argument("--agent", help="Override agent")
+    agent_parser.add_argument("--model", help="Override model")
+    agent_parser.add_argument(
+        "-I",
+        "--keep-inference",
+        action="store_true",
+        help="Keep inference server running after exit",
+    )
+    agent_parser.add_argument(
+        "-M", "--keep-mcp", action="store_true", help="Keep wtmcp server running after exit"
+    )
+
     args = parser.parse_args()
 
     try:
@@ -148,6 +163,8 @@ def main():
                 wtmcp_module.cmd_wtmcp_status(args.port)
             else:
                 wtmcp_parser.print_help()
+        elif args.command == "agent":
+            agent_module.cmd_agent(args.agent, args.model, args.keep_inference, args.keep_mcp)
         else:
             parser.print_help()
     except Exception as e:

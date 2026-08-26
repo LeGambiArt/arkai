@@ -3,12 +3,30 @@
 import os
 import shutil
 import tempfile
+from unittest.mock import patch
 
 from aitool import engine, utils
 
 
 def before_scenario(context, scenario):
     """Set up test environment before each scenario."""
+    # Stop any lingering patches from previous scenarios
+    patches_to_clean = [
+        "port_in_use_patch",
+        "port_in_use_patch_utils",
+        "port_in_use_patch_engine",
+        "is_running_patch",
+        "wtmcp_running_patch",
+    ]
+    for patch_name in patches_to_clean:
+        if hasattr(context, patch_name):
+            patch_obj = getattr(context, patch_name)
+            if patch_obj:
+                try:
+                    patch_obj.stop()
+                except Exception:
+                    pass
+
     # Clean up any leftover PID and state files from previous test
     pid_path = engine.get_inference_pid_path()
     if os.path.exists(pid_path):
@@ -29,6 +47,10 @@ def before_scenario(context, scenario):
                 if os.path.exists(filepath):
                     os.remove(filepath)
 
+    # Mock is_port_in_use to False by default so tests don't depend on real port state
+    context.port_in_use_patch = patch.object(utils, "is_port_in_use", return_value=False)
+    context.port_in_use_patch.start()
+
     # Create temporary working directory
     context.temp_dir = tempfile.mkdtemp()
     context.original_dir = os.getcwd()
@@ -46,11 +68,19 @@ def before_scenario(context, scenario):
 def after_scenario(context, scenario):
     """Clean up after each scenario."""
     # Stop any running patches
-    if hasattr(context, "is_running_patch") and context.is_running_patch:
-        context.is_running_patch.stop()
-
-    if hasattr(context, "wtmcp_running_patch") and context.wtmcp_running_patch:
-        context.wtmcp_running_patch.stop()
+    patches_to_stop = [
+        "port_in_use_patch",
+        "is_running_patch",
+        "wtmcp_running_patch",
+    ]
+    for patch_name in patches_to_stop:
+        if hasattr(context, patch_name):
+            patch_obj = getattr(context, patch_name)
+            if patch_obj:
+                try:
+                    patch_obj.stop()
+                except Exception:
+                    pass
 
     # Clean up PID and state files
     pid_path = engine.get_inference_pid_path()
