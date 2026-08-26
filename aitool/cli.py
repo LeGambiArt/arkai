@@ -145,8 +145,8 @@ def main():
 
     # Agent command
     agent_parser = subparsers.add_parser("agent", help="Start interactive agent")
-    agent_parser.add_argument("--agent", help="Override agent")
-    agent_parser.add_argument("--model", help="Override model")
+    agent_parser.add_argument("-a", "--agent", help="Override agent")
+    agent_parser.add_argument("-m", "--model", help="Override model")
     agent_parser.add_argument(
         "-I",
         "--keep-inference",
@@ -159,6 +159,7 @@ def main():
     agent_parser.add_argument("--no-mcp", action="store_true", help="Skip wtmcp initialization")
     agent_parser.add_argument("--no-sandbox", action="store_true", help="Skip arapuca sandbox")
     agent_parser.add_argument(
+        "-s",
         "--sandbox",
         metavar="PROFILE",
         help="Use specific sandbox profile for this run",
