@@ -1,5 +1,6 @@
 """Step definitions for wtmcp plugin management features."""
 
+import contextlib
 import sys
 from io import StringIO
 
@@ -56,77 +57,78 @@ tool discovery: progressive
 
         parts = cmd.split()
 
-        # Patch subprocess.run, subprocess.Popen, utils.resolve_binary, and is_port_in_use
-        with mock_patch("subprocess.run") as mock_run:
-            with mock_patch("subprocess.Popen") as mock_popen:
-                with mock_patch.object(
-                    aitool_utils, "resolve_binary", return_value="/usr/bin/wtmcp"
-                ):
-                    with mock_patch.object(aitool_utils, "is_port_in_use", return_value=False):
-                        # Mock subprocess.run for wtmcp.cmd_wtmcp_list (wtmcp check)
-                        mock_result = MagicMock()
-                        mock_result.returncode = 0
-                        mock_result.stdout = mock_wtmcp_output
-                        mock_run.return_value = mock_result
+        patches = [
+            mock_patch("subprocess.run"),
+            mock_patch("subprocess.Popen"),
+            mock_patch.object(aitool_utils, "resolve_binary", return_value="/usr/bin/wtmcp"),
+            mock_patch.object(aitool_utils, "is_port_in_use", return_value=False),
+            mock_patch("aitool.wtmcp.time.sleep"),
+        ]
+        with contextlib.ExitStack() as stack:
+            mock_run, mock_popen, *_ = [stack.enter_context(p) for p in patches]
 
-                        # Mock subprocess.Popen for wtmcp start
-                        mock_proc = MagicMock()
-                        mock_proc.pid = 12345
-                        mock_popen.return_value = mock_proc
+            mock_result = MagicMock()
+            mock_result.returncode = 0
+            mock_result.stdout = mock_wtmcp_output
+            mock_run.return_value = mock_result
 
-                        if parts[0] == "list":
-                            port = None
-                            if len(parts) > 1 and parts[1] == "--port" and len(parts) > 2:
-                                port = int(parts[2])
-                            wtmcp.cmd_wtmcp_list(port)
-                        elif parts[0] == "enable" and len(parts) > 1:
-                            plugin_name = parts[1]
-                            wtmcp.cmd_wtmcp_enable(plugin_name)
-                        elif parts[0] == "disable" and len(parts) > 1:
-                            plugin_name = parts[1]
-                            wtmcp.cmd_wtmcp_disable(plugin_name)
-                        elif parts[0] == "start":
-                            path = None
-                            port = None
-                            enable_plugins = []
-                            disable_plugins = []
+            mock_proc = MagicMock()
+            mock_proc.pid = 12345
+            mock_popen.return_value = mock_proc
 
-                            i = 1
-                            while i < len(parts):
-                                if parts[i] == "--path" and i + 1 < len(parts):
-                                    path = parts[i + 1]
-                                    i += 2
-                                elif parts[i] == "--port" and i + 1 < len(parts):
-                                    port = int(parts[i + 1])
-                                    i += 2
-                                elif parts[i] == "--enable" and i + 1 < len(parts):
-                                    enable_plugins.append(parts[i + 1])
-                                    i += 2
-                                elif parts[i] == "--disable" and i + 1 < len(parts):
-                                    disable_plugins.append(parts[i + 1])
-                                    i += 2
-                                else:
-                                    i += 1
+            if parts[0] == "list":
+                port = None
+                if len(parts) > 1 and parts[1] == "--port" and len(parts) > 2:
+                    port = int(parts[2])
+                wtmcp.cmd_wtmcp_list(port)
+            elif parts[0] == "enable" and len(parts) > 1:
+                plugin_name = parts[1]
+                wtmcp.cmd_wtmcp_enable(plugin_name)
+            elif parts[0] == "disable" and len(parts) > 1:
+                plugin_name = parts[1]
+                wtmcp.cmd_wtmcp_disable(plugin_name)
+            elif parts[0] == "start":
+                path = None
+                port = None
+                enable_plugins = []
+                disable_plugins = []
 
-                            wtmcp.cmd_wtmcp_start(
-                                path,
-                                port,
-                                enable_plugins if enable_plugins else None,
-                                disable_plugins if disable_plugins else None,
-                            )
-                        elif parts[0] == "stop":
-                            port = None
-                            if len(parts) > 1 and parts[1] == "--port" and len(parts) > 2:
-                                port = int(parts[2])
-                            wtmcp.cmd_wtmcp_stop(port)
-                        elif parts[0] == "status":
-                            port = None
-                            if len(parts) > 1 and parts[1] == "--port" and len(parts) > 2:
-                                port = int(parts[2])
-                            wtmcp.cmd_wtmcp_status(port)
-                        else:
-                            context.exit_code = 1
-                            stderr_capture.write(f"Unknown command: {parts[0]}")
+                i = 1
+                while i < len(parts):
+                    if parts[i] == "--path" and i + 1 < len(parts):
+                        path = parts[i + 1]
+                        i += 2
+                    elif parts[i] == "--port" and i + 1 < len(parts):
+                        port = int(parts[i + 1])
+                        i += 2
+                    elif parts[i] == "--enable" and i + 1 < len(parts):
+                        enable_plugins.append(parts[i + 1])
+                        i += 2
+                    elif parts[i] == "--disable" and i + 1 < len(parts):
+                        disable_plugins.append(parts[i + 1])
+                        i += 2
+                    else:
+                        i += 1
+
+                wtmcp.cmd_wtmcp_start(
+                    path,
+                    port,
+                    enable_plugins if enable_plugins else None,
+                    disable_plugins if disable_plugins else None,
+                )
+            elif parts[0] == "stop":
+                port = None
+                if len(parts) > 1 and parts[1] == "--port" and len(parts) > 2:
+                    port = int(parts[2])
+                wtmcp.cmd_wtmcp_stop(port)
+            elif parts[0] == "status":
+                port = None
+                if len(parts) > 1 and parts[1] == "--port" and len(parts) > 2:
+                    port = int(parts[2])
+                wtmcp.cmd_wtmcp_status(port)
+            else:
+                context.exit_code = 1
+                stderr_capture.write(f"Unknown command: {parts[0]}")
     except SystemExit as e:
         context.exit_code = e.code if e.code else 1
     except Exception as e:
