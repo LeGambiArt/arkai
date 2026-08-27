@@ -19,6 +19,13 @@ Feature: Inference Engine Management
     Then the exit code is 1
     And the error contains "Port 8081 already in use"
 
+  Scenario: Start fails if custom port in use
+    Given a valid .aitool.yaml file
+    And port 9090 is in use
+    When I run "aitool inference start --port 9090"
+    Then the exit code is 1
+    And the error contains "Port 9090 already in use"
+
   Scenario: Start fails if model not found
     Given a valid .aitool.yaml file
     When I run "aitool inference start --model nonexistent.gguf"

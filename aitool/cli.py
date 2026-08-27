@@ -64,6 +64,7 @@ def main():
     start_parser.add_argument("--model", help="Override model from config")
     start_parser.add_argument("--gpu-layers", type=int, help="Override GPU layers")
     start_parser.add_argument("--context", type=int, help="Override context size")
+    start_parser.add_argument("--port", type=int, help="Override port from config")
     inference_subparsers.add_parser("stop", help="Stop inference server")
     inference_subparsers.add_parser("status", help="Show inference server status")
 
@@ -216,7 +217,7 @@ def main():
                 model_parser.print_help()
         elif args.command == "inference":
             if args.inference_cmd == "start":
-                engine_module.cmd_engine_start(args.model, args.gpu_layers, args.context)
+                engine_module.cmd_engine_start(args.model, args.gpu_layers, args.context, args.port)
             elif args.inference_cmd == "stop":
                 engine_module.cmd_engine_stop()
             elif args.inference_cmd == "status":

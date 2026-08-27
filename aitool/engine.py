@@ -39,6 +39,7 @@ def cmd_engine_start(
     model: Optional[str] = None,
     gpu_layers: Optional[int] = None,
     context_size: Optional[int] = None,
+    port: Optional[int] = None,
 ) -> None:
     """Start inference server (llama-server).
 
@@ -46,6 +47,7 @@ def cmd_engine_start(
         model: Override model from config
         gpu_layers: Override GPU layers from config
         context_size: Override context size from config
+        port: Override port from config
     """
     # Load config
     cfg = config.load_config()
@@ -59,6 +61,8 @@ def cmd_engine_start(
         cfg["inference"]["gpu_layers"] = gpu_layers
     if context_size is not None:
         cfg["inference"]["context_size"] = context_size
+    if port is not None:
+        cfg["inference"]["port"] = port
 
     # Check if already running
     if is_inference_running():

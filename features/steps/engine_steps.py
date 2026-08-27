@@ -52,6 +52,7 @@ def step_run_aitool_engine(context, cmd):
             model = None
             gpu_layers = None
             context_size = None
+            port = None
 
             i = 1
             while i < len(parts):
@@ -64,10 +65,13 @@ def step_run_aitool_engine(context, cmd):
                 elif parts[i] == "--context" and i + 1 < len(parts):
                     context_size = int(parts[i + 1])
                     i += 2
+                elif parts[i] == "--port" and i + 1 < len(parts):
+                    port = int(parts[i + 1])
+                    i += 2
                 else:
                     i += 1
 
-            engine.cmd_engine_start(model, gpu_layers, context_size)
+            engine.cmd_engine_start(model, gpu_layers, context_size, port)
         elif parts[0] == "stop":
             engine.cmd_engine_stop()
         elif parts[0] == "status":

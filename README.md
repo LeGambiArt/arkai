@@ -169,7 +169,7 @@ background and stays running between agent sessions.
 ### Start
 
 ```bash
-aitool inference start [--model NAME] [--gpu-layers N] [--context N]
+aitool inference start [--model NAME] [--gpu-layers N] [--context N] [--port N]
 ```
 
 Starts `llama-server` on `localhost:8081` (default). CLI flags override the
@@ -180,6 +180,7 @@ config values for that run only.
 | `--model NAME` | Override model filename from config |
 | `--gpu-layers N` | Override number of GPU layers (`-1` = all) |
 | `--context N` | Override context window size in tokens |
+| `--port N` | Override port from config |
 
 **GPU detection:** aitool auto-detects Metal (Apple Silicon), CUDA (NVIDIA),
 ROCm (AMD), or falls back to CPU. Setting `gpu_layers: -1` in config offloads
