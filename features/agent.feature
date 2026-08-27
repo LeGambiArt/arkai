@@ -40,3 +40,8 @@ Feature: Agent Execution
     Then the exit code is 0
     And wtmcp was not started
     And the agent was not sandboxed
+
+  Scenario: Agent accepts hf: prefix in --model flag
+    Given a .arkai.yaml file with no model configured
+    When I run "arkai agent start" with "-m hf:ibm-granite/granite-4.1-8b-GGUF" in a TTY
+    Then the exit code is 0

@@ -88,14 +88,14 @@ arkai model download ibm-granite/granite-4.1-8b-GGUF
 Start agent:
 
 ```
-arkai agent start -m ibm-granite/granite-4.1-8b-GGUF -a opencode
+arkai agent start -m hf:ibm-granite/granite-4.1-8b-GGUF -a opencode
 ```
 
 If you think you only live once (or don't have `wtmcp` or `arapuca` installed):
 
 ```
 arkai agent start \
-    -m ibm-granite/granite-4.1-8b-GGUF \
+    -m hf:ibm-granite/granite-4.1-8b-GGUF \
     -a opencode \
     --no-sandbox \
     --no-mcp
@@ -182,6 +182,8 @@ config values for that run only.
 | `--context N` | Override context window size in tokens |
 | `--port N` | Override port from config |
 
+> Note: using model name as `hf:org/model` with use a HuggingFace model.
+
 **GPU detection:** arkai auto-detects Metal (Apple Silicon), CUDA (NVIDIA),
 ROCm (AMD), or falls back to CPU. Setting `gpu_layers: -1` in config offloads
 all layers to GPU.
@@ -232,6 +234,8 @@ arkai agent start [-a AGENT] [-m MODEL] [options]
 | `-e/--env KEY=VALUE` | Set env var in sandbox (repeatable) |
 | `--no-cwd` | Do not mount current directory in sandbox |
 | `--cwd PATH` | Override directory mounted as cwd in sandbox |
+
+> Note: using model name as `hf:org/model` with use a HuggingFace model.
 
 ### Lifecycle
 

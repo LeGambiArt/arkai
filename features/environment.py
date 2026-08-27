@@ -17,6 +17,8 @@ def before_scenario(context, scenario):
         "port_in_use_patch_engine",
         "is_running_patch",
         "wtmcp_running_patch",
+        "inference_popen_patch",
+        "inference_run_command_patch",
     ]
     for patch_name in patches_to_clean:
         if hasattr(context, patch_name):
@@ -83,6 +85,8 @@ def after_scenario(context, scenario):
         "is_running_patch",
         "wtmcp_running_patch",
         "get_config_home_patch",
+        "inference_popen_patch",
+        "inference_run_command_patch",
     ]
     for patch_name in patches_to_stop:
         if hasattr(context, patch_name):

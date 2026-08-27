@@ -38,3 +38,9 @@ Feature: Inference Engine Management
     When I run "arkai inference status"
     Then the exit code is 0
     And the output contains "running"
+
+  Scenario: Start with hf: prefix does not fail with model not found error
+    Given a valid .arkai.yaml file
+    And subprocess calls are mocked for inference start
+    When I run "arkai inference start --model hf:ibm-granite/granite-4.1-8b-GGUF"
+    Then the exit code is 0

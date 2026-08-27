@@ -514,7 +514,11 @@ def cmd_agent(
     if agent_name:
         cfg["agent"]["name"] = agent_name
     if model:
-        cfg["inference"]["model"] = model
+        if model.startswith("hf:"):
+            cfg["inference"]["hf"] = model[3:]
+            cfg["inference"].pop("model", None)
+        else:
+            cfg["inference"]["model"] = model
 
     config.validate_config(cfg)
 
@@ -544,7 +548,7 @@ def cmd_agent(
     # Ensure inference is running
     if not engine.is_inference_running():
         try:
-            engine.cmd_engine_start()
+            engine.cmd_engine_start(model=model)
         except RuntimeError as e:
             utils.error(str(e), 1)
             sys.exit(1)

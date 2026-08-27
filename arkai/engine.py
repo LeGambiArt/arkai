@@ -54,7 +54,11 @@ def cmd_engine_start(
 
     # Apply CLI overrides before validation so they can satisfy required fields
     if model:
-        cfg["inference"]["model"] = model
+        if model.startswith("hf:"):
+            cfg["inference"]["hf"] = model[3:]
+            cfg["inference"].pop("model", None)
+        else:
+            cfg["inference"]["model"] = model
     if gpu_layers is not None:
         cfg["inference"]["gpu_layers"] = gpu_layers
     if context_size is not None:
