@@ -1,10 +1,10 @@
-# aitool
+# arkai
 
-aitool is a CLI for running AI agents with local models on your own hardware. It orchestrates three services — a llama.cpp inference server, an MCP plugin server (wtmcp), and optionally an arapuca sandbox — so you can launch a fully configured agent session with a single command. Configuration is layered: user-level defaults, per-project overrides, and CLI flags.
+arkai is a CLI for running AI agents with local models on your own hardware. It orchestrates three services — a llama.cpp inference server, an MCP plugin server (wtmcp), and optionally an arapuca sandbox — so you can launch a fully configured agent session with a single command. Configuration is layered: user-level defaults, per-project overrides, and CLI flags.
 
 ## How It Works
 
-When you run `aitool agent start`, it starts `llama-server` (loading your GGUF model), starts wtmcp (which exposes MCP tools to the agent over HTTP), then launches the agent binary configured to talk to both over localhost. Optionally it wraps the agent in an arapuca sandbox that restricts filesystem and network access. On exit, aitool tears down wtmcp — and optionally the inference server — unless `--keep-mcp` or `--keep-inference` are passed.
+When you run `arkai agent start`, it starts `llama-server` (loading your GGUF model), starts wtmcp (which exposes MCP tools to the agent over HTTP), then launches the agent binary configured to talk to both over localhost. Optionally it wraps the agent in an arapuca sandbox that restricts filesystem and network access. On exit, arkai tears down wtmcp — and optionally the inference server — unless `--keep-mcp` or `--keep-inference` are passed.
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -51,8 +51,8 @@ When you run `aitool agent start`, it starts `llama-server` (loading your GGUF m
 1. Clone the repository:
 
    ```bash
-   git clone https://github.com/yourusername/aitool.git
-   cd aitool
+   git clone https://github.com/yourusername/arkai.git
+   cd arkai
    ```
 
 2. Create and activate a Python 3.9 virtual environment:
@@ -82,19 +82,19 @@ When you run `aitool agent start`, it starts `llama-server` (loading your GGUF m
 Download a GGUF model:
 
 ```
-aitool model download ibm-granite/granite-4.1-8b-GGUF
+arkai model download ibm-granite/granite-4.1-8b-GGUF
 ```
 
 Start agent:
 
 ```
-aitool agent start -m ibm-granite/granite-4.1-8b-GGUF -a opencode
+arkai agent start -m ibm-granite/granite-4.1-8b-GGUF -a opencode
 ```
 
 If you think you only live once (or don't have `wtmcp` or `arapuca` installed):
 
 ```
-aitool agent start \
+arkai agent start \
     -m ibm-granite/granite-4.1-8b-GGUF \
     -a opencode \
     --no-sandbox \
@@ -103,27 +103,27 @@ aitool agent start \
 
 ## Managing Models
 
-Models are stored as GGUF files in `~/.local/share/aitool/models/`. The
+Models are stored as GGUF files in `~/.local/share/arkai/models/`. The
 `inference.model` config key refers to the filename within that directory.
 
 ### Download from HuggingFace
 
 ```bash
-aitool model download <hf-repo>
+arkai model download <hf-repo>
 ```
 
 Downloads the repository to the HuggingFace local cache. Requires the `hf` CLI.
 The downloaded files are not yet in a format usable by llama-server — use
-`aitool model convert` next.
+`arkai model convert` next.
 
 ```bash
-aitool model download ibm-granite/granite-4.1-8b-instruct-GGUF
+arkai model download ibm-granite/granite-4.1-8b-instruct-GGUF
 ```
 
 ### Convert to GGUF
 
 ```bash
-aitool model convert <hf-repo-or-name> [-q QUANTIZATION] [-o OUTPUT]
+arkai model convert <hf-repo-or-name> [-q QUANTIZATION] [-o OUTPUT]
 ```
 
 Converts a cached HuggingFace model to GGUF format and places it in the
@@ -132,18 +132,18 @@ models directory. This is the step that makes a model usable by llama-server.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-q/--quantization` | `Q6_K` | Quantization level |
-| `-o/--output` | `~/.local/share/aitool/models/MODEL-QUANTIZATION.gguf` | Output path |
+| `-o/--output` | `~/.local/share/arkai/models/MODEL-QUANTIZATION.gguf` | Output path |
 
 Common quantization levels: `Q4_K_M` (smaller, faster), `Q5_K_M`, `Q6_K` (default, good balance).
 
 ```bash
-aitool model convert ibm-granite/granite-4.1-8b-instruct-GGUF -q Q6_K
+arkai model convert ibm-granite/granite-4.1-8b-instruct-GGUF -q Q6_K
 ```
 
 ### List models
 
 ```bash
-aitool model list
+arkai model list
 ```
 
 Shows two categories: local GGUF files in the models directory, and
@@ -152,24 +152,24 @@ HuggingFace-cached models (requires `hf` CLI).
 ### Remove a model
 
 ```bash
-aitool model remove <model-name>
+arkai model remove <model-name>
 ```
 
 Deletes a local GGUF file by filename (not full path).
 
 ```bash
-aitool model remove granite-4.1-8b-instruct-Q6_K.gguf
+arkai model remove granite-4.1-8b-instruct-Q6_K.gguf
 ```
 
 ## Running an Inference Server
 
-`aitool inference` manages the llama-server process. The server runs in the
+`arkai inference` manages the llama-server process. The server runs in the
 background and stays running between agent sessions.
 
 ### Start
 
 ```bash
-aitool inference start [--model NAME] [--gpu-layers N] [--context N] [--port N]
+arkai inference start [--model NAME] [--gpu-layers N] [--context N] [--port N]
 ```
 
 Starts `llama-server` on `localhost:8081` (default). CLI flags override the
@@ -182,7 +182,7 @@ config values for that run only.
 | `--context N` | Override context window size in tokens |
 | `--port N` | Override port from config |
 
-**GPU detection:** aitool auto-detects Metal (Apple Silicon), CUDA (NVIDIA),
+**GPU detection:** arkai auto-detects Metal (Apple Silicon), CUDA (NVIDIA),
 ROCm (AMD), or falls back to CPU. Setting `gpu_layers: -1` in config offloads
 all layers to GPU.
 
@@ -191,7 +191,7 @@ The inference server exposes an OpenAI-compatible API at `http://127.0.0.1:<port
 ### Status
 
 ```bash
-aitool inference status
+arkai inference status
 ```
 
 Shows: running/stopped, PID, model, port, GPU layers, context size, health,
@@ -200,19 +200,19 @@ and detected GPU type.
 ### Stop
 
 ```bash
-aitool inference stop
+arkai inference stop
 ```
 
 Terminates the server and cleans up PID and state files.
 
 ## Running an Agent
 
-`aitool agent start` is the primary command. It auto-starts the inference server if
+`arkai agent start` is the primary command. It auto-starts the inference server if
 not already running, starts wtmcp (unless `--no-mcp`), launches the agent, and
 tears down services on exit.
 
 ```bash
-aitool agent start [-a AGENT] [-m MODEL] [options]
+arkai agent start [-a AGENT] [-m MODEL] [options]
 ```
 
 **Supported agents:** `opencode`, `crush`, `claude`
@@ -242,21 +242,21 @@ warm for the next session.
 ## Managing Plugins (wtmcp)
 
 wtmcp is an MCP server that exposes tools (plugins) to the agent over HTTP.
-`aitool agent start` manages wtmcp automatically, but you can also control it directly.
+`arkai agent start` manages wtmcp automatically, but you can also control it directly.
 
 ### Enabling and disabling plugins
 
-These commands edit `.aitool.yaml` in the current directory (must exist — run
-`aitool config init` first):
+These commands edit `.arkai.yaml` in the current directory (must exist — run
+`arkai config init` first):
 
 ```bash
-aitool wtmcp enable <plugin>    # add plugin to .aitool.yaml
-aitool wtmcp disable <plugin>   # remove plugin from .aitool.yaml
+arkai wtmcp enable <plugin>    # add plugin to .arkai.yaml
+arkai wtmcp disable <plugin>   # remove plugin from .arkai.yaml
 ```
 
 ### Plugin list semantics
 
-`wtmcp.plugins` in `.aitool.yaml` is a list of plugin names:
+`wtmcp.plugins` in `.arkai.yaml` is a list of plugin names:
 - Key **absent**: inherit plugins from user config
 - `plugins: []`: explicitly disable all plugins
 - `plugins: [workspace, terminal]`: use only these plugins
@@ -264,7 +264,7 @@ aitool wtmcp disable <plugin>   # remove plugin from .aitool.yaml
 ### List plugins
 
 ```bash
-aitool wtmcp list [--port N]
+arkai wtmcp list [--port N]
 ```
 
 Shows all discovered plugins with status:
@@ -277,9 +277,9 @@ Requires a running wtmcp instance. If multiple instances are running, specify `-
 ### Server lifecycle
 
 ```bash
-aitool wtmcp start [--port N] [--enable PLUGIN] [--disable PLUGIN]
-aitool wtmcp stop  [--port N]
-aitool wtmcp status [--port N]
+arkai wtmcp start [--port N] [--enable PLUGIN] [--disable PLUGIN]
+arkai wtmcp stop  [--port N]
+arkai wtmcp status [--port N]
 ```
 
 `--enable`/`--disable` on `start` override the project config plugins for that
@@ -288,7 +288,7 @@ are running.
 
 ## Sandboxing
 
-aitool can wrap agent execution in an arapuca sandbox. The sandbox restricts
+arkai can wrap agent execution in an arapuca sandbox. The sandbox restricts
 what the agent can access:
 
 - **Filesystem:** only explicitly mounted paths are visible
@@ -302,7 +302,7 @@ The current working directory is mounted read-write by default (override with
 ### Profiles
 
 Named profiles are presets stored in your user config under
-`sandbox.profiles.<name>`. When `aitool agent start` runs, it uses the active profile
+`sandbox.profiles.<name>`. When `arkai agent start` runs, it uses the active profile
 (or the root `sandbox` defaults if no profile is active).
 
 Profile names must be alphanumeric + underscores. The names `default` and
@@ -312,49 +312,49 @@ Profile names must be alphanumeric + underscores. The names `default` and
 
 ```bash
 # List all profiles and which is active
-aitool sandbox list
+arkai sandbox list
 
 # Show full details of a profile
-aitool sandbox show <profile-name>
-aitool sandbox show default   # root sandbox defaults
-aitool sandbox show active    # currently active profile
+arkai sandbox show <profile-name>
+arkai sandbox show default   # root sandbox defaults
+arkai sandbox show active    # currently active profile
 
 # Create a profile
-aitool sandbox create <name> [--from PROFILE] [--memory MB] [--cpus N] \
+arkai sandbox create <name> [--from PROFILE] [--memory MB] [--cpus N] \
     [--pids N] [--timeout S] [-v /path[:ro]] [-e KEY=VALUE]
 
 # Delete a profile
-aitool sandbox delete <name>
+arkai sandbox delete <name>
 
 # Promote a profile's settings to root defaults
-aitool sandbox set-default <name>
+arkai sandbox set-default <name>
 
-# Set the active profile (used by aitool agent)
-aitool sandbox active <name>
+# Set the active profile (used by arkai agent)
+arkai sandbox active <name>
 
 # Clear the active profile (use root defaults)
-aitool sandbox active
+arkai sandbox active
 ```
 
 ### Example workflow
 
 ```bash
 # Create a restricted profile for untrusted code
-aitool sandbox create restricted --memory 1024 --cpus 1 --pids 128
+arkai sandbox create restricted --memory 1024 --cpus 1 --pids 128
 
 # Make it the active profile
-aitool sandbox active restricted
+arkai sandbox active restricted
 
 # Run the agent (uses restricted profile automatically)
-aitool agent start
+arkai agent start
 
 # Override to a different profile for one run
-aitool agent start -s dev
+arkai agent start -s dev
 ```
 
 ### Per-run overrides
 
-These flags on `aitool agent start` override the active profile for that run only:
+These flags on `arkai agent start` override the active profile for that run only:
 
 | Flag | Effect |
 |------|--------|
@@ -370,14 +370,14 @@ These flags on `aitool agent start` override the active profile for that run onl
 Configuration is YAML. Precedence (lowest to highest):
 
 1. Built-in defaults
-2. User config: `~/.config/aitool/aitool.yaml`
-3. Project config: `.aitool.yaml` in current directory
+2. User config: `~/.config/arkai/arkai.yaml`
+3. Project config: `.arkai.yaml` in current directory
 4. CLI flags
 
 ```bash
-aitool config init              # scaffold .aitool.yaml in current directory
-aitool config validate          # validate .aitool.yaml
-aitool config validate --file PATH  # validate a specific file
+arkai config init              # scaffold .arkai.yaml in current directory
+arkai config validate          # validate .arkai.yaml
+arkai config validate --file PATH  # validate a specific file
 ```
 
 ### `agent`

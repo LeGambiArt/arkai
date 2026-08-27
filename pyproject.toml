@@ -3,13 +3,13 @@ requires = ["setuptools>=65.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "aitool"
+name = "arkai"
 version = "0.1.0"
 description = "Local AI inference workflow management"
 readme = "README.md"
 requires-python = ">=3.9"
 license = {text = "Apache License 2.0"}
-authors = [{name = "aitool contributors"}]
+authors = [{name = "arkai contributors"}]
 
 dependencies = [
     "PyYAML>=6.0",
@@ -26,21 +26,21 @@ dev = [
 ]
 
 [project.scripts]
-aitool = "aitool.cli:main"
+arkai = "arkai.cli:main"
 
 [tool.setuptools]
-packages = ["aitool"]
+packages = ["arkai"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 python_classes = ["Test*"]
 python_functions = ["test_*"]
-addopts = "-v --cov=aitool --cov-report=term-missing"
+addopts = "-v --cov=arkai --cov-report=term-missing"
 
 [tool.coverage.run]
 branch = true
-source = ["aitool"]
+source = ["arkai"]
 
 [tool.coverage.report]
 exclude_lines = [

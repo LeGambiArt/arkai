@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from behave import given, when
 
-from aitool import engine, utils
+from arkai import engine, utils
 
 
 @given("port {port:d} is in use")  # ty: ignore[call-non-callable]
@@ -33,9 +33,9 @@ def step_server_running(context):
     context.is_running_mock = context.is_running_patch
 
 
-@when('I run "aitool inference {cmd}"')  # ty: ignore[call-non-callable]
-def step_run_aitool_engine(context, cmd):
-    """Run aitool inference command and capture output."""
+@when('I run "arkai inference {cmd}"')  # ty: ignore[call-non-callable]
+def step_run_arkai_engine(context, cmd):
+    """Run arkai inference command and capture output."""
     old_stdout = sys.stdout
     old_stderr = sys.stderr
     stdout_capture = StringIO()

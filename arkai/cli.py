@@ -3,19 +3,19 @@
 import argparse
 import sys
 
-from aitool import __version__
-from aitool import agent as agent_module
-from aitool import config as config_module
-from aitool import engine as engine_module
-from aitool import model as model_module
-from aitool import sandbox as sandbox_module
-from aitool import wtmcp as wtmcp_module
+from arkai import __version__
+from arkai import agent as agent_module
+from arkai import config as config_module
+from arkai import engine as engine_module
+from arkai import model as model_module
+from arkai import sandbox as sandbox_module
+from arkai import wtmcp as wtmcp_module
 
 
 def main():
     """Parse arguments and dispatch to command handlers."""
     parser = argparse.ArgumentParser(
-        prog="aitool",
+        prog="arkai",
         description="Local AI inference workflow management",
     )
 
@@ -31,7 +31,7 @@ def main():
     config_parser = subparsers.add_parser("config", help="Manage configuration")
     config_subparsers = config_parser.add_subparsers(dest="config_cmd")
     validate_parser = config_subparsers.add_parser("validate", help="Validate configuration")
-    validate_parser.add_argument("--file", help="Config file to validate (default: .aitool.yaml)")
+    validate_parser.add_argument("--file", help="Config file to validate (default: .arkai.yaml)")
     config_subparsers.add_parser("init", help="Initialize configuration file")
 
     # Model command
@@ -54,7 +54,7 @@ def main():
     convert_parser.add_argument(
         "-o",
         "--output",
-        help="Output file path (default: ~/.local/share/aitool/models/MODEL-QUANTIZATION.gguf)",
+        help="Output file path (default: ~/.local/share/arkai/models/MODEL-QUANTIZATION.gguf)",
     )
 
     # Inference command

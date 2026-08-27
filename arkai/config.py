@@ -5,7 +5,7 @@ import os
 import sys
 from typing import Any, Optional
 
-from aitool import utils
+from arkai import utils
 
 # Defaults
 DEFAULTS = {
@@ -46,13 +46,13 @@ def load_config(project_dir: str = ".") -> dict:
     config = copy.deepcopy(DEFAULTS)
 
     # Load user config if exists
-    user_config_path = os.path.join(utils.get_config_home(), "aitool.yaml")
+    user_config_path = os.path.join(utils.get_config_home(), "arkai.yaml")
     if os.path.exists(user_config_path):
         user_config = utils.load_yaml(user_config_path) or {}
         config = utils.merge_configs(config, user_config)
 
     # Load project config if exists
-    project_config_path = os.path.join(project_dir, ".aitool.yaml")
+    project_config_path = os.path.join(project_dir, ".arkai.yaml")
     if os.path.exists(project_config_path):
         project_config = utils.load_yaml(project_config_path) or {}
         config = utils.merge_configs(config, project_config)
@@ -163,10 +163,10 @@ def cmd_config_validate(config_file: Optional[str] = None) -> None:
     """Validate configuration file.
 
     Args:
-        config_file: Optional path to config file (default: .aitool.yaml)
+        config_file: Optional path to config file (default: .arkai.yaml)
     """
     if config_file is None:
-        config_file = ".aitool.yaml"
+        config_file = ".arkai.yaml"
 
     cfg = utils.load_yaml(config_file)
     if not validate_config(cfg):
@@ -177,9 +177,9 @@ def cmd_config_validate(config_file: Optional[str] = None) -> None:
 def cmd_config_init() -> None:
     """Initialize a new configuration file in current directory.
 
-    Fails if .aitool.yaml already exists.
+    Fails if .arkai.yaml already exists.
     """
-    config_file = ".aitool.yaml"
+    config_file = ".arkai.yaml"
 
     if os.path.exists(config_file):
         raise RuntimeError(f"Configuration file already exists: {config_file}")

@@ -5,7 +5,7 @@ import shutil
 import tempfile
 from unittest.mock import patch
 
-from aitool import engine, utils
+from arkai import engine, utils
 
 
 def before_scenario(context, scenario):
@@ -57,7 +57,7 @@ def before_scenario(context, scenario):
     os.chdir(context.temp_dir)
 
     # Create temporary config directory
-    context.config_dir = os.path.join(context.temp_dir, ".aitool")
+    context.config_dir = os.path.join(context.temp_dir, ".arkai")
     os.makedirs(context.config_dir, exist_ok=True)
 
     # Mock get_config_home to return temp directory for sandbox config

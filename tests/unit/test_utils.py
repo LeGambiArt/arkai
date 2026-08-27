@@ -2,38 +2,38 @@ import subprocess
 
 import pytest
 
-from aitool import utils
+from arkai import utils
 
 
 class TestPathResolution:
     def test_config_home_uses_xdg_config_home(self, monkeypatch):
         monkeypatch.setenv("XDG_CONFIG_HOME", "/custom/config")
-        assert utils.get_config_home() == "/custom/config/aitool"
+        assert utils.get_config_home() == "/custom/config/arkai"
 
     def test_config_home_fallback_macos(self, monkeypatch):
         monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
         monkeypatch.setenv("HOME", "/Users/test")
-        assert utils.get_config_home() == "/Users/test/.config/aitool"
+        assert utils.get_config_home() == "/Users/test/.config/arkai"
 
     def test_data_home_always_local_share(self, monkeypatch):
         monkeypatch.setenv("XDG_DATA_HOME", "/custom/data")
         monkeypatch.setenv("HOME", "/Users/test")
-        assert utils.get_data_home() == "/Users/test/.local/share/aitool"
+        assert utils.get_data_home() == "/Users/test/.local/share/arkai"
 
     def test_data_home_no_xdg_override(self, monkeypatch):
         monkeypatch.delenv("XDG_DATA_HOME", raising=False)
         monkeypatch.setenv("HOME", "/Users/test")
-        assert utils.get_data_home() == "/Users/test/.local/share/aitool"
+        assert utils.get_data_home() == "/Users/test/.local/share/arkai"
 
     def test_pid_dir_uses_local_state(self, monkeypatch):
         monkeypatch.setenv("HOME", "/Users/test")
-        assert utils.get_pid_dir() == "/Users/test/.local/state/aitool"
+        assert utils.get_pid_dir() == "/Users/test/.local/state/arkai"
 
 
 class TestGPUDetection:
     def test_detect_gpu_metal_on_macos(self, monkeypatch):
         monkeypatch.setattr("platform.system", lambda: "Darwin")
-        monkeypatch.setattr("aitool.utils.run_command", lambda cmd, **kw: (0, "1", ""))
+        monkeypatch.setattr("arkai.utils.run_command", lambda cmd, **kw: (0, "1", ""))
         result = utils.detect_gpu()
         assert result == "metal"
 
@@ -42,7 +42,7 @@ class TestGPUDetection:
         monkeypatch.setattr(
             "shutil.which", lambda x: "/usr/bin/nvidia-smi" if x == "nvidia-smi" else None
         )
-        monkeypatch.setattr("aitool.utils.run_command", lambda cmd, **kw: (0, "", ""))
+        monkeypatch.setattr("arkai.utils.run_command", lambda cmd, **kw: (0, "", ""))
         result = utils.detect_gpu()
         assert result == "cuda"
 

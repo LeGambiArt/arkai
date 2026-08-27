@@ -4,8 +4,8 @@ import os
 import sys
 from typing import Optional
 
-from aitool import config as config_module
-from aitool import utils
+from arkai import config as config_module
+from arkai import utils
 
 
 def _deduplicate_volumes(volumes: list) -> list:
@@ -276,7 +276,7 @@ def cmd_sandbox_create(
 
     # Determine which config file to save to
     config_home = utils.get_config_home()
-    config_file = os.path.join(config_home, "aitool.yaml")
+    config_file = os.path.join(config_home, "arkai.yaml")
     os.makedirs(config_home, exist_ok=True)
 
     utils.save_yaml(config_file, cfg)
@@ -310,7 +310,7 @@ def cmd_sandbox_delete(name: str) -> None:
 
     # Save config
     config_home = utils.get_config_home()
-    config_file = os.path.join(config_home, "aitool.yaml")
+    config_file = os.path.join(config_home, "arkai.yaml")
     utils.save_yaml(config_file, cfg)
     print(f"✓ Deleted sandbox profile '{name}'")
 
@@ -351,7 +351,7 @@ def cmd_sandbox_set_default(name: str) -> None:
 
     # Save config
     config_home = utils.get_config_home()
-    config_file = os.path.join(config_home, "aitool.yaml")
+    config_file = os.path.join(config_home, "arkai.yaml")
     utils.save_yaml(config_file, cfg)
     print(f"✓ Set '{name}' as default sandbox settings")
 
@@ -372,7 +372,7 @@ def cmd_sandbox_active(profile_name: Optional[str]) -> None:
         if "sandbox" in cfg:
             cfg["sandbox"]["active_profile"] = None
         config_home = utils.get_config_home()
-        config_file = os.path.join(config_home, "aitool.yaml")
+        config_file = os.path.join(config_home, "arkai.yaml")
         utils.save_yaml(config_file, cfg)
         print("✓ Cleared active sandbox profile (using defaults)")
         return
@@ -389,6 +389,6 @@ def cmd_sandbox_active(profile_name: Optional[str]) -> None:
 
     # Save config
     config_home = utils.get_config_home()
-    config_file = os.path.join(config_home, "aitool.yaml")
+    config_file = os.path.join(config_home, "arkai.yaml")
     utils.save_yaml(config_file, cfg)
     print(f"✓ Set active sandbox profile to '{profile_name}'")

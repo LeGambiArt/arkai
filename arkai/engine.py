@@ -5,7 +5,7 @@ import subprocess
 import time
 from typing import Optional
 
-from aitool import config, utils
+from arkai import config, utils
 
 
 def get_inference_pid_path() -> str:

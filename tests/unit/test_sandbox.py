@@ -4,8 +4,8 @@ from unittest.mock import patch
 
 import pytest
 
-from aitool import agent as agent_module
-from aitool import sandbox
+from arkai import agent as agent_module
+from arkai import sandbox
 
 
 class TestProfileValidation:
@@ -209,7 +209,7 @@ class TestListCommand:
             }
         }
 
-        with patch("aitool.config.load_config", return_value=cfg):
+        with patch("arkai.config.load_config", return_value=cfg):
             sandbox.cmd_sandbox_list()
 
         captured = capsys.readouterr()
@@ -246,7 +246,7 @@ class TestListCommand:
             }
         }
 
-        with patch("aitool.config.load_config", return_value=cfg):
+        with patch("arkai.config.load_config", return_value=cfg):
             sandbox.cmd_sandbox_list()
 
         captured = capsys.readouterr()
@@ -275,7 +275,7 @@ class TestShowCommand:
             }
         }
 
-        with patch("aitool.config.load_config", return_value=cfg):
+        with patch("arkai.config.load_config", return_value=cfg):
             sandbox.cmd_sandbox_show("default")
 
         captured = capsys.readouterr()
@@ -307,7 +307,7 @@ class TestShowCommand:
             }
         }
 
-        with patch("aitool.config.load_config", return_value=cfg):
+        with patch("arkai.config.load_config", return_value=cfg):
             sandbox.cmd_sandbox_show("active")
 
         captured = capsys.readouterr()
@@ -331,7 +331,7 @@ class TestShowCommand:
             }
         }
 
-        with patch("aitool.config.load_config", return_value=cfg):
+        with patch("arkai.config.load_config", return_value=cfg):
             sandbox.cmd_sandbox_show("active")
 
         captured = capsys.readouterr()
@@ -360,7 +360,7 @@ class TestShowCommand:
             }
         }
 
-        with patch("aitool.config.load_config", return_value=cfg):
+        with patch("arkai.config.load_config", return_value=cfg):
             sandbox.cmd_sandbox_show("minimal")
 
         captured = capsys.readouterr()
@@ -387,9 +387,9 @@ class TestCreateCommand:
         }
 
         with (
-            patch("aitool.config.load_config", return_value=cfg),
-            patch("aitool.utils.save_yaml") as mock_save,
-            patch("aitool.utils.get_config_home", return_value="/tmp"),
+            patch("arkai.config.load_config", return_value=cfg),
+            patch("arkai.utils.save_yaml") as mock_save,
+            patch("arkai.utils.get_config_home", return_value="/tmp"),
         ):
             sandbox.cmd_sandbox_create("test", cpus=4, memory=4096)
 
@@ -426,9 +426,9 @@ class TestCreateCommand:
         }
 
         with (
-            patch("aitool.config.load_config", return_value=cfg),
-            patch("aitool.utils.save_yaml") as mock_save,
-            patch("aitool.utils.get_config_home", return_value="/tmp"),
+            patch("arkai.config.load_config", return_value=cfg),
+            patch("arkai.utils.save_yaml") as mock_save,
+            patch("arkai.utils.get_config_home", return_value="/tmp"),
         ):
             sandbox.cmd_sandbox_create("gpu_constrained", from_profile="gpu", timeout=1800)
 
@@ -445,7 +445,7 @@ class TestCreateCommand:
         """Should reject invalid profile name."""
         cfg = {"sandbox": {"profiles": {}}}
 
-        with patch("aitool.config.load_config", return_value=cfg):
+        with patch("arkai.config.load_config", return_value=cfg):
             with pytest.raises(SystemExit):
                 sandbox.cmd_sandbox_create("invalid-name")
 
@@ -453,7 +453,7 @@ class TestCreateCommand:
         """Should reject reserved names."""
         cfg = {"sandbox": {"profiles": {}}}
 
-        with patch("aitool.config.load_config", return_value=cfg):
+        with patch("arkai.config.load_config", return_value=cfg):
             with pytest.raises(SystemExit):
                 sandbox.cmd_sandbox_create("default")
 
@@ -461,7 +461,7 @@ class TestCreateCommand:
         """Should reject duplicate profile name."""
         cfg = {"sandbox": {"profiles": {"existing": {}}}}
 
-        with patch("aitool.config.load_config", return_value=cfg):
+        with patch("arkai.config.load_config", return_value=cfg):
             with pytest.raises(SystemExit):
                 sandbox.cmd_sandbox_create("existing")
 
@@ -469,7 +469,7 @@ class TestCreateCommand:
         """Should fail if base profile does not exist."""
         cfg = {"sandbox": {"profiles": {}}}
 
-        with patch("aitool.config.load_config", return_value=cfg):
+        with patch("arkai.config.load_config", return_value=cfg):
             with pytest.raises(SystemExit):
                 sandbox.cmd_sandbox_create("new", from_profile="nonexistent")
 
@@ -502,9 +502,9 @@ class TestDeleteCommand:
         }
 
         with (
-            patch("aitool.config.load_config", return_value=cfg),
-            patch("aitool.utils.save_yaml") as mock_save,
-            patch("aitool.utils.get_config_home", return_value="/tmp"),
+            patch("arkai.config.load_config", return_value=cfg),
+            patch("arkai.utils.save_yaml") as mock_save,
+            patch("arkai.utils.get_config_home", return_value="/tmp"),
         ):
             sandbox.cmd_sandbox_delete("gpu")
 
@@ -534,9 +534,9 @@ class TestDeleteCommand:
         }
 
         with (
-            patch("aitool.config.load_config", return_value=cfg),
-            patch("aitool.utils.save_yaml") as mock_save,
-            patch("aitool.utils.get_config_home", return_value="/tmp"),
+            patch("arkai.config.load_config", return_value=cfg),
+            patch("arkai.utils.save_yaml") as mock_save,
+            patch("arkai.utils.get_config_home", return_value="/tmp"),
         ):
             sandbox.cmd_sandbox_delete("gpu")
 
@@ -547,7 +547,7 @@ class TestDeleteCommand:
         """Should fail to delete non-existent profile."""
         cfg = {"sandbox": {"profiles": {}}}
 
-        with patch("aitool.config.load_config", return_value=cfg):
+        with patch("arkai.config.load_config", return_value=cfg):
             with pytest.raises(SystemExit):
                 sandbox.cmd_sandbox_delete("nonexistent")
 
@@ -578,9 +578,9 @@ class TestSetDefaultCommand:
         }
 
         with (
-            patch("aitool.config.load_config", return_value=cfg),
-            patch("aitool.utils.save_yaml") as mock_save,
-            patch("aitool.utils.get_config_home", return_value="/tmp"),
+            patch("arkai.config.load_config", return_value=cfg),
+            patch("arkai.utils.save_yaml") as mock_save,
+            patch("arkai.utils.get_config_home", return_value="/tmp"),
         ):
             sandbox.cmd_sandbox_set_default("production")
 
@@ -599,7 +599,7 @@ class TestSetDefaultCommand:
         """Should fail if profile does not exist."""
         cfg = {"sandbox": {"profiles": {}}}
 
-        with patch("aitool.config.load_config", return_value=cfg):
+        with patch("arkai.config.load_config", return_value=cfg):
             with pytest.raises(SystemExit):
                 sandbox.cmd_sandbox_set_default("nonexistent")
 
@@ -625,9 +625,9 @@ class TestActiveCommand:
         }
 
         with (
-            patch("aitool.config.load_config", return_value=cfg),
-            patch("aitool.utils.save_yaml") as mock_save,
-            patch("aitool.utils.get_config_home", return_value="/tmp"),
+            patch("arkai.config.load_config", return_value=cfg),
+            patch("arkai.utils.save_yaml") as mock_save,
+            patch("arkai.utils.get_config_home", return_value="/tmp"),
         ):
             sandbox.cmd_sandbox_active("gpu")
 
@@ -655,9 +655,9 @@ class TestActiveCommand:
         }
 
         with (
-            patch("aitool.config.load_config", return_value=cfg),
-            patch("aitool.utils.save_yaml") as mock_save,
-            patch("aitool.utils.get_config_home", return_value="/tmp"),
+            patch("arkai.config.load_config", return_value=cfg),
+            patch("arkai.utils.save_yaml") as mock_save,
+            patch("arkai.utils.get_config_home", return_value="/tmp"),
         ):
             sandbox.cmd_sandbox_active("")
 
@@ -685,9 +685,9 @@ class TestActiveCommand:
         }
 
         with (
-            patch("aitool.config.load_config", return_value=cfg),
-            patch("aitool.utils.save_yaml") as mock_save,
-            patch("aitool.utils.get_config_home", return_value="/tmp"),
+            patch("arkai.config.load_config", return_value=cfg),
+            patch("arkai.utils.save_yaml") as mock_save,
+            patch("arkai.utils.get_config_home", return_value="/tmp"),
         ):
             sandbox.cmd_sandbox_active("none")
 
@@ -698,7 +698,7 @@ class TestActiveCommand:
         """Should fail if profile does not exist."""
         cfg = {"sandbox": {"profiles": {}}}
 
-        with patch("aitool.config.load_config", return_value=cfg):
+        with patch("arkai.config.load_config", return_value=cfg):
             with pytest.raises(SystemExit):
                 sandbox.cmd_sandbox_active("nonexistent")
 

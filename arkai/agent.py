@@ -8,7 +8,7 @@ import sys
 import tempfile
 from typing import Optional
 
-from aitool import config, engine, utils
+from arkai import config, engine, utils
 
 
 def _merge_volumes(profile_volumes: list, cli_volumes: Optional[list] = None) -> list:
@@ -24,7 +24,7 @@ def _merge_volumes(profile_volumes: list, cli_volumes: Optional[list] = None) ->
     Raises:
         RuntimeError: If same path appears with different flags
     """
-    from aitool import sandbox as sandbox_module
+    from arkai import sandbox as sandbox_module
 
     merged = list(profile_volumes) if profile_volumes else []
     if cli_volumes:
@@ -64,7 +64,7 @@ def _resolve_sandbox_profile(cfg: dict, profile_name: Optional[str] = None) -> d
     Raises:
         RuntimeError: If specified profile does not exist
     """
-    from aitool import sandbox as sandbox_module
+    from arkai import sandbox as sandbox_module
 
     # Priority 1: CLI flag
     if profile_name:
@@ -101,7 +101,7 @@ def _get_model_name(cfg: dict) -> str:
 
 def _start_wtmcp_server(cfg: dict) -> int:
     """Start wtmcp server and return port. Assumes inference server is running."""
-    from aitool import wtmcp
+    from arkai import wtmcp
 
     wtmcp_port = config.get_config_value(cfg, "wtmcp.port", 8080)
 
@@ -224,9 +224,9 @@ def _start_agent_opencode(
 ) -> None:
     """Start opencode agent."""
     if use_sandbox:
-        config_dir = os.path.join(workdir or os.getcwd(), ".aitool-session")
+        config_dir = os.path.join(workdir or os.getcwd(), ".arkai-session")
     else:
-        config_dir = os.path.expanduser("~/.local/state/aitool/opencode")
+        config_dir = os.path.expanduser("~/.local/state/arkai/opencode")
     os.makedirs(config_dir, exist_ok=True)
 
     with tempfile.NamedTemporaryFile(
@@ -307,9 +307,9 @@ def _start_agent_crush(
 ) -> None:
     """Start crush agent."""
     if use_sandbox:
-        config_dir = os.path.join(workdir or os.getcwd(), ".aitool-session")
+        config_dir = os.path.join(workdir or os.getcwd(), ".arkai-session")
     else:
-        config_dir = os.path.expanduser("~/.local/state/aitool")
+        config_dir = os.path.expanduser("~/.local/state/arkai")
     os.makedirs(config_dir, exist_ok=True)
 
     with tempfile.NamedTemporaryFile(
@@ -405,9 +405,9 @@ def _start_agent_claude(
 
     if wtmcp_port is not None:
         if use_sandbox:
-            config_dir = os.path.join(workdir or os.getcwd(), ".aitool-session")
+            config_dir = os.path.join(workdir or os.getcwd(), ".arkai-session")
         else:
-            config_dir = os.path.expanduser("~/.local/state/aitool")
+            config_dir = os.path.expanduser("~/.local/state/arkai")
         os.makedirs(config_dir, exist_ok=True)
 
         with tempfile.NamedTemporaryFile(
@@ -430,7 +430,7 @@ def _start_agent_claude(
     if use_sandbox:
         # config_dir is only relevant when an MCP config file was written
         sandbox_config_dir = (
-            os.path.join(workdir or os.getcwd(), ".aitool-session") if mcp_config else None
+            os.path.join(workdir or os.getcwd(), ".arkai-session") if mcp_config else None
         )
         sandbox_prefix = _build_sandbox_cmd(
             cfg,
@@ -600,7 +600,7 @@ def cmd_agent(
             )
     finally:
         # Cleanup services unless user requested to keep them
-        from aitool import wtmcp
+        from arkai import wtmcp
 
         if wtmcp_port is not None:
             if keep_mcp and wtmcp.is_wtmcp_running(wtmcp_port):

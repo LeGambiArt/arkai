@@ -1,11 +1,11 @@
-from aitool import config, utils
+from arkai import config, utils
 
 
 class TestConfigLoading:
     def test_load_user_config(self, tmp_path, monkeypatch):
-        config_dir = tmp_path / "aitool"
+        config_dir = tmp_path / "arkai"
         config_dir.mkdir()
-        config_file = config_dir / "aitool.yaml"
+        config_file = config_dir / "arkai.yaml"
         config_file.write_text("agent:\n  name: opencode\ninference:\n  port: 8081\n")
 
         monkeypatch.setattr(utils, "get_config_home", lambda: str(config_dir))
@@ -16,12 +16,12 @@ class TestConfigLoading:
         assert cfg["inference"]["port"] == 8081
 
     def test_load_project_config_overrides_user(self, tmp_path, monkeypatch):
-        config_dir = tmp_path / "aitool"
+        config_dir = tmp_path / "arkai"
         config_dir.mkdir()
-        user_config = config_dir / "aitool.yaml"
+        user_config = config_dir / "arkai.yaml"
         user_config.write_text("agent:\n  name: opencode\ninference:\n  port: 8081\n")
 
-        project_config = tmp_path / ".aitool.yaml"
+        project_config = tmp_path / ".arkai.yaml"
         project_config.write_text("agent:\n  name: crush\n")
 
         monkeypatch.setattr(utils, "get_config_home", lambda: str(config_dir))
@@ -32,7 +32,7 @@ class TestConfigLoading:
         assert cfg["inference"]["port"] == 8081  # From user config
 
     def test_load_config_no_user_no_project(self, tmp_path, monkeypatch):
-        config_dir = tmp_path / "aitool"
+        config_dir = tmp_path / "arkai"
         config_dir.mkdir()
         monkeypatch.setattr(utils, "get_config_home", lambda: str(config_dir))
         monkeypatch.chdir(tmp_path)

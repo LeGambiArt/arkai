@@ -5,7 +5,7 @@ import subprocess
 import time
 from typing import Optional
 
-from aitool import config, utils
+from arkai import config, utils
 
 
 def cmd_wtmcp_list(port: Optional[int] = None) -> None:
@@ -23,7 +23,7 @@ def cmd_wtmcp_list(port: Optional[int] = None) -> None:
     try:
         wtmcp_path = utils.resolve_binary(wtmcp_bin)
     except RuntimeError:
-        raise RuntimeError("wtmcp binary not found. Configure wtmcp.path in .aitool.yaml")
+        raise RuntimeError("wtmcp binary not found. Configure wtmcp.path in .arkai.yaml")
 
     # Determine which instance to show
     if port is None:
@@ -115,10 +115,10 @@ def cmd_wtmcp_enable(plugin_name: str) -> None:
     Raises:
         RuntimeError: If config file not found
     """
-    project_config_path = ".aitool.yaml"
+    project_config_path = ".arkai.yaml"
     if not os.path.exists(project_config_path):
         raise RuntimeError(
-            "Project config not found. Create .aitool.yaml first with 'aitool config init'"
+            "Project config not found. Create .arkai.yaml first with 'arkai config init'"
         )
 
     project_config = utils.load_yaml(project_config_path)
@@ -141,7 +141,7 @@ def cmd_wtmcp_enable(plugin_name: str) -> None:
     project_config["wtmcp"]["plugins"] = plugins
 
     utils.save_yaml(project_config_path, project_config)
-    utils.info(f"Plugin '{plugin_name}' enabled in .aitool.yaml")
+    utils.info(f"Plugin '{plugin_name}' enabled in .arkai.yaml")
 
 
 def cmd_wtmcp_disable(plugin_name: str) -> None:
@@ -153,10 +153,10 @@ def cmd_wtmcp_disable(plugin_name: str) -> None:
     Raises:
         RuntimeError: If config file not found
     """
-    project_config_path = ".aitool.yaml"
+    project_config_path = ".arkai.yaml"
     if not os.path.exists(project_config_path):
         raise RuntimeError(
-            "Project config not found. Create .aitool.yaml first with 'aitool config init'"
+            "Project config not found. Create .arkai.yaml first with 'arkai config init'"
         )
 
     project_config = utils.load_yaml(project_config_path)
@@ -176,7 +176,7 @@ def cmd_wtmcp_disable(plugin_name: str) -> None:
     project_config["wtmcp"]["plugins"] = plugins
 
     utils.save_yaml(project_config_path, project_config)
-    utils.info(f"Plugin '{plugin_name}' disabled in .aitool.yaml")
+    utils.info(f"Plugin '{plugin_name}' disabled in .arkai.yaml")
 
 
 def get_wtmcp_pid_path(port: int) -> str:
@@ -259,7 +259,7 @@ def cmd_wtmcp_start(
     try:
         wtmcp_path = utils.resolve_binary(wtmcp_bin)
     except RuntimeError:
-        raise RuntimeError("wtmcp binary not found. Configure wtmcp.path in .aitool.yaml")
+        raise RuntimeError("wtmcp binary not found. Configure wtmcp.path in .arkai.yaml")
 
     # Get port from args or config
     if port is None:
@@ -276,7 +276,7 @@ def cmd_wtmcp_start(
         workdir = os.path.expanduser(workdir)
 
     # Build effective plugin list
-    project_config_path = ".aitool.yaml"
+    project_config_path = ".arkai.yaml"
     configured_plugins: list = []
     if os.path.exists(project_config_path):
         try:
@@ -311,7 +311,7 @@ def cmd_wtmcp_start(
         raise RuntimeError(f"Port {port} already in use")
 
     # Get project config file path (if it exists)
-    project_config_path = ".aitool.yaml"
+    project_config_path = ".arkai.yaml"
     config_file = (
         os.path.abspath(project_config_path) if os.path.exists(project_config_path) else None
     )

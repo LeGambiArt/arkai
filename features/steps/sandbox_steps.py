@@ -7,16 +7,16 @@ from contextlib import redirect_stderr, redirect_stdout
 from behave import given, when
 
 
-def _run_aitool(context, argv):
-    """Run an aitool CLI command in-process with captured output."""
+def _run_arkai(context, argv):
+    """Run an arkai CLI command in-process with captured output."""
     stdout_buf = io.StringIO()
     stderr_buf = io.StringIO()
     exit_code = 0
 
     with redirect_stdout(stdout_buf), redirect_stderr(stderr_buf):
         try:
-            sys.argv = ["aitool"] + argv
-            from aitool import cli
+            sys.argv = ["arkai"] + argv
+            from arkai import cli
 
             cli.main()
         except SystemExit as exc:
@@ -27,22 +27,22 @@ def _run_aitool(context, argv):
     context.exit_code = exit_code
 
 
-@when('I run "aitool sandbox {cmd}"')  # ty: ignore[call-non-callable]
+@when('I run "arkai sandbox {cmd}"')  # ty: ignore[call-non-callable]
 def step_run_sandbox_command(context, cmd):
-    """Run an aitool sandbox command and capture output."""
-    _run_aitool(context, ["sandbox"] + cmd.split())
+    """Run an arkai sandbox command and capture output."""
+    _run_arkai(context, ["sandbox"] + cmd.split())
 
 
 @given("I create a sandbox profile {name} with cpus={cpus} and memory={memory}")  # ty: ignore[call-non-callable]
 def step_create_profile(context, name, cpus, memory):
     """Create a sandbox profile with specified parameters."""
     name = name.strip("'\"")
-    _run_aitool(context, ["sandbox", "create", name, "--cpus", cpus, "--memory", memory])
+    _run_arkai(context, ["sandbox", "create", name, "--cpus", cpus, "--memory", memory])
     if context.exit_code != 0:
         raise AssertionError(f"Failed to create profile: {context.stderr}")
 
 
-@given('I run "aitool sandbox {cmd}"')  # ty: ignore[call-non-callable]
+@given('I run "arkai sandbox {cmd}"')  # ty: ignore[call-non-callable]
 def step_given_run_sandbox_command(context, cmd):
-    """Given step: run an aitool sandbox command (used for setup)."""
-    _run_aitool(context, ["sandbox"] + cmd.split())
+    """Given step: run an arkai sandbox command (used for setup)."""
+    _run_arkai(context, ["sandbox"] + cmd.split())

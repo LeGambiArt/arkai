@@ -5,7 +5,7 @@ import subprocess
 from pathlib import Path
 from typing import Optional
 
-from aitool import utils
+from arkai import utils
 
 
 def get_models_dir() -> str:
@@ -19,7 +19,7 @@ def get_models_dir() -> str:
 def cmd_model_download(hf_repo: str) -> None:
     """Download model from HuggingFace using hf CLI.
 
-    Downloads to HuggingFace cache. Use 'aitool model convert' to convert to GGUF format.
+    Downloads to HuggingFace cache. Use 'arkai model convert' to convert to GGUF format.
 
     Args:
         hf_repo: HuggingFace repo path (e.g., 'ibm-granite/granite-4.1-8b-instruct-GGUF')
@@ -41,7 +41,7 @@ def cmd_model_list() -> None:
     """List local GGUF models and HuggingFace cached models.
 
     Displays two categories:
-    1. Local GGUF files in ~/.local/share/aitool/models/
+    1. Local GGUF files in ~/.local/share/arkai/models/
     2. HuggingFace cached models (found via 'hf cache ls')
     """
     models_dir = get_models_dir()
@@ -154,25 +154,25 @@ def cmd_model_convert(model: str, quantization: str = "Q6_K", output: Optional[s
                model name from cache (e.g., 'DiffuCoder-7B'), or path
         quantization: Quantization level (Q4_K_M, Q5_K_M, Q6_K, etc.)
         output: Optional output file path (defaults to
-                ~/.local/share/aitool/models/MODEL-QUANTIZATION.gguf)
+                ~/.local/share/arkai/models/MODEL-QUANTIZATION.gguf)
     """
-    # Find aitool-convert script using importlib.resources for packaging
+    # Find arkai-convert script using importlib.resources for packaging
     convert_script: Optional[str] = None
     try:
         from importlib.resources import files
 
-        aitool_files = files("aitool")
+        arkai_files = files("arkai")
         # Access parent directory - may not be available in all typing scenarios
         # so we handle the AttributeError at runtime
-        if hasattr(aitool_files, "parent"):
-            pkg_parent = getattr(aitool_files, "parent")
-            convert_script = str(pkg_parent.joinpath("bin", "aitool-convert"))
+        if hasattr(arkai_files, "parent"):
+            pkg_parent = getattr(arkai_files, "parent")
+            convert_script = str(pkg_parent.joinpath("bin", "arkai-convert"))
         else:
             raise AttributeError("parent not found")
     except (ImportError, TypeError, AttributeError):
         # Fallback to direct path search
         script_dir = os.path.dirname(os.path.abspath(__file__))
-        convert_script = os.path.join(script_dir, "..", "bin", "aitool-convert")
+        convert_script = os.path.join(script_dir, "..", "bin", "arkai-convert")
 
     if not os.path.exists(convert_script):
         raise RuntimeError(f"Conversion script not found: {convert_script}")

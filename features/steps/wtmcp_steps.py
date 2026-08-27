@@ -6,13 +6,13 @@ from io import StringIO
 
 from behave import given, then, when
 
-from aitool import utils
+from arkai import utils
 
 
-@given("a valid .aitool.yaml file with plugins {plugins}")  # ty: ignore[call-non-callable]
+@given("a valid .arkai.yaml file with plugins {plugins}")  # ty: ignore[call-non-callable]
 def step_valid_config_with_plugins(context, plugins):
     """Create a valid config file with plugins."""
-    context.config_file = ".aitool.yaml"
+    context.config_file = ".arkai.yaml"
     plugin_list = [p.strip() for p in plugins.split(",")]
     config_data = {
         "agent": {"name": "opencode"},
@@ -22,9 +22,9 @@ def step_valid_config_with_plugins(context, plugins):
     utils.save_yaml(context.config_file, config_data)
 
 
-@when('I run "aitool wtmcp {cmd}"')  # ty: ignore[call-non-callable]
-def step_run_aitool_wtmcp(context, cmd):
-    """Run aitool wtmcp command and capture output."""
+@when('I run "arkai wtmcp {cmd}"')  # ty: ignore[call-non-callable]
+def step_run_arkai_wtmcp(context, cmd):
+    """Run arkai wtmcp command and capture output."""
     old_stdout = sys.stdout
     old_stderr = sys.stderr
     stdout_capture = StringIO()
@@ -52,17 +52,17 @@ tool discovery: progressive
         from unittest.mock import MagicMock
         from unittest.mock import patch as mock_patch
 
-        from aitool import utils as aitool_utils
-        from aitool import wtmcp
+        from arkai import utils as arkai_utils
+        from arkai import wtmcp
 
         parts = cmd.split()
 
         patches = [
             mock_patch("subprocess.run"),
             mock_patch("subprocess.Popen"),
-            mock_patch.object(aitool_utils, "resolve_binary", return_value="/usr/bin/wtmcp"),
-            mock_patch.object(aitool_utils, "is_port_in_use", return_value=False),
-            mock_patch("aitool.wtmcp.time.sleep"),
+            mock_patch.object(arkai_utils, "resolve_binary", return_value="/usr/bin/wtmcp"),
+            mock_patch.object(arkai_utils, "is_port_in_use", return_value=False),
+            mock_patch("arkai.wtmcp.time.sleep"),
         ]
         with contextlib.ExitStack() as stack:
             mock_run, mock_popen, *_ = [stack.enter_context(p) for p in patches]
@@ -161,18 +161,18 @@ def step_check_plugin_disabled(context, plugin):
     assert plugin not in plugins, f"Plugin '{plugin}' found in config but should be removed"
 
 
-@given("a valid .aitool.yaml file with invalid wtmcp path")  # ty: ignore[call-non-callable]
+@given("a valid .arkai.yaml file with invalid wtmcp path")  # ty: ignore[call-non-callable]
 def step_valid_config_with_invalid_wtmcp(context):
     """Create config with invalid wtmcp path."""
-    from aitool import utils as aitool_utils
+    from arkai import utils as arkai_utils
 
-    context.config_file = ".aitool.yaml"
+    context.config_file = ".arkai.yaml"
     config_data = {
         "agent": {"name": "opencode"},
         "inference": {"model": "test.gguf"},
         "wtmcp": {"plugins": ["workspace"], "path": "/nonexistent/wtmcp"},
     }
-    aitool_utils.save_yaml(context.config_file, config_data)
+    arkai_utils.save_yaml(context.config_file, config_data)
 
 
 @given("the wtmcp server is running")  # ty: ignore[call-non-callable]
@@ -181,7 +181,7 @@ def step_wtmcp_server_running(context):
     import os
     from unittest.mock import patch
 
-    from aitool import wtmcp as wtmcp_module
+    from arkai import wtmcp as wtmcp_module
 
     # Create a mock PID file for wtmcp on default port 8080
     default_port = 8080
@@ -195,7 +195,7 @@ def step_wtmcp_server_running(context):
         "port": default_port,
         "workdir": None,
         "wtmcp_path": "/usr/bin/wtmcp",
-        "config_file": os.path.abspath(".aitool.yaml") if os.path.exists(".aitool.yaml") else None,
+        "config_file": os.path.abspath(".arkai.yaml") if os.path.exists(".arkai.yaml") else None,
         "startup_dir": os.getcwd(),
         "enable_plugins": [],
         "disable_plugins": [],
@@ -211,7 +211,7 @@ def step_wtmcp_server_running(context):
 @then("the wtmcp server is running")  # ty: ignore[call-non-callable]
 def step_check_wtmcp_running(context):
     """Check that wtmcp server is running."""
-    from aitool import wtmcp as wtmcp_module
+    from arkai import wtmcp as wtmcp_module
 
     # Check for any running instances (tests may use different ports)
     assert wtmcp_module.is_wtmcp_running(None), "wtmcp server is not running"
@@ -220,7 +220,7 @@ def step_check_wtmcp_running(context):
 @then("the wtmcp server is not running")  # ty: ignore[call-non-callable]
 def step_check_wtmcp_not_running(context):
     """Check that wtmcp server is not running."""
-    from aitool import wtmcp as wtmcp_module
+    from arkai import wtmcp as wtmcp_module
 
     # Check that no instances are running
     assert not wtmcp_module.is_wtmcp_running(None), "wtmcp server is still running"

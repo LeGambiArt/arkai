@@ -3,7 +3,7 @@
 import os
 from unittest.mock import patch
 
-from aitool import model, utils
+from arkai import model, utils
 
 
 class TestGetModelsDir:

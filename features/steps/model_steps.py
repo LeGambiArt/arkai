@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from behave import given, then, when
 
-from aitool import utils
+from arkai import utils
 
 
 @given("no models in the models directory")  # ty: ignore[call-non-callable]
@@ -75,9 +75,9 @@ def step_add_multiple_models(context, file1, file2):
     Path(os.path.join(models_dir, file2)).touch()
 
 
-@when('I run "aitool model {cmd}"')  # ty: ignore[call-non-callable]
-def step_run_aitool_model(context, cmd):
-    """Run aitool model command."""
+@when('I run "arkai model {cmd}"')  # ty: ignore[call-non-callable]
+def step_run_arkai_model(context, cmd):
+    """Run arkai model command."""
     import sys
     from io import StringIO
 
@@ -100,7 +100,7 @@ def step_run_aitool_model(context, cmd):
         import importlib
         from pathlib import Path
 
-        from aitool import model
+        from arkai import model
 
         importlib.reload(model)
 
@@ -136,9 +136,9 @@ def step_run_aitool_model(context, cmd):
         context.stderr = stderr_capture.getvalue()
 
 
-@when('I run "aitool model list" with HuggingFace models')  # ty: ignore[call-non-callable]
-def step_run_aitool_model_with_hf(context):
-    """Run aitool model list with HuggingFace cached models."""
+@when('I run "arkai model list" with HuggingFace models')  # ty: ignore[call-non-callable]
+def step_run_arkai_model_with_hf(context):
+    """Run arkai model list with HuggingFace cached models."""
     import sys
     from io import StringIO
 
@@ -155,7 +155,7 @@ def step_run_aitool_model_with_hf(context):
     try:
         import importlib
 
-        from aitool import model
+        from arkai import model
 
         importlib.reload(model)
 
@@ -206,9 +206,9 @@ def step_check_no_models_output(context):
     )
 
 
-@when('I run "aitool model convert" without model argument')  # ty: ignore[call-non-callable]
+@when('I run "arkai model convert" without model argument')  # ty: ignore[call-non-callable]
 def step_run_convert_no_args(context):
-    """Run aitool model convert without required model argument."""
+    """Run arkai model convert without required model argument."""
     import sys
     from io import StringIO
 

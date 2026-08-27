@@ -1,4 +1,4 @@
-__pycache__/
+/__pycache__/
 *.py[cod]
 *$py.class
 *.so
@@ -31,7 +31,7 @@ env/
 .ruff_cache/
 docs/CLAUDE.md
 docs/AGENTS.md
-.aitool.yaml
+.arkai.yaml
 workdir/
 *.pid
 inference.log

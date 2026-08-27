@@ -13,35 +13,35 @@ import yaml
 
 
 def get_config_home() -> str:
-    """Return config directory path (~/.aitool or XDG_CONFIG_HOME/aitool)."""
+    """Return config directory path (~/.arkai or XDG_CONFIG_HOME/arkai)."""
     xdg = os.getenv("XDG_CONFIG_HOME")
     if xdg:
-        return os.path.join(xdg, "aitool")
+        return os.path.join(xdg, "arkai")
 
     home = os.getenv("HOME")
     if not home:
         raise RuntimeError("HOME environment variable not set")
 
-    # macOS: ~/.config/aitool
-    return os.path.join(home, ".config", "aitool")
+    # macOS: ~/.config/arkai
+    return os.path.join(home, ".config", "arkai")
 
 
 def get_data_home() -> Optional[str]:
-    """Return data directory path (~/.local/share/aitool, never XDG_DATA_HOME)."""
+    """Return data directory path (~/.local/share/arkai, never XDG_DATA_HOME)."""
     home = os.getenv("HOME")
     if not home:
         raise RuntimeError("HOME not set")
 
-    return os.path.join(home, ".local", "share", "aitool")
+    return os.path.join(home, ".local", "share", "arkai")
 
 
 def get_pid_dir() -> str:
-    """Return PID directory path (~/.local/state/aitool)."""
+    """Return PID directory path (~/.local/state/arkai)."""
     home = os.getenv("HOME")
     if not home:
         raise RuntimeError("HOME environment variable not set")
 
-    return os.path.join(home, ".local", "state", "aitool")
+    return os.path.join(home, ".local", "state", "arkai")
 
 
 def detect_gpu() -> str:
