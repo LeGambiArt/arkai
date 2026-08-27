@@ -1,0 +1,201 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# arkai-convert: Convert HuggingFace models to GGUF format
+# Adapted from bragai-convert
+
+QUANT_TYPE=""
+OUTFILE=""
+SHARE_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/arkai"
+
+ensure_llama_cpp() {
+    LLAMA_CPP_DIR="$SHARE_DIR/llama.cpp"
+
+    if [ -d "$LLAMA_CPP_DIR/.git" ]; then
+        echo "Updating llama.cpp..." >&2
+        git -C "$LLAMA_CPP_DIR" pull -q
+    else
+        echo "Cloning llama.cpp (one-time setup)..." >&2
+        mkdir -p "$SHARE_DIR"
+        git clone --depth 1 -q https://github.com/ggml-org/llama.cpp "$LLAMA_CPP_DIR"
+    fi
+}
+
+ensure_venv() {
+    VENV_DIR="$SHARE_DIR/convert-venv"
+    REQ_FILE="$LLAMA_CPP_DIR/requirements/requirements-convert_hf_to_gguf.txt"
+
+    if [ ! -f "$REQ_FILE" ]; then
+        REQ_FILE="$LLAMA_CPP_DIR/requirements.txt"
+    fi
+
+    if [ ! -d "$VENV_DIR" ]; then
+        echo "Creating Python virtualenv..." >&2
+        python3 -m venv "$VENV_DIR"
+    fi
+
+    source "$VENV_DIR/bin/activate"
+
+    local marker="$VENV_DIR/.deps-installed"
+    local req_hash
+    req_hash=$(shasum "$REQ_FILE" 2>/dev/null | cut -d' ' -f1)
+    if [ ! -f "$marker" ] || [ "$(cat "$marker")" != "$req_hash" ]; then
+        echo "Installing Python dependencies..." >&2
+        pip install -q -r "$REQ_FILE"
+        echo "$req_hash" > "$marker"
+    fi
+}
+
+find_hf_snapshot() {
+    local cache_dir="$1"
+    local snapshot_dir
+    snapshot_dir=$(ls -1td "$cache_dir"/snapshots/*/ 2>/dev/null | head -1)
+    if [ -z "$snapshot_dir" ]; then
+        echo "Error: no snapshots found in $cache_dir" >&2
+        exit 1
+    fi
+    echo "$snapshot_dir"
+}
+
+resolve_model() {
+    local model="$1"
+    local hf_cache="${HF_HOME:-${XDG_CACHE_HOME:-$HOME/.cache}/huggingface}/hub"
+
+    # If model is a path, use it directly
+    if [[ "$model" == /* ]] || [[ "$model" == ./* ]]; then
+        if [ ! -d "$model" ]; then
+            echo "Error: directory not found: $model" >&2
+            exit 1
+        fi
+        echo "$model"
+        return
+    fi
+
+    # If model contains '/', it's a HF model ID
+    if echo "$model" | grep -q '/'; then
+        local cache_key
+        cache_key=$(echo "$model" | sed 's|/|--|g')
+        local cache_dir="$hf_cache/models--$cache_key"
+        if [ -d "$cache_dir/snapshots" ]; then
+            echo "Found '$model' in HF cache" >&2
+            find_hf_snapshot "$cache_dir"
+        else
+            echo "Downloading '$model' from HuggingFace..." >&2
+            python3 -c "from huggingface_hub import snapshot_download; print(snapshot_download('$model'))"
+        fi
+        return
+    fi
+
+    # Otherwise, search for model in HF cache by name
+    if [ ! -d "$hf_cache" ]; then
+        echo "Error: '$model' is not a path or HF model ID, and no HF cache found" >&2
+        exit 1
+    fi
+
+    local matches=()
+    for dir in "$hf_cache"/models--*--"$model"; do
+        [ -d "$dir/snapshots" ] && matches+=("$dir")
+    done
+
+    if [ ${#matches[@]} -eq 0 ]; then
+        echo "Error: no cached model matching '$model' found" >&2
+        exit 1
+    fi
+
+    if [ ${#matches[@]} -gt 1 ]; then
+        echo "Error: multiple models match '$model'" >&2
+        exit 1
+    fi
+
+    echo "Resolved '$model' from HF cache" >&2
+    find_hf_snapshot "${matches[0]}"
+}
+
+usage() {
+    cat <<'HELP'
+arkai-convert -- Convert HuggingFace models to GGUF format
+
+Usage: arkai-convert [options] MODEL
+
+MODEL can be:
+  - A HuggingFace model ID (e.g. apple/DiffuCoder-7B-Base)
+  - A model name from the local HF cache (e.g. DiffuCoder-7B-Base)
+  - A local directory containing the model weights
+
+Output defaults to ~/.local/share/arkai/models/MODEL_NAME-QUANTIZATION.gguf.
+
+Options:
+  -o FILE    Output file path
+  -q TYPE    Quantization type (default: Q6_K; e.g. Q4_K_M, Q5_K_M, Q8_0)
+  -h         Show this help
+
+Examples:
+  arkai-convert apple/DiffuCoder-7B-Base
+  arkai-convert DiffuCoder-7B-Base -q Q4_K_M
+  arkai-convert apple/DiffuCoder-7B-Base -o ./model.gguf -q Q6_K
+HELP
+}
+
+main() {
+    local positional=()
+
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -o) OUTFILE="$2"; shift 2 ;;
+            -q) QUANT_TYPE="$2"; shift 2 ;;
+            -h|--help) usage; exit 0 ;;
+            -*) echo "Unknown option: $1" >&2; exit 1 ;;
+            *) positional+=("$1"); shift ;;
+        esac
+    done
+
+    if [ ${#positional[@]} -eq 0 ]; then
+        echo "Error: MODEL argument is required" >&2
+        usage >&2
+        exit 1
+    fi
+
+    local model="${positional[0]}"
+    local model_name
+    model_name=$(echo "$model" | sed 's|/$||; s|.*/||')
+
+    ensure_llama_cpp
+    ensure_venv
+
+    model=$(resolve_model "$model")
+
+    if [ -z "$OUTFILE" ]; then
+        mkdir -p "$SHARE_DIR/models"
+        if [ -n "$QUANT_TYPE" ]; then
+            OUTFILE="$SHARE_DIR/models/${model_name}-${QUANT_TYPE}.gguf"
+        else
+            OUTFILE="$SHARE_DIR/models/${model_name}-F16.gguf"
+        fi
+    fi
+
+    echo "Converting $model to GGUF..." >&2
+    python3 "$LLAMA_CPP_DIR/convert_hf_to_gguf.py" \
+        "$model" \
+        --outfile "$OUTFILE" 2>&1 | grep -E "^(Writing|Wrote|quantizing|quantized)" >&2
+
+    if [ -n "$QUANT_TYPE" ]; then
+        if ! command -v llama-quantize >/dev/null 2>&1; then
+            echo "Warning: llama-quantize not found; skipping quantization" >&2
+        else
+            local quant_file="${OUTFILE%-F16.gguf}"
+            if [ "$quant_file" = "$OUTFILE" ]; then
+                quant_file="${OUTFILE%.gguf}"
+            fi
+            quant_file="${quant_file}-${QUANT_TYPE}.gguf"
+
+            echo "Quantizing to $QUANT_TYPE..." >&2
+            llama-quantize "$OUTFILE" "$quant_file" "$QUANT_TYPE" 2>&1 | grep -E "^(Writing|Wrote|quantizing|quantized)" >&2
+            rm "$OUTFILE"
+            OUTFILE="$quant_file"
+        fi
+    fi
+
+    echo "$OUTFILE"
+}
+
+main "$@"
