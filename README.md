@@ -177,7 +177,7 @@ config values for that run only.
 
 | Flag | Description |
 |------|-------------|
-| `--model NAME` | Override model filename from config |
+| `--model NAME` | Override model from config |
 | `--gpu-layers N` | Override number of GPU layers (`-1` = all) |
 | `--context N` | Override context window size in tokens |
 | `--port N` | Override port from config |
@@ -395,7 +395,7 @@ arkai config validate --file PATH  # validate a specific file
 | `inference.model` | string | — | GGUF filename in models dir (mutually exclusive with `hf`) |
 | `inference.hf` | string | — | HuggingFace repo ID to load directly (mutually exclusive with `model`) |
 | `inference.backend` | string | `llama-cpp` | Inference backend (only `llama-cpp` supported) |
-| `inference.path` | string | `llama-server` | Path to `llama-server` binary |
+| `inference.path` | string | `llama-server` | Path to inference backend binary |
 | `inference.port` | int | `8081` | Port for inference server (1024–65535) |
 | `inference.gpu_layers` | int | `-1` | GPU layers to offload (`-1` = all) |
 | `inference.context_size` | int | `65536` | Context window size in tokens |

@@ -509,13 +509,14 @@ def cmd_agent(
 
     # Load config
     cfg = config.load_config()
-    config.validate_config(cfg)
 
-    # Override with CLI args
+    # Override with CLI args before validation so CLI model satisfies the requirement
     if agent_name:
         cfg["agent"]["name"] = agent_name
     if model:
         cfg["inference"]["model"] = model
+
+    config.validate_config(cfg)
 
     agent_name = config.get_config_value(cfg, "agent.name", "opencode")
 

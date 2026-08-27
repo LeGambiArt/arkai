@@ -51,10 +51,8 @@ def cmd_engine_start(
     """
     # Load config
     cfg = config.load_config()
-    if not config.validate_config(cfg):
-        raise RuntimeError("Invalid configuration")
 
-    # Override with CLI args if provided
+    # Apply CLI overrides before validation so they can satisfy required fields
     if model:
         cfg["inference"]["model"] = model
     if gpu_layers is not None:
@@ -63,6 +61,9 @@ def cmd_engine_start(
         cfg["inference"]["context_size"] = context_size
     if port is not None:
         cfg["inference"]["port"] = port
+
+    if not config.validate_config(cfg):
+        raise RuntimeError("Invalid configuration")
 
     # Check if already running
     if is_inference_running():

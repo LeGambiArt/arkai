@@ -2,11 +2,22 @@
 
 import sys
 from io import StringIO
+from typing import Optional
 from unittest.mock import MagicMock, patch
 
 from behave import given, then, when
 
 from arkai import agent, engine, utils, wtmcp
+
+
+@given("a .arkai.yaml file with no model configured")  # ty: ignore[call-non-callable]
+def step_config_no_model(context):
+    """Create a config file that omits inference.model and inference.hf."""
+    config_data = {
+        "agent": {"name": "opencode"},
+        "inference": {},
+    }
+    utils.save_yaml(".arkai.yaml", config_data)
 
 
 @given("a valid .arkai.yaml file with mcp disabled")  # ty: ignore[call-non-callable]
@@ -19,7 +30,13 @@ def step_valid_config_mcp_disabled(context):
     utils.save_yaml(".arkai.yaml", config_data)
 
 
-def _run_agent_in_tty(context, no_mcp: bool = False, no_sandbox: bool = False) -> None:
+def _run_agent_in_tty(
+    context,
+    no_mcp: bool = False,
+    no_sandbox: bool = False,
+    model: Optional[str] = None,
+    agent_name: Optional[str] = None,
+) -> None:
     """Run agent with a mocked TTY and capture output."""
     old_stdout = sys.stdout
     old_stderr = sys.stderr
@@ -49,7 +66,9 @@ def _run_agent_in_tty(context, no_mcp: bool = False, no_sandbox: bool = False) -
         patch("subprocess.Popen", side_effect=capture_popen),
     ):
         try:
-            agent.cmd_agent(no_mcp=no_mcp, no_sandbox=no_sandbox)
+            agent.cmd_agent(
+                no_mcp=no_mcp, no_sandbox=no_sandbox, model=model, agent_name=agent_name
+            )
         except SystemExit as e:
             context.exit_code = e.code if e.code else 1
         except Exception as e:
@@ -75,6 +94,27 @@ def step_valid_config_sandbox_disabled(context):
         "sandbox": {"disable": True},
     }
     utils.save_yaml(".arkai.yaml", config_data)
+
+
+@when('I run "arkai agent start" with "-m test-model.gguf" in a TTY')  # ty: ignore[call-non-callable]
+def step_run_agent_with_model_flag(context):
+    """Run arkai agent start with -m model override in a TTY."""
+    _run_agent_in_tty(context, model="test-model.gguf")
+
+
+@when(  # ty: ignore[call-non-callable]
+    'I run "arkai agent start -m ibm-granite/granite-4.1-8b-GGUF'
+    ' -a opencode --no-sandbox --no-mcp" in a TTY'
+)
+def step_run_agent_granite_no_sandbox_no_mcp(context):
+    """Run arkai agent start with HF model, agent, no-sandbox, and no-mcp flags in a TTY."""
+    _run_agent_in_tty(
+        context,
+        model="ibm-granite/granite-4.1-8b-GGUF",
+        agent_name="opencode",
+        no_sandbox=True,
+        no_mcp=True,
+    )
 
 
 @when('I run "arkai agent start" with "--no-mcp" in a TTY')  # ty: ignore[call-non-callable]
