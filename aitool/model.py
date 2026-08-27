@@ -28,10 +28,9 @@ def cmd_model_download(hf_repo: str) -> None:
     # No timeout since downloads can be large
     cmd = ["hf", "download", hf_repo, "--repo-type", "model"]
     try:
-        subprocess.run(cmd, capture_output=True, text=True, check=True)
-    except subprocess.CalledProcessError as e:
-        error_msg = e.stderr if e.stderr else e.stdout
-        raise RuntimeError(f"Failed to download {hf_repo}:\n{error_msg}")
+        subprocess.run(cmd, check=True)
+    except subprocess.CalledProcessError:
+        raise RuntimeError(f"Failed to download {hf_repo}")
     except FileNotFoundError:
         raise RuntimeError("hf command not found; install huggingface-hub CLI")
 
