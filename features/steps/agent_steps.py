@@ -166,6 +166,7 @@ def step_run_agent_piped(context):
         mock_proc = MagicMock()
         mock_proc.pid = 12345
         with (
+            patch.object(sys.stdin, "isatty", return_value=False),
             patch.object(engine, "is_inference_running", return_value=True),
             patch.object(wtmcp, "is_wtmcp_running", return_value=True),
             patch("subprocess.Popen", return_value=mock_proc),
