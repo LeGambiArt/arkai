@@ -77,21 +77,21 @@ def step_valid_config_sandbox_disabled(context):
     utils.save_yaml(".aitool.yaml", config_data)
 
 
-@when('I run "aitool agent" with "--no-mcp" in a TTY')  # ty: ignore[call-non-callable]
+@when('I run "aitool agent start" with "--no-mcp" in a TTY')  # ty: ignore[call-non-callable]
 def step_run_agent_no_mcp_flag(context):
-    """Run aitool agent with --no-mcp in a TTY."""
+    """Run aitool agent start with --no-mcp in a TTY."""
     _run_agent_in_tty(context, no_mcp=True)
 
 
-@when('I run "aitool agent" with "--no-sandbox" in a TTY')  # ty: ignore[call-non-callable]
+@when('I run "aitool agent start" with "--no-sandbox" in a TTY')  # ty: ignore[call-non-callable]
 def step_run_agent_no_sandbox_flag(context):
-    """Run aitool agent with --no-sandbox in a TTY."""
+    """Run aitool agent start with --no-sandbox in a TTY."""
     _run_agent_in_tty(context, no_sandbox=True)
 
 
-@when('I run "aitool agent" in a TTY')  # ty: ignore[call-non-callable]
+@when('I run "aitool agent start" in a TTY')  # ty: ignore[call-non-callable]
 def step_run_agent_tty(context):
-    """Run aitool agent in a TTY."""
+    """Run aitool agent start in a TTY."""
     _run_agent_in_tty(context)
 
 
@@ -109,9 +109,9 @@ def step_agent_not_sandboxed(context):
     assert not context.sandbox_used, "Agent was launched in sandbox but should not have been"
 
 
-@when('I run "aitool agent" with stdin piped')  # ty: ignore[call-non-callable]
+@when('I run "aitool agent start" with stdin piped')  # ty: ignore[call-non-callable]
 def step_run_agent_piped(context):
-    """Run aitool agent with stdin piped (non-interactive)."""
+    """Run aitool agent start with stdin piped (non-interactive)."""
     old_stdout = sys.stdout
     old_stderr = sys.stderr
     stdout_capture = StringIO()

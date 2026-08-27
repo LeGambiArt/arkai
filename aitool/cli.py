@@ -144,34 +144,40 @@ def main():
     active_parser.add_argument("profile_name", nargs="?", help="Profile name (or empty to clear)")
 
     # Agent command
-    agent_parser = subparsers.add_parser("agent", help="Start interactive agent")
-    agent_parser.add_argument("-a", "--agent", help="Override agent")
-    agent_parser.add_argument("-m", "--model", help="Override model")
-    agent_parser.add_argument(
+    agent_parser = subparsers.add_parser("agent", help="Manage interactive agent")
+    agent_subparsers = agent_parser.add_subparsers(dest="agent_cmd")
+    agent_start_parser = agent_subparsers.add_parser("start", help="Start interactive agent")
+    agent_start_parser.add_argument("-a", "--agent", help="Override agent")
+    agent_start_parser.add_argument("-m", "--model", help="Override model")
+    agent_start_parser.add_argument(
         "-I",
         "--keep-inference",
         action="store_true",
         help="Keep inference server running after exit",
     )
-    agent_parser.add_argument(
+    agent_start_parser.add_argument(
         "-M", "--keep-mcp", action="store_true", help="Keep wtmcp server running after exit"
     )
-    agent_parser.add_argument("--no-mcp", action="store_true", help="Skip wtmcp initialization")
-    agent_parser.add_argument("--no-sandbox", action="store_true", help="Skip arapuca sandbox")
-    agent_parser.add_argument(
+    agent_start_parser.add_argument(
+        "--no-mcp", action="store_true", help="Skip wtmcp initialization"
+    )
+    agent_start_parser.add_argument(
+        "--no-sandbox", action="store_true", help="Skip arapuca sandbox"
+    )
+    agent_start_parser.add_argument(
         "-s",
         "--sandbox",
         metavar="PROFILE",
         help="Use specific sandbox profile for this run",
     )
-    agent_parser.add_argument(
+    agent_start_parser.add_argument(
         "-v",
         "--volume",
         action="append",
         dest="volumes",
         help="Mount a volume in the sandbox (format: /path or /path:ro)",
     )
-    agent_parser.add_argument(
+    agent_start_parser.add_argument(
         "-e",
         "--env",
         action="append",
@@ -179,7 +185,7 @@ def main():
         metavar="KEY=VALUE",
         help="Set an environment variable in the sandbox (KEY=VALUE). Can be used multiple times",
     )
-    cwd_group = agent_parser.add_mutually_exclusive_group()
+    cwd_group = agent_start_parser.add_mutually_exclusive_group()
     cwd_group.add_argument(
         "--no-cwd", action="store_true", help="Do not mount the current directory in the sandbox"
     )
@@ -268,24 +274,27 @@ def main():
             else:
                 sandbox_parser.print_help()
         elif args.command == "agent":
-            agent_env = (
-                {k: v for e in args.environment for k, _, v in [e.partition("=")]}
-                if args.environment
-                else None
-            )
-            agent_module.cmd_agent(
-                args.agent,
-                args.model,
-                args.keep_inference,
-                args.keep_mcp,
-                args.no_mcp,
-                args.no_sandbox,
-                args.no_cwd,
-                args.cwd,
-                args.sandbox,
-                args.volumes,
-                agent_env,
-            )
+            if args.agent_cmd == "start":
+                agent_env = (
+                    {k: v for e in args.environment for k, _, v in [e.partition("=")]}
+                    if args.environment
+                    else None
+                )
+                agent_module.cmd_agent(
+                    args.agent,
+                    args.model,
+                    args.keep_inference,
+                    args.keep_mcp,
+                    args.no_mcp,
+                    args.no_sandbox,
+                    args.no_cwd,
+                    args.cwd,
+                    args.sandbox,
+                    args.volumes,
+                    agent_env,
+                )
+            else:
+                agent_parser.print_help()
         else:
             parser.print_help()
     except Exception as e:

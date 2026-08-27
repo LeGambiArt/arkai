@@ -4,7 +4,7 @@ aitool is a CLI for running AI agents with local models on your own hardware. It
 
 ## How It Works
 
-When you run `aitool agent`, it starts `llama-server` (loading your GGUF model), starts wtmcp (which exposes MCP tools to the agent over HTTP), then launches the agent binary configured to talk to both over localhost. Optionally it wraps the agent in an arapuca sandbox that restricts filesystem and network access. On exit, aitool tears down wtmcp — and optionally the inference server — unless `--keep-mcp` or `--keep-inference` are passed.
+When you run `aitool agent start`, it starts `llama-server` (loading your GGUF model), starts wtmcp (which exposes MCP tools to the agent over HTTP), then launches the agent binary configured to talk to both over localhost. Optionally it wraps the agent in an arapuca sandbox that restricts filesystem and network access. On exit, aitool tears down wtmcp — and optionally the inference server — unless `--keep-mcp` or `--keep-inference` are passed.
 
 ```
 ┌─────────────────────────────────────────────────────┐
@@ -206,12 +206,12 @@ Terminates the server and cleans up PID and state files.
 
 ## Running an Agent
 
-`aitool agent` is the primary command. It auto-starts the inference server if
+`aitool agent start` is the primary command. It auto-starts the inference server if
 not already running, starts wtmcp (unless `--no-mcp`), launches the agent, and
 tears down services on exit.
 
 ```bash
-aitool agent [-a AGENT] [-m MODEL] [options]
+aitool agent start [-a AGENT] [-m MODEL] [options]
 ```
 
 **Supported agents:** `opencode`, `crush`, `claude`
@@ -241,7 +241,7 @@ warm for the next session.
 ## Managing Plugins (wtmcp)
 
 wtmcp is an MCP server that exposes tools (plugins) to the agent over HTTP.
-`aitool agent` manages wtmcp automatically, but you can also control it directly.
+`aitool agent start` manages wtmcp automatically, but you can also control it directly.
 
 ### Enabling and disabling plugins
 
@@ -301,7 +301,7 @@ The current working directory is mounted read-write by default (override with
 ### Profiles
 
 Named profiles are presets stored in your user config under
-`sandbox.profiles.<name>`. When `aitool agent` runs, it uses the active profile
+`sandbox.profiles.<name>`. When `aitool agent start` runs, it uses the active profile
 (or the root `sandbox` defaults if no profile is active).
 
 Profile names must be alphanumeric + underscores. The names `default` and
@@ -345,15 +345,15 @@ aitool sandbox create restricted --memory 1024 --cpus 1 --pids 128
 aitool sandbox active restricted
 
 # Run the agent (uses restricted profile automatically)
-aitool agent
+aitool agent start
 
 # Override to a different profile for one run
-aitool agent -s dev
+aitool agent start -s dev
 ```
 
 ### Per-run overrides
 
-These flags on `aitool agent` override the active profile for that run only:
+These flags on `aitool agent start` override the active profile for that run only:
 
 | Flag | Effect |
 |------|--------|
