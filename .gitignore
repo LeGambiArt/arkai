@@ -27,6 +27,7 @@ env/
 .DS_Store
 *.log
 .coverage
+.coverage.*
 .idea/
 .ruff_cache/
 docs/CLAUDE.md

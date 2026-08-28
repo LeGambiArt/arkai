@@ -35,18 +35,23 @@ check_type() {
 
 check_unit() {
     echo "Running unit tests with pytest..."
-    pytest "${PROJECT_ROOT}"/tests/unit/ -v
+    coverage run --data-file="${PROJECT_ROOT}/.coverage.pytest" -m pytest "${PROJECT_ROOT}"/tests/unit/ -v
 }
 
 check_bdd() {
     echo "Running BDD tests with behave..."
-    behave "${PROJECT_ROOT}"/features
+    coverage run --data-file="${PROJECT_ROOT}/.coverage.behave" -m behave "${PROJECT_ROOT}"/features
 }
 
 check_coverage() {
-    echo "Generating coverage report..."
-    pytest tests/unit/ --cov=arkai --cov-report=html --cov-report=term-missing
-    echo "HTML report: htmlcov/index.html"
+    python -c 'from coverage import __version__ as version; from packaging.version import Version; import sys; sys.exit(0 if Version(version) >= Version("7.14.0") else 1)' && keep="--keep"
+    echo "keep: ${keep}"
+    [[ "${1:-}" = "-f" ]] && { check_unit; check_bdd; }
+    [[ -f "${PROJECT_ROOT}/.coverage.pytest" ]] || check_unit
+    [[ -f "${PROJECT_ROOT}/.coverage.behave" ]] || check_bdd
+    echo "Generating coverage report for latest test runs..."
+    coverage combine ${keep:-} -q "${PROJECT_ROOT}/.coverage.pytest" "${PROJECT_ROOT}/.coverage.behave"
+    coverage report ${keep:-} --show-missing --skip-empty --skip-covered
 }
 
 run_all() {
@@ -174,7 +179,8 @@ case "$COMMAND" in
         check_bdd
         ;;
     coverage)
-        check_coverage
+        [[ "${2:-}" == "-f" ]] && force="-f"
+        check_coverage ${force:-}
         ;;
     *)
         echo "Usage: $0 [command]"
