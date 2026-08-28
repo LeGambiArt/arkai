@@ -3,6 +3,8 @@
 import os
 from unittest.mock import patch
 
+import pytest
+
 from arkai import model, utils
 
 
@@ -239,3 +241,81 @@ class TestGetHuggingfaceCachedModels:
             # Verify full repo name is preserved
             assert result[0][0] == "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF"
             assert result[0][1] == "53.9G"
+
+
+class TestCmdModelDownload:
+    """Test cmd_model_download function."""
+
+    def test_download_successful(self):
+        """Test successful model download."""
+        with patch.object(utils, "run_command") as mock_run:
+            mock_run.return_value = (0, "", "")
+
+            model.cmd_model_download("test-org/test-model")
+
+            mock_run.assert_called_once_with(
+                ["hf", "download", "test-org/test-model", "--repo-type", "model"],
+                capture=False,
+                timeout=None,
+            )
+
+    def test_download_command_fails(self):
+        """Test when hf download command fails."""
+        with patch.object(utils, "run_command") as mock_run:
+            mock_run.return_value = (1, "", "Download failed")
+
+            with pytest.raises(RuntimeError, match="Failed to download"):
+                model.cmd_model_download("test-org/test-model")
+
+    def test_download_command_not_found(self):
+        """Test when hf command is not available."""
+        with patch.object(utils, "run_command") as mock_run:
+            mock_run.side_effect = RuntimeError("Command not found: hf")
+
+            with pytest.raises(RuntimeError, match="hf command not found"):
+                model.cmd_model_download("test-org/test-model")
+
+
+class TestCmdModelConvert:
+    """Test cmd_model_convert function."""
+
+    def test_convert_successful(self):
+        """Test successful model conversion."""
+        with patch.object(utils, "run_command") as mock_run:
+            mock_run.return_value = (0, "/path/to/output.gguf\n", "")
+
+            model.cmd_model_convert("test-model", quantization="Q6_K")
+
+            assert mock_run.called
+            call_args = mock_run.call_args[0][0]
+            assert call_args[0].endswith("arkai-convert")
+            assert "test-model" in call_args
+            assert "-q" in call_args
+            assert "Q6_K" in call_args
+
+    def test_convert_with_output_path(self):
+        """Test conversion with explicit output path."""
+        with patch.object(utils, "run_command") as mock_run:
+            mock_run.return_value = (0, "/custom/output.gguf\n", "")
+
+            model.cmd_model_convert("test-model", output="/custom/output.gguf")
+
+            call_args = mock_run.call_args[0][0]
+            assert "-o" in call_args
+            assert "/custom/output.gguf" in call_args
+
+    def test_convert_command_fails(self):
+        """Test when conversion command fails."""
+        with patch.object(utils, "run_command") as mock_run:
+            mock_run.return_value = (1, "", "Conversion error")
+
+            with pytest.raises(RuntimeError, match="Conversion failed"):
+                model.cmd_model_convert("test-model")
+
+    def test_convert_script_not_found(self):
+        """Test when conversion script is not found."""
+        with patch.object(utils, "run_command") as mock_run:
+            mock_run.side_effect = RuntimeError("Script not found")
+
+            with pytest.raises(RuntimeError, match="Conversion script not found"):
+                model.cmd_model_convert("test-model")

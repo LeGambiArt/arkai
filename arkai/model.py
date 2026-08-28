@@ -1,7 +1,6 @@
 """Model lifecycle management: download, list, remove, convert, benchmark."""
 
 import os
-import subprocess
 from pathlib import Path
 from typing import Optional
 
@@ -24,15 +23,19 @@ def cmd_model_download(hf_repo: str) -> None:
     Args:
         hf_repo: HuggingFace repo path (e.g., 'ibm-granite/granite-4.1-8b-instruct-GGUF')
     """
-    # Use hf download command (downloads to HuggingFace cache)
-    # No timeout since downloads can be large
-    cmd = ["hf", "download", hf_repo, "--repo-type", "model"]
     try:
-        subprocess.run(cmd, check=True)
-    except subprocess.CalledProcessError:
-        raise RuntimeError(f"Failed to download {hf_repo}")
-    except FileNotFoundError:
-        raise RuntimeError("hf command not found; install huggingface-hub CLI")
+        code, _, stderr = utils.run_command(
+            ["hf", "download", hf_repo, "--repo-type", "model"],
+            capture=False,
+            timeout=None,
+        )
+    except RuntimeError as e:
+        if "Command not found" in str(e):
+            raise RuntimeError("hf command not found; install huggingface-hub CLI")
+        raise
+
+    if code != 0:
+        raise RuntimeError(f"Failed to download {hf_repo}: {stderr}")
 
     utils.info(f"Downloaded {hf_repo} to HuggingFace cache")
 
@@ -182,16 +185,15 @@ def cmd_model_convert(model: str, quantization: str = "Q6_K", output: Optional[s
     if output:
         cmd.extend(["-o", output])
 
-    # Run conversion with no timeout
-    import subprocess
-
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=True)
-        # Extract output path from stdout (last line)
-        output_path = result.stdout.strip().split("\n")[-1] if result.stdout else "unknown"
-        utils.info(f"Conversion successful: {output_path}")
-    except subprocess.CalledProcessError as e:
-        error_msg = e.stderr if e.stderr else e.stdout
-        raise RuntimeError(f"Conversion failed:\n{error_msg}")
-    except FileNotFoundError:
+        code, stdout, stderr = utils.run_command(cmd, capture=False, timeout=None)
+    except RuntimeError:
         raise RuntimeError(f"Conversion script not found: {convert_script}")
+
+    if code != 0:
+        error_msg = stderr if stderr else stdout
+        raise RuntimeError(f"Conversion failed:\n{error_msg}")
+
+    # Extract output path from stdout (last line)
+    output_path = stdout.strip().split("\n")[-1] if stdout else "unknown"
+    utils.info(f"Conversion successful: {output_path}")
