@@ -25,8 +25,7 @@ class AgentContext:
     use_sandbox: bool = False
     workdir: Optional[str] = None
     wtmcp_port: Optional[int] = None
-    keep_inference: bool = False
-    keep_mcp: bool = False
+    no_start_inference: bool = False
     sandbox_profile: Optional[str] = None
     sandbox_volume: Optional[list] = None
     sandbox_environment: Optional[dict] = None
@@ -36,8 +35,7 @@ class AgentContext:
 def _agent_context(
     agent_name: Optional[str] = None,
     model: Optional[str] = None,
-    keep_inference: bool = False,
-    keep_mcp: bool = False,
+    no_start_inference: bool = False,
     no_mcp: bool = False,
     no_sandbox: bool = False,
     no_cwd: bool = False,
@@ -54,8 +52,7 @@ def _agent_context(
     Args:
         agent_name: Override agent from config
         model: Override model from config
-        keep_inference: Keep inference server running after exit
-        keep_mcp: Keep wtmcp server running after exit
+        no_start_inference: Do not start inference engine
         no_mcp: Skip wtmcp initialization regardless of config
         no_sandbox: Skip arapuca sandbox regardless of config
         no_cwd: Do not mount the current directory in the sandbox
@@ -104,14 +101,21 @@ def _agent_context(
     else:
         workdir = os.getcwd()
 
+    engine_started: bool = False
     if not engine.is_inference_running():
-        try:
-            engine.cmd_engine_start(model=model)
-        except RuntimeError as e:
-            utils.error(str(e), 1)
-            sys.exit(1)
+        if no_start_inference:
+            raise RuntimeError("Inference engine is not running.")
+        else:
+            try:
+                engine.cmd_engine_start(model=model)
+                engine_started = True
+            except RuntimeError as e:
+                utils.error(str(e), 1)
+                sys.exit(1)
 
-    wtmcp_port: Optional[int] = _start_wtmcp_server(cfg) if use_mcp else None
+    wtmcp_port, wtmcp_started = (None, False)
+    if use_mcp:
+        wtmcp_port, wtmcp_started = _start_wtmcp_server(cfg)
 
     agent_bin = config.get_config_value(cfg, "agent.path", resolved_agent_name)
     try:
@@ -131,8 +135,7 @@ def _agent_context(
         use_sandbox=use_sandbox,
         workdir=workdir,
         wtmcp_port=wtmcp_port,
-        keep_inference=keep_inference,
-        keep_mcp=keep_mcp,
+        no_start_inference=no_start_inference,
         sandbox_profile=sandbox_profile,
         sandbox_volume=sandbox_volume,
         sandbox_environment=sandbox_environment,
@@ -143,25 +146,13 @@ def _agent_context(
     finally:
         from arkai import wtmcp
 
-        if ctx.wtmcp_port is not None:
-            if ctx.keep_mcp and wtmcp.is_wtmcp_running(ctx.wtmcp_port):
-                print(
-                    f"wtmcp still running on port {ctx.wtmcp_port}",
-                    file=sys.stderr,
-                )
-            elif not ctx.keep_mcp and wtmcp.is_wtmcp_running(ctx.wtmcp_port):
-                try:
-                    wtmcp.cmd_wtmcp_stop(ctx.wtmcp_port)
-                except Exception:
-                    pass
+        if wtmcp_started and wtmcp.is_wtmcp_running(wtmcp_port):
+            try:
+                wtmcp.cmd_wtmcp_stop(wtmcp_port)
+            except Exception:
+                pass
 
-        if ctx.keep_inference and engine.is_inference_running():
-            inference_port = config.get_config_value(ctx.cfg, "inference.port", 8081)
-            print(
-                f"Inference server still running on port {inference_port}",
-                file=sys.stderr,
-            )
-        elif not ctx.keep_inference and engine.is_inference_running():
+        if not ctx.no_start_inference and engine_started and engine.is_inference_running():
             try:
                 engine.cmd_engine_stop()
             except Exception:
@@ -256,20 +247,22 @@ def _get_model_name(cfg: dict) -> str:
     return "model"
 
 
-def _start_wtmcp_server(cfg: dict) -> int:
+def _start_wtmcp_server(cfg: dict) -> tuple[int, bool]:
     """Start wtmcp server and return port. Assumes inference server is running."""
     from arkai import wtmcp
 
     wtmcp_port = config.get_config_value(cfg, "wtmcp.port", 8080)
 
+    wtmcp_started = False
     if not wtmcp.is_wtmcp_running(wtmcp_port):
         try:
             wtmcp.cmd_wtmcp_start(port=wtmcp_port)
+            wtmcp_started = True
         except RuntimeError as e:
             utils.error(str(e), 1)
             sys.exit(1)
 
-    return wtmcp_port
+    return wtmcp_port, wtmcp_started
 
 
 def _build_sandbox_cmd(
@@ -787,8 +780,7 @@ def _dispatch_agent(
 def cmd_agent(
     agent_name: Optional[str] = None,
     model: Optional[str] = None,
-    keep_inference: bool = False,
-    keep_mcp: bool = False,
+    no_start_inference: bool = False,
     no_mcp: bool = False,
     no_sandbox: bool = False,
     no_cwd: bool = False,
@@ -802,8 +794,7 @@ def cmd_agent(
     Args:
         agent_name: Override agent from config
         model: Override model from config
-        keep_inference: Keep inference server running after exit
-        keep_mcp: Keep wtmcp server running after exit
+        no_start_inference: Do not start inference engine
         no_mcp: Skip wtmcp initialization regardless of config
         no_sandbox: Skip arapuca sandbox regardless of config
         no_cwd: Do not mount the current directory in the sandbox
@@ -822,8 +813,7 @@ def cmd_agent(
     with _agent_context(
         agent_name=agent_name,
         model=model,
-        keep_inference=keep_inference,
-        keep_mcp=keep_mcp,
+        no_start_inference=no_start_inference,
         no_mcp=no_mcp,
         no_sandbox=no_sandbox,
         no_cwd=no_cwd,
@@ -839,8 +829,7 @@ def cmd_agent_prompt(
     prompt_args: Optional[list] = None,
     agent_name: Optional[str] = None,
     model: Optional[str] = None,
-    keep_inference: bool = False,
-    keep_mcp: bool = False,
+    no_start_inference: bool = False,
     no_mcp: bool = False,
     no_sandbox: bool = False,
     no_cwd: bool = False,
@@ -860,8 +849,7 @@ def cmd_agent_prompt(
         prompt_args: Prompt text from CLI positional arguments
         agent_name: Override agent from config
         model: Override model from config
-        keep_inference: Keep inference server running after exit
-        keep_mcp: Keep wtmcp server running after exit
+        no_start_inference: Do not start inference engine
         no_mcp: Skip wtmcp initialization regardless of config
         no_sandbox: Skip arapuca sandbox regardless of config
         no_cwd: Do not mount the current directory in the sandbox
@@ -896,8 +884,7 @@ def cmd_agent_prompt(
     with _agent_context(
         agent_name=agent_name,
         model=model,
-        keep_inference=keep_inference,
-        keep_mcp=keep_mcp,
+        no_start_inference=no_start_inference,
         no_mcp=no_mcp,
         no_sandbox=no_sandbox,
         no_cwd=no_cwd,

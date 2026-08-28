@@ -22,14 +22,11 @@ def _add_agent_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("-m", "--model", help="Override model")
     parser.add_argument(
         "-I",
-        "--keep-inference",
+        "--no-inference",
         action="store_true",
-        help="Keep inference server running after exit",
+        help="Do not start inference engine server",
     )
-    parser.add_argument(
-        "-M", "--keep-mcp", action="store_true", help="Keep wtmcp server running after exit"
-    )
-    parser.add_argument("--no-mcp", action="store_true", help="Skip wtmcp initialization")
+    parser.add_argument("-M", "--no-mcp", action="store_true", help="Skip wtmcp initialization")
     parser.add_argument("--no-sandbox", action="store_true", help="Skip arapuca sandbox")
     parser.add_argument(
         "-s",
@@ -107,7 +104,7 @@ def main():
     )
 
     # Inference command
-    inference_parser = subparsers.add_parser("inference", help="Manage inference engine")
+    inference_parser = subparsers.add_parser("inference", help="Manage inference engine server")
     inference_subparsers = inference_parser.add_subparsers(dest="inference_cmd")
     start_parser = inference_subparsers.add_parser("start", help="Start inference server")
     start_parser.add_argument("--model", help="Override model from config")
@@ -302,8 +299,8 @@ def main():
                     agent_module.cmd_agent(
                         args.agent,
                         args.model,
-                        args.keep_inference,
-                        args.keep_mcp,
+                        args.no_inference,
+                        # args.keep_mcp,
                         args.no_mcp,
                         args.no_sandbox,
                         args.no_cwd,
@@ -317,8 +314,8 @@ def main():
                         args.prompt_text,
                         args.agent,
                         args.model,
-                        args.keep_inference,
-                        args.keep_mcp,
+                        args.no_inference,
+                        # args.keep_mcp,
                         args.no_mcp,
                         args.no_sandbox,
                         args.no_cwd,
