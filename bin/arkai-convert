@@ -80,8 +80,8 @@ resolve_model() {
             echo "Found '$model' in HF cache" >&2
             find_hf_snapshot "$cache_dir"
         else
-            echo "Downloading '$model' from HuggingFace..." >&2
-            python3 -c "from huggingface_hub import snapshot_download; print(snapshot_download('$model'))"
+            echo "Model '$model' not found in Hugging cache." >&2
+            exit 1
         fi
         return
     fi
@@ -174,9 +174,9 @@ main() {
     fi
 
     echo "Converting $model to GGUF..." >&2
-    python3 "$LLAMA_CPP_DIR/convert_hf_to_gguf.py" \
+    "$VENV_DIR/bin/python3" "$LLAMA_CPP_DIR/convert_hf_to_gguf.py" \
         "$model" \
-        --outfile "$OUTFILE" 2>&1 | grep -E "^(Writing|Wrote|quantizing|quantized)" >&2
+        --outfile "$OUTFILE" >&2
 
     if [ -n "$QUANT_TYPE" ]; then
         if ! command -v llama-quantize >/dev/null 2>&1; then
@@ -189,7 +189,7 @@ main() {
             quant_file="${quant_file}-${QUANT_TYPE}.gguf"
 
             echo "Quantizing to $QUANT_TYPE..." >&2
-            llama-quantize "$OUTFILE" "$quant_file" "$QUANT_TYPE" 2>&1 | grep -E "^(Writing|Wrote|quantizing|quantized)" >&2
+            llama-quantize "$OUTFILE" "$quant_file" "$QUANT_TYPE" >&2
             rm "$OUTFILE"
             OUTFILE="$quant_file"
         fi
