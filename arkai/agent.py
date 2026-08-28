@@ -391,10 +391,7 @@ def _start_agent_opencode(
     Returns:
         Captured stdout when capture_stdout is True, None otherwise
     """
-    if use_sandbox:
-        config_dir = os.path.join(workdir or os.getcwd(), ".arkai-session")
-    else:
-        config_dir = os.path.expanduser("~/.local/state/arkai/opencode")
+    config_dir = os.path.expanduser("~/.local/state/arkai/sessions")
     os.makedirs(config_dir, exist_ok=True)
 
     with tempfile.NamedTemporaryFile(
@@ -501,10 +498,7 @@ def _start_agent_crush(
     Returns:
         Captured stdout when capture_stdout is True, None otherwise
     """
-    if use_sandbox:
-        config_dir = os.path.join(workdir or os.getcwd(), ".arkai-session")
-    else:
-        config_dir = os.path.expanduser("~/.local/state/arkai")
+    config_dir = os.path.expanduser("~/.local/state/arkai/sessions")
     os.makedirs(config_dir, exist_ok=True)
 
     with tempfile.NamedTemporaryFile(
@@ -645,10 +639,7 @@ def _start_agent_claude(
         agent_args.extend(["--model", model_name])
 
     if wtmcp_port is not None:
-        if use_sandbox:
-            config_dir = os.path.join(workdir or os.getcwd(), ".arkai-session")
-        else:
-            config_dir = os.path.expanduser("~/.local/state/arkai")
+        config_dir = os.path.expanduser("~/.local/state/arkai/sessions")
         os.makedirs(config_dir, exist_ok=True)
 
         with tempfile.NamedTemporaryFile(
@@ -670,7 +661,7 @@ def _start_agent_claude(
 
     if use_sandbox:
         sandbox_config_dir = (
-            os.path.join(workdir or os.getcwd(), ".arkai-session") if mcp_config else None
+            os.path.expanduser("~/.local/state/arkai/sessions") if mcp_config else None
         )
         sandbox_prefix = _build_sandbox_cmd(
             cfg,

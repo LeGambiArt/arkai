@@ -36,3 +36,5 @@ docs/AGENTS.md
 workdir/
 *.pid
 inference.log
+*.swp
+/.arkai.session
