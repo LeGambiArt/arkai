@@ -227,3 +227,31 @@ class TestConfigHomeErrors:
         monkeypatch.delenv("HOME", raising=False)
         with pytest.raises(RuntimeError):
             utils.get_pid_dir()
+
+
+class TestMessageLevel:
+    """Test message level functionality."""
+
+    def test_message_level_default(self):
+        """Test that default message level is INFO."""
+        assert utils.get_message_level() == utils.MessageLevel.INFO
+
+    def test_set_message_level(self):
+        """Test setting message level."""
+        original = utils.get_message_level()
+        try:
+            utils.set_message_level(utils.MessageLevel.ERROR)
+            assert utils.get_message_level() == utils.MessageLevel.ERROR
+
+            utils.set_message_level(utils.MessageLevel.WARN)
+            assert utils.get_message_level() == utils.MessageLevel.WARN
+
+            utils.set_message_level(utils.MessageLevel.INFO)
+            assert utils.get_message_level() == utils.MessageLevel.INFO
+        finally:
+            utils.set_message_level(original)
+
+    def test_message_level_values(self):
+        """Test message level ordering."""
+        assert utils.MessageLevel.ERROR.value < utils.MessageLevel.WARN.value
+        assert utils.MessageLevel.WARN.value < utils.MessageLevel.INFO.value

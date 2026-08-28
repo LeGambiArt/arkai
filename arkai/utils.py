@@ -6,10 +6,41 @@ import shutil
 import signal
 import subprocess
 import sys
+from enum import Enum
 from pathlib import Path
 from typing import Optional
 
 import yaml
+
+
+class MessageLevel(Enum):
+    """Message verbosity level."""
+
+    ERROR = 0
+    WARN = 1
+    INFO = 2
+
+
+_message_level = MessageLevel.INFO
+
+
+def set_message_level(level: MessageLevel) -> None:
+    """Set global message verbosity level.
+
+    Args:
+        level: MessageLevel to set
+    """
+    global _message_level
+    _message_level = level
+
+
+def get_message_level() -> MessageLevel:
+    """Get current message verbosity level.
+
+    Returns:
+        Current MessageLevel
+    """
+    return _message_level
 
 
 def get_config_home() -> str:
@@ -165,17 +196,20 @@ def kill_process(pid: int) -> bool:
 
 def error(msg: str, code: int = 1) -> None:
     """Print error to stderr and exit with code."""
-    print(f"Error: {msg}", file=sys.stderr)
+    if _message_level.value >= MessageLevel.ERROR.value:
+        print(f"Error: {msg}", file=sys.stderr)
 
 
 def warn(msg: str) -> None:
     """Print warning to stderr."""
-    print(f"Warning: {msg}", file=sys.stderr)
+    if _message_level.value >= MessageLevel.WARN.value:
+        print(f"Warning: {msg}", file=sys.stderr)
 
 
 def info(msg: str) -> None:
     """Print info message to stdout."""
-    print(msg)
+    if _message_level.value >= MessageLevel.INFO.value:
+        print(msg)
 
 
 VALID_VOLUME_FLAGS = {"ro", ""}
