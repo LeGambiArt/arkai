@@ -229,7 +229,7 @@ def validate_environment(environment: object) -> Optional[str]:
     return None
 
 
-def resolve_binary(binary_path: str) -> Optional[str]:
+def resolve_binary(binary_path: str) -> str:
     """Resolve binary path: expand tilde, return absolute path.
 
     If path is absolute or relative with directory separators, use as-is.

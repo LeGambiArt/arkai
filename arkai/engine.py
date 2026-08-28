@@ -121,7 +121,7 @@ def cmd_engine_start(
     )
 
     # Start in background
-    proc = subprocess.Popen(  # ty: ignore[no-matching-overload]
+    proc = subprocess.Popen(
         cmd,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,

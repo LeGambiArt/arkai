@@ -49,7 +49,7 @@ def cmd_wtmcp_list(port: Optional[int] = None) -> None:
 
     # Run wtmcp check to get available plugins
     try:
-        result = subprocess.run(  # ty: ignore
+        result = subprocess.run(
             [wtmcp_path, "check"],
             capture_output=True,
             text=True,
@@ -340,7 +340,7 @@ def cmd_wtmcp_start(
     if workdir:
         cmd.extend(["--workdir", workdir])
 
-    proc = subprocess.Popen(  # ty: ignore
+    proc = subprocess.Popen(
         cmd,
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,

@@ -94,6 +94,9 @@ def _agent_context(
         config.get_config_value(cfg, "sandbox.disable", False)
     )
 
+    agent_bin = config.get_config_value(cfg, "agent.path", resolved_agent_name)
+    agent_path: str = utils.resolve_binary(agent_bin)
+
     if no_cwd:
         workdir: Optional[str] = None
     elif sandbox_cwd:
@@ -101,62 +104,58 @@ def _agent_context(
     else:
         workdir = os.getcwd()
 
-    engine_started: bool = False
-    if not engine.is_inference_running():
-        if no_start_inference:
-            raise RuntimeError("Inference engine is not running.")
-        else:
-            try:
-                engine.cmd_engine_start(model=model)
-                engine_started = True
-            except RuntimeError as e:
-                utils.error(str(e), 1)
-                sys.exit(1)
-
+    errors = []
     wtmcp_port, wtmcp_started = (None, False)
-    if use_mcp:
-        wtmcp_port, wtmcp_started = _start_wtmcp_server(cfg)
-
-    agent_bin = config.get_config_value(cfg, "agent.path", resolved_agent_name)
+    engine_started: bool = False
     try:
-        agent_path_result = utils.resolve_binary(agent_bin)
-    except RuntimeError as e:
-        utils.error(str(e), 3)
-        sys.exit(3)
+        if not engine.is_inference_running():
+            if no_start_inference:
+                raise RuntimeError("Inference engine is not running.")
+            else:
+                engine.cmd_engine_start(model=model)  # may raise RuntimeError
+                engine_started = True
 
-    assert agent_path_result is not None
-    agent_path: str = agent_path_result
+        if use_mcp:
+            # may raise RuntimeError
+            wtmcp_port, wtmcp_started = _start_wtmcp_server(cfg)
 
-    ctx = AgentContext(
-        cfg=cfg,
-        agent_name=resolved_agent_name,
-        agent_path=agent_path,
-        use_mcp=use_mcp,
-        use_sandbox=use_sandbox,
-        workdir=workdir,
-        wtmcp_port=wtmcp_port,
-        no_start_inference=no_start_inference,
-        sandbox_profile=sandbox_profile,
-        sandbox_volume=sandbox_volume,
-        sandbox_environment=sandbox_environment,
-    )
+        ctx = AgentContext(
+            cfg=cfg,
+            agent_name=resolved_agent_name,
+            agent_path=agent_path,
+            use_mcp=use_mcp,
+            use_sandbox=use_sandbox,
+            workdir=workdir,
+            wtmcp_port=wtmcp_port,
+            no_start_inference=no_start_inference,
+            sandbox_profile=sandbox_profile,
+            sandbox_volume=sandbox_volume,
+            sandbox_environment=sandbox_environment,
+        )
 
-    try:
-        yield ctx
+        yield ctx  # may raise from execution
+    except Exception as ex:
+        errors.append(ex)
     finally:
         from arkai import wtmcp
 
         if wtmcp_started and wtmcp.is_wtmcp_running(wtmcp_port):
             try:
                 wtmcp.cmd_wtmcp_stop(wtmcp_port)
-            except Exception:
-                pass
+            except Exception as ex:
+                errors.append(ex)
 
-        if not ctx.no_start_inference and engine_started and engine.is_inference_running():
+        if engine_started and engine.is_inference_running():
             try:
                 engine.cmd_engine_stop()
-            except Exception:
-                pass
+            except Exception as ex:
+                errors.append(ex)
+        if errors:
+            if len(errors) > 1:
+                error_list = "\n- ".join(str(e) for e in errors)
+                raise RuntimeError(rf"Multiple errors starting agent:\s{error_list}")
+            else:
+                raise errors[0] from None
 
 
 def _merge_volumes(profile_volumes: list, cli_volumes: Optional[list] = None) -> list:
