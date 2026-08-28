@@ -11,7 +11,7 @@ from arkai import agent, engine, utils, wtmcp
 
 @given("subprocess calls are mocked for inference start")  # ty: ignore[call-non-callable]
 def step_mock_inference_subprocess(context):
-    """Mock Popen and run_command so the inference start loop completes instantly."""
+    """Mock Popen, run_command, and resolve_binary for inference start."""
     mock_proc = MagicMock()
     mock_proc.pid = 12345
 
@@ -19,8 +19,12 @@ def step_mock_inference_subprocess(context):
     context.inference_run_command_patch = patch.object(
         utils, "run_command", return_value=(0, "", "")
     )
+    context.inference_resolve_binary_patch = patch.object(
+        utils, "resolve_binary", return_value="/usr/bin/llama-server"
+    )
     context.inference_popen_patch.start()
     context.inference_run_command_patch.start()
+    context.inference_resolve_binary_patch.start()
 
 
 @when(  # ty: ignore[call-non-callable]
