@@ -19,13 +19,31 @@ cd "$PROJECT_ROOT"
 
 # Functions for each check
 check_format() {
-    echo "Checking code formatting with ruff..."
-    ruff format --check "${PROJECT_ROOT}"
+    if [[ $# -gt 0 ]]
+    then
+        [[ "$1" = "--fix" ]] && shift
+        if [[ $# -gt 0 ]]
+        then
+            echo "Running ruff format with given arguments..."
+            ruff format "${@:-}" "${PROJECT_ROOT}"
+        else
+            echo "Fixing code formatting with ruff..."
+            ruff format "${PROJECT_ROOT}"
+        fi
+    else
+        echo "Checking code formatting with ruff..."
+        ruff format --check "${PROJECT_ROOT}"
+    fi
 }
 
 check_lint() {
     echo "Running linter (ruff check)..."
-    ruff check "${PROJECT_ROOT}"
+    if [[ $# -gt 0 ]]
+    then
+        ruff check "${@:-}" "${PROJECT_ROOT}"
+    else
+        ruff check "${PROJECT_ROOT}"
+    fi
 }
 
 check_type() {
@@ -40,7 +58,16 @@ check_unit() {
 
 check_bdd() {
     echo "Running BDD tests with behave..."
-    coverage run --data-file="${PROJECT_ROOT}/.coverage.behave" -m behave "${PROJECT_ROOT}"/features
+    if [[ $# -gt 0 ]]
+    then
+        coverage run \
+            --data-file="${PROJECT_ROOT}/.coverage.behave" \
+            -m behave "${PROJECT_ROOT}"/features "$@"
+    else
+        coverage run \
+            --data-file="${PROJECT_ROOT}/.coverage.behave" \
+            -m behave "${PROJECT_ROOT}"/features
+    fi
 }
 
 check_coverage() {
@@ -159,15 +186,17 @@ run_all() {
 # Main script logic
 COMMAND="${1:-all}"
 
+[ $# -gt 0 ] && shift
+
 case "$COMMAND" in
     all)
         run_all
         ;;
     format)
-        check_format
+        check_format "$@"
         ;;
     lint)
-        check_lint
+        check_lint "$@"
         ;;
     type)
         check_type
@@ -179,7 +208,7 @@ case "$COMMAND" in
         check_bdd
         ;;
     coverage)
-        [[ "${2:-}" == "-f" ]] && force="-f"
+        [[ "${2:-}" == "-f" ]] && shift && force="-f"
         check_coverage ${force:-}
         ;;
     *)
