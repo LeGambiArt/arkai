@@ -12,6 +12,55 @@ from arkai import sandbox as sandbox_module
 from arkai import wtmcp as wtmcp_module
 
 
+def _add_agent_common_args(parser: argparse.ArgumentParser) -> None:
+    """Add CLI arguments shared by agent start and agent prompt.
+
+    Args:
+        parser: The argparse subparser to add arguments to
+    """
+    parser.add_argument("-a", "--agent", help="Override agent")
+    parser.add_argument("-m", "--model", help="Override model")
+    parser.add_argument(
+        "-I",
+        "--keep-inference",
+        action="store_true",
+        help="Keep inference server running after exit",
+    )
+    parser.add_argument(
+        "-M", "--keep-mcp", action="store_true", help="Keep wtmcp server running after exit"
+    )
+    parser.add_argument("--no-mcp", action="store_true", help="Skip wtmcp initialization")
+    parser.add_argument("--no-sandbox", action="store_true", help="Skip arapuca sandbox")
+    parser.add_argument(
+        "-s",
+        "--sandbox",
+        metavar="PROFILE",
+        help="Use specific sandbox profile for this run",
+    )
+    parser.add_argument(
+        "-v",
+        "--volume",
+        action="append",
+        dest="volumes",
+        help="Mount a volume in the sandbox (format: /path or /path:ro)",
+    )
+    parser.add_argument(
+        "-e",
+        "--env",
+        action="append",
+        dest="environment",
+        metavar="KEY=VALUE",
+        help="Set an environment variable in the sandbox (KEY=VALUE). Can be used multiple times",
+    )
+    cwd_group = parser.add_mutually_exclusive_group()
+    cwd_group.add_argument(
+        "--no-cwd", action="store_true", help="Do not mount the current directory in the sandbox"
+    )
+    cwd_group.add_argument(
+        "--cwd", metavar="PATH", help="Override the directory mounted as cwd in the sandbox"
+    )
+
+
 def main():
     """Parse arguments and dispatch to command handlers."""
     parser = argparse.ArgumentParser(
@@ -147,51 +196,19 @@ def main():
     # Agent command
     agent_parser = subparsers.add_parser("agent", help="Manage interactive agent")
     agent_subparsers = agent_parser.add_subparsers(dest="agent_cmd")
+
     agent_start_parser = agent_subparsers.add_parser("start", help="Start interactive agent")
-    agent_start_parser.add_argument("-a", "--agent", help="Override agent")
-    agent_start_parser.add_argument("-m", "--model", help="Override model")
-    agent_start_parser.add_argument(
-        "-I",
-        "--keep-inference",
-        action="store_true",
-        help="Keep inference server running after exit",
+    _add_agent_common_args(agent_start_parser)
+
+    agent_prompt_parser = agent_subparsers.add_parser(
+        "prompt", help="Run agent with a prompt non-interactively"
     )
-    agent_start_parser.add_argument(
-        "-M", "--keep-mcp", action="store_true", help="Keep wtmcp server running after exit"
+    _add_agent_common_args(agent_prompt_parser)
+    agent_prompt_parser.add_argument(
+        "-o", "--output", metavar="FILE", help="Write agent output to file instead of stdout"
     )
-    agent_start_parser.add_argument(
-        "--no-mcp", action="store_true", help="Skip wtmcp initialization"
-    )
-    agent_start_parser.add_argument(
-        "--no-sandbox", action="store_true", help="Skip arapuca sandbox"
-    )
-    agent_start_parser.add_argument(
-        "-s",
-        "--sandbox",
-        metavar="PROFILE",
-        help="Use specific sandbox profile for this run",
-    )
-    agent_start_parser.add_argument(
-        "-v",
-        "--volume",
-        action="append",
-        dest="volumes",
-        help="Mount a volume in the sandbox (format: /path or /path:ro)",
-    )
-    agent_start_parser.add_argument(
-        "-e",
-        "--env",
-        action="append",
-        dest="environment",
-        metavar="KEY=VALUE",
-        help="Set an environment variable in the sandbox (KEY=VALUE). Can be used multiple times",
-    )
-    cwd_group = agent_start_parser.add_mutually_exclusive_group()
-    cwd_group.add_argument(
-        "--no-cwd", action="store_true", help="Do not mount the current directory in the sandbox"
-    )
-    cwd_group.add_argument(
-        "--cwd", metavar="PATH", help="Override the directory mounted as cwd in the sandbox"
+    agent_prompt_parser.add_argument(
+        "prompt_text", nargs="*", help="Prompt text (reads from stdin if not provided)"
     )
 
     args = parser.parse_args()
@@ -275,25 +292,42 @@ def main():
             else:
                 sandbox_parser.print_help()
         elif args.command == "agent":
-            if args.agent_cmd == "start":
+            if args.agent_cmd in ("start", "prompt"):
                 agent_env = (
                     {k: v for e in args.environment for k, _, v in [e.partition("=")]}
                     if args.environment
                     else None
                 )
-                agent_module.cmd_agent(
-                    args.agent,
-                    args.model,
-                    args.keep_inference,
-                    args.keep_mcp,
-                    args.no_mcp,
-                    args.no_sandbox,
-                    args.no_cwd,
-                    args.cwd,
-                    args.sandbox,
-                    args.volumes,
-                    agent_env,
-                )
+                if args.agent_cmd == "start":
+                    agent_module.cmd_agent(
+                        args.agent,
+                        args.model,
+                        args.keep_inference,
+                        args.keep_mcp,
+                        args.no_mcp,
+                        args.no_sandbox,
+                        args.no_cwd,
+                        args.cwd,
+                        args.sandbox,
+                        args.volumes,
+                        agent_env,
+                    )
+                else:
+                    agent_module.cmd_agent_prompt(
+                        args.prompt_text,
+                        args.agent,
+                        args.model,
+                        args.keep_inference,
+                        args.keep_mcp,
+                        args.no_mcp,
+                        args.no_sandbox,
+                        args.no_cwd,
+                        args.cwd,
+                        args.sandbox,
+                        args.volumes,
+                        agent_env,
+                        args.output,
+                    )
             else:
                 agent_parser.print_help()
         else:

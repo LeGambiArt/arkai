@@ -3,7 +3,7 @@ Feature: Agent Execution
     Given a valid .arkai.yaml file
     When I run "arkai agent start" with stdin piped
     Then the exit code is 1
-    And the error contains "agent requires a TTY"
+    And the error contains "agent start requires a TTY"
 
   Scenario: Agent skips MCP with --no-mcp flag
     Given a valid .arkai.yaml file
