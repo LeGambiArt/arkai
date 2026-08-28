@@ -1,6 +1,7 @@
 """Inference server lifecycle management."""
 
 import os
+import signal
 import subprocess
 import time
 from typing import Optional
@@ -120,6 +121,9 @@ def cmd_engine_start(
         ]
     )
 
+    # Disable SIGINT to increase chane of process and pid file are both creted
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
     # Start in background
     proc = subprocess.Popen(
         cmd,
@@ -130,6 +134,9 @@ def cmd_engine_start(
     # Write PID and state
     pid_path = get_inference_pid_path()
     utils.write_pid(pid_path, proc.pid)
+
+    # Restore SIGINT
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
 
     # Save engine state (config used at startup)
     state = {

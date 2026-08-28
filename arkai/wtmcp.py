@@ -1,6 +1,7 @@
 """wtmcp plugin management and server lifecycle."""
 
 import os
+import signal
 import subprocess
 import time
 from typing import Optional
@@ -340,6 +341,9 @@ def cmd_wtmcp_start(
     if workdir:
         cmd.extend(["--workdir", workdir])
 
+    # Disable SIGINT to increase chane of process and pid file are both creted
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
+
     proc = subprocess.Popen(
         cmd,
         stdout=subprocess.DEVNULL,
@@ -349,6 +353,9 @@ def cmd_wtmcp_start(
     # Write PID
     pid_path = get_wtmcp_pid_path(port)
     utils.write_pid(pid_path, proc.pid)
+
+    # Restore SIGINT
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
 
     # Save server state with full context
     state = {
