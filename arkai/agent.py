@@ -620,13 +620,27 @@ def _start_agent_claude(
         Captured stdout when capture_stdout is True, None otherwise
     """
     inference_port = config.get_config_value(cfg, "inference.port", 8081)
+    context_size = config.get_config_value(cfg, "inference.context_size", 65536)
     model_name = _get_model_name(cfg)
+
+    # Vars inherited from a parent Claude Code session that must be cleared so
+    # Claude Code routes to the local inference server instead of Vertex AI.
+    _vertex_env_vars = [
+        "CLAUDE_CODE_USE_VERTEX",
+        "ANTHROPIC_VERTEX_PROJECT_ID",
+        "VERTEXAI_PROJECT",
+        "VERTEXAI_LOCATION",
+        "GOOGLE_CLOUD_LOCATION",
+        "ANTHROPIC_MODEL",
+    ]
 
     anthropic_env = {
         "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{inference_port}",
         "ANTHROPIC_AUTH_TOKEN": "local",
         "ANTHROPIC_API_KEY": "local",
         "CLAUDE_CODE_ATTRIBUTION_HEADER": "0",
+        "CLAUDE_CODE_MAX_CONTEXT_TOKENS": str(context_size),
+        "CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT": "1",
     }
 
     mcp_config: Optional[str] = None
@@ -674,11 +688,14 @@ def _start_agent_claude(
             cli_volumes,
             cli_environment,
         )
+        unset_args = [arg for var in _vertex_env_vars if var in os.environ for arg in ("-u", var)]
         env_pairs = [f"{k}={v}" for k, v in anthropic_env.items()]
-        cmd = sandbox_prefix + ["env"] + env_pairs + agent_args
+        cmd = sandbox_prefix + ["env"] + unset_args + env_pairs + agent_args
         env = os.environ.copy()
     else:
         env = os.environ.copy()
+        for var in _vertex_env_vars:
+            env.pop(var, None)
         env.update(anthropic_env)
         cmd = agent_args
 
