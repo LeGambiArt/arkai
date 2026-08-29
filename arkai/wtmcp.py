@@ -374,6 +374,15 @@ def cmd_wtmcp_start(
     # Brief wait to check if process starts successfully
     time.sleep(0.5)
     if not is_wtmcp_running(port):
+        try:
+            os.kill(proc.pid, signal.SIGKILL)
+        except (ProcessLookupError, OSError):
+            pass
+        pid_path_cleanup = get_wtmcp_pid_path(port)
+        if os.path.exists(pid_path_cleanup):
+            os.remove(pid_path_cleanup)
+        if os.path.exists(wtmcp_config_path):
+            os.remove(wtmcp_config_path)
         raise RuntimeError("wtmcp server failed to start")
 
     utils.info(f"wtmcp server started on port {port}")
@@ -413,23 +422,16 @@ def cmd_wtmcp_stop(port: Optional[int] = None) -> None:
     utils.info(f"Stopping wtmcp server on port {port} (PID {pid})...")
     utils.kill_process(pid)
 
-    # Poll for process termination (up to 10 seconds)
-    for _ in range(20):
-        try:
-            code, _, _ = utils.run_command(["kill", "-0", str(pid)])
-            if code != 0:
-                break
-        except RuntimeError:
-            break
-        time.sleep(0.5)
+    if not utils.wait_for_process_stop(pid):
+        raise RuntimeError(
+            f"wtmcp server (PID {pid}) did not stop after SIGKILL; PID file preserved"
+        )
 
     if os.path.exists(pid_path):
         os.remove(pid_path)
 
-    # Clean up state file
     state_path = get_wtmcp_state_path(port)
     if os.path.exists(state_path):
-        # Load state to get wtmcp config file path
         try:
             state = utils.load_yaml(state_path)
             wtmcp_config_file = state.get("wtmcp_config_file")

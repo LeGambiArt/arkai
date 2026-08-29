@@ -160,6 +160,16 @@ def cmd_engine_start(
             pass
         time.sleep(1)
 
+    # Kill the process that failed to become ready and clean up its files
+    try:
+        os.kill(proc.pid, signal.SIGKILL)
+    except (ProcessLookupError, OSError):
+        pass
+    if os.path.exists(pid_path):
+        os.remove(pid_path)
+    state_path = get_inference_state_path()
+    if os.path.exists(state_path):
+        os.remove(state_path)
     raise RuntimeError("Inference server failed to start")
 
 
@@ -175,20 +185,14 @@ def cmd_engine_stop() -> None:
     utils.info(f"Stopping inference server (PID {pid})...")
     utils.kill_process(pid)
 
-    # Poll for process termination (up to 10 seconds)
-    for _ in range(20):
-        try:
-            code, _, _ = utils.run_command(["kill", "-0", str(pid)])
-            if code != 0:
-                break
-        except RuntimeError:
-            break
-        time.sleep(0.5)
+    if not utils.wait_for_process_stop(pid):
+        raise RuntimeError(
+            f"Inference server (PID {pid}) did not stop after SIGKILL; PID file preserved"
+        )
 
     if os.path.exists(pid_path):
         os.remove(pid_path)
 
-    # Clean up state file
     state_path = get_inference_state_path()
     if os.path.exists(state_path):
         os.remove(state_path)

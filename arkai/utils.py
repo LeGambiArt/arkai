@@ -6,6 +6,7 @@ import shutil
 import signal
 import subprocess
 import sys
+import time
 from enum import Enum
 from pathlib import Path
 from typing import Optional
@@ -192,6 +193,49 @@ def kill_process(pid: int) -> bool:
         return True
     except (ProcessLookupError, OSError):
         return False
+
+
+def wait_for_process_stop(pid: int, timeout_secs: float = 10.0) -> bool:
+    """Wait for a process to stop after SIGTERM, escalating to SIGKILL if needed.
+
+    Call this after sending SIGTERM via kill_process(). Polls for termination up to
+    timeout_secs, then sends SIGKILL and waits a further 2 seconds.
+
+    Args:
+        pid: Process ID to wait for
+        timeout_secs: Seconds to poll before escalating to SIGKILL
+
+    Returns:
+        True if the process has stopped, False if still alive after SIGKILL
+    """
+    poll_interval = 0.5
+    polls = max(1, int(timeout_secs / poll_interval))
+
+    for _ in range(polls):
+        try:
+            code, _, _ = run_command(["kill", "-0", str(pid)])
+            if code != 0:
+                return True
+        except RuntimeError:
+            return True
+        time.sleep(poll_interval)
+
+    # Escalate to SIGKILL
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except (ProcessLookupError, OSError):
+        return True
+
+    for _ in range(4):
+        try:
+            code, _, _ = run_command(["kill", "-0", str(pid)])
+            if code != 0:
+                return True
+        except RuntimeError:
+            return True
+        time.sleep(0.5)
+
+    return False
 
 
 def error(msg: str, code: int = 1) -> None:

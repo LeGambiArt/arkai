@@ -229,6 +229,75 @@ class TestConfigHomeErrors:
             utils.get_pid_dir()
 
 
+class TestWaitForProcessStop:
+    """Tests for wait_for_process_stop — PID-file-safe shutdown helper."""
+
+    def test_returns_true_when_process_already_gone(self, monkeypatch):
+        """Process is gone before first poll; no SIGKILL needed."""
+        monkeypatch.setattr("arkai.utils.run_command", lambda cmd, **kw: (1, "", "no such process"))
+        monkeypatch.setattr("time.sleep", lambda _: None)
+        assert utils.wait_for_process_stop(9999) is True
+
+    def test_returns_true_when_process_stops_during_poll(self, monkeypatch):
+        """Process disappears on the second poll."""
+        call_count = {"n": 0}
+
+        def fake_run(cmd, **kw):
+            call_count["n"] += 1
+            return (0, "", "") if call_count["n"] < 2 else (1, "", "")
+
+        monkeypatch.setattr("arkai.utils.run_command", fake_run)
+        monkeypatch.setattr("time.sleep", lambda _: None)
+        assert utils.wait_for_process_stop(9999) is True
+
+    def test_sends_sigkill_after_timeout_and_returns_true(self, monkeypatch):
+        """Process ignores SIGTERM; SIGKILL succeeds."""
+        # Polls always return alive until SIGKILL is sent
+        sigkill_sent = {"sent": False}
+        kill_calls = []
+
+        def fake_kill(pid, sig):
+            kill_calls.append(sig)
+            sigkill_sent["sent"] = True
+
+        def fake_run(cmd, **kw):
+            # Report dead only after SIGKILL has been sent
+            return (1, "", "") if sigkill_sent["sent"] else (0, "", "")
+
+        monkeypatch.setattr("arkai.utils.run_command", fake_run)
+        monkeypatch.setattr("os.kill", fake_kill)
+        monkeypatch.setattr("time.sleep", lambda _: None)
+        import signal as _signal
+
+        assert utils.wait_for_process_stop(9999, timeout_secs=1.0) is True
+        assert _signal.SIGKILL in kill_calls
+
+    def test_returns_false_when_process_survives_sigkill(self, monkeypatch):
+        """Process is unkillable; function returns False and does NOT remove files."""
+        monkeypatch.setattr("arkai.utils.run_command", lambda cmd, **kw: (0, "", ""))
+        monkeypatch.setattr("os.kill", lambda pid, sig: None)
+        monkeypatch.setattr("time.sleep", lambda _: None)
+        assert utils.wait_for_process_stop(9999, timeout_secs=0.5) is False
+
+    def test_returns_true_when_kill_raises_process_lookup_error(self, monkeypatch):
+        """SIGKILL raises ProcessLookupError meaning process is already gone."""
+        # All polls return alive so it tries SIGKILL
+        call_count = {"n": 0}
+
+        def fake_run(cmd, **kw):
+            call_count["n"] += 1
+            # Always alive during polls; the SIGKILL path handles termination
+            return (0, "", "")
+
+        def fake_kill(pid, sig):
+            raise ProcessLookupError
+
+        monkeypatch.setattr("arkai.utils.run_command", fake_run)
+        monkeypatch.setattr("os.kill", fake_kill)
+        monkeypatch.setattr("time.sleep", lambda _: None)
+        assert utils.wait_for_process_stop(9999, timeout_secs=0.5) is True
+
+
 class TestMessageLevel:
     """Test message level functionality."""
 

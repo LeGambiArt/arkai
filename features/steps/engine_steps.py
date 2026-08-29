@@ -5,7 +5,7 @@ import sys
 from io import StringIO
 from unittest.mock import patch
 
-from behave import given, when
+from behave import given, then, when
 
 from arkai import engine, utils
 
@@ -31,6 +31,41 @@ def step_server_running(context):
     context.is_running_patch = patch.object(engine, "is_inference_running", return_value=True)
     context.is_running_patch.start()
     context.is_running_mock = context.is_running_patch
+
+
+@given("the inference server stops on SIGTERM")  # ty: ignore[call-non-callable]
+def step_server_stops_on_sigterm(context):
+    """Mock wait_for_process_stop to report process stopped (SIGTERM sufficient)."""
+    context.wait_stop_patch = patch.object(utils, "wait_for_process_stop", return_value=True)
+    context.wait_stop_patch.start()
+
+
+@given("the inference server stops only on SIGKILL")  # ty: ignore[call-non-callable]
+def step_server_stops_on_sigkill(context):
+    """Mock wait_for_process_stop to simulate SIGKILL-only termination (still returns True)."""
+    context.wait_stop_patch = patch.object(utils, "wait_for_process_stop", return_value=True)
+    context.wait_stop_patch.start()
+
+
+@given("the inference server ignores all signals")  # ty: ignore[call-non-callable]
+def step_server_ignores_signals(context):
+    """Mock wait_for_process_stop to report process survived SIGKILL."""
+    context.wait_stop_patch = patch.object(utils, "wait_for_process_stop", return_value=False)
+    context.wait_stop_patch.start()
+
+
+@then("the inference PID file does not exist")  # ty: ignore[call-non-callable]
+def step_pid_file_not_exist(context):
+    """Assert that the inference PID file was removed."""
+    pid_path = engine.get_inference_pid_path()
+    assert not os.path.exists(pid_path), f"PID file still exists: {pid_path}"
+
+
+@then("the inference PID file exists")  # ty: ignore[call-non-callable]
+def step_pid_file_exists(context):
+    """Assert that the inference PID file was preserved."""
+    pid_path = engine.get_inference_pid_path()
+    assert os.path.exists(pid_path), f"PID file was removed but should be preserved: {pid_path}"
 
 
 @when('I run "arkai inference {cmd}"')  # ty: ignore[call-non-callable]
