@@ -5,11 +5,85 @@ import sys
 
 from arkai import __version__
 from arkai import agent as agent_module
+from arkai import benchmark as benchmark_module
 from arkai import config as config_module
 from arkai import engine as engine_module
 from arkai import model as model_module
 from arkai import sandbox as sandbox_module
 from arkai import wtmcp as wtmcp_module
+
+
+def cmd_benchmark(args: argparse.Namespace) -> None:
+    """Run LLM model benchmark.
+
+    Args:
+        args: Parsed command-line arguments
+    """
+    # Handle --show-prompts option
+    if args.show_prompts:
+        benchmark_module.print_prompt_set(args.show_prompts)
+        return
+
+    # Set message level
+    if args.quiet:
+        from arkai.utils import MessageLevel, set_message_level
+
+        set_message_level(MessageLevel.ERROR)
+
+    # Load config for defaults
+    cfg = config_module.load_config()
+
+    # Resolve model
+    model = args.model
+    if not model:
+        model = config_module.get_config_value(cfg, "inference.model")
+        if not model:
+            model = config_module.get_config_value(cfg, "inference.hf")
+
+    if not model:
+        raise RuntimeError("Model not specified")
+
+    # Resolve other settings from config with CLI overrides
+    port = args.port or config_module.get_config_value(cfg, "inference.port", 8081)
+    gpu_layers = (
+        args.gpu_layers
+        if args.gpu_layers is not None
+        else config_module.get_config_value(cfg, "inference.gpu_layers", -1)
+    )
+    context_size = (
+        args.context
+        if args.context is not None
+        else config_module.get_config_value(cfg, "inference.context_size", 65536)
+    )
+
+    # Parse prompts
+    prompts = [p.strip() for p in args.prompts.split(",")]
+
+    # Create config
+    bench_config = benchmark_module.BenchmarkConfig(
+        model=model,
+        port=port,
+        iterations=args.iterations,
+        warmup=not args.no_warmup,
+        token_limit=args.tokens,
+        temperature=0.0,
+        seed=42,
+        prompts=prompts,
+        custom_prompt_file=args.prompt_file,
+        gpu_layers=gpu_layers,
+        context_size=context_size,
+        no_inference=args.no_inference,
+    )
+
+    # Run benchmark
+    runner = benchmark_module.BenchmarkRunner(bench_config)
+    result = runner.run()
+
+    # Output results
+    if args.json:
+        print(benchmark_module.format_json(result))
+    else:
+        print(benchmark_module.format_table(result))
 
 
 def _add_agent_common_args(parser: argparse.ArgumentParser) -> None:
@@ -103,11 +177,59 @@ def main():
         help="Output file path (default: ~/.local/share/arkai/models/MODEL-QUANTIZATION.gguf)",
     )
 
+    # Benchmark command
+    benchmark_parser = subparsers.add_parser("benchmark", help="Benchmark LLM models")
+    benchmark_parser.add_argument(
+        "-m",
+        "--model",
+        help="Override model from config (use hf:<model_id> for HuggingFace models)",
+    )
+    benchmark_parser.add_argument(
+        "--prompts",
+        default="code-review:all",
+        help=(
+            "Comma-separated prompt specs (format '<set>:<size>', e.g., 'code-review:all', "
+            "'ai:short,code-review:medium'). Sets: 'ai', 'code-review', 'coding'. Sizes: 'short', "
+            "'medium', 'long', 'all'. Default: code-review:all"
+        ),
+    )
+    benchmark_parser.add_argument(
+        "--show-prompts",
+        metavar="SET",
+        help="Show prompts from a set (ai, code-review) and exit",
+    )
+    benchmark_parser.add_argument("-p", "--prompt-file", help="Custom prompt file to benchmark")
+    benchmark_parser.add_argument(
+        "-i",
+        "--iterations",
+        type=int,
+        default=5,
+        help="Number of benchmark iterations (default: 5)",
+    )
+    benchmark_parser.add_argument("--no-warmup", action="store_true", help="Skip warmup iteration")
+    benchmark_parser.add_argument(
+        "-t", "--tokens", type=int, default=128, help="Max tokens to generate (default: 128)"
+    )
+    benchmark_parser.add_argument("--gpu-layers", type=int, help="Override GPU layers")
+    benchmark_parser.add_argument("--context", type=int, help="Override context size")
+    benchmark_parser.add_argument("--port", type=int, help="Override port from config")
+    benchmark_parser.add_argument(
+        "-I",
+        "--no-inference",
+        action="store_true",
+        help="Do not start inference engine server",
+    )
+    benchmark_parser.add_argument("-M", "--no-mcp", action="store_true", help="Skip wtmcp init")
+    benchmark_parser.add_argument(
+        "-q", "--quiet", action="store_true", help="Only show benchmark output"
+    )
+    benchmark_parser.add_argument("-j", "--json", action="store_true", help="Output in JSON format")
+
     # Inference command
     inference_parser = subparsers.add_parser("inference", help="Manage inference engine server")
     inference_subparsers = inference_parser.add_subparsers(dest="inference_cmd")
     start_parser = inference_subparsers.add_parser("start", help="Start inference server")
-    start_parser.add_argument("--model", help="Override model from config")
+    start_parser.add_argument("-m", "--model", help="Override model from config")
     start_parser.add_argument("--gpu-layers", type=int, help="Override GPU layers")
     start_parser.add_argument("--context", type=int, help="Override context size")
     start_parser.add_argument("--port", type=int, help="Override port from config")
@@ -211,7 +333,9 @@ def main():
     args = parser.parse_args()
 
     try:
-        if args.command == "config":
+        if args.command == "benchmark":
+            cmd_benchmark(args)
+        elif args.command == "config":
             if args.config_cmd == "validate":
                 config_module.cmd_config_validate(args.file)
             elif args.config_cmd == "init":
