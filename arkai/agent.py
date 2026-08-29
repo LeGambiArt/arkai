@@ -97,6 +97,17 @@ def _agent_context(
     agent_bin = config.get_config_value(cfg, "agent.path", resolved_agent_name)
     agent_path: str = utils.resolve_binary(agent_bin)
 
+    # Validate arapuca binary early, before starting any servers.
+    if use_sandbox:
+        sandbox_profile_obj = _resolve_sandbox_profile(cfg, sandbox_profile)
+        arapuca_bin = sandbox_profile_obj.get("path", "arapuca")
+        try:
+            utils.resolve_binary(arapuca_bin)
+        except RuntimeError as e:
+            raise RuntimeError(
+                f"arapuca not found: {e}. Install arapuca or use --no-sandbox"
+            ) from e
+
     if no_cwd:
         workdir: Optional[str] = None
     elif sandbox_cwd:
