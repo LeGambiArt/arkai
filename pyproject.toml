@@ -17,6 +17,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+rag = [
+    "pymupdf>=1.23.0",
+    "markdown>=3.4",
+    "sentence-transformers>=2.2.0",
+]
 dev = [
     "pytest>=7.0",
     "behave>=1.2.6",

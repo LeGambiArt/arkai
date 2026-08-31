@@ -32,6 +32,18 @@ DEFAULTS = {
         "active_profile": None,
         "profiles": {},
     },
+    "vectordb": {
+        "vendor": "chromadb",
+        "port": 8082,
+        "path": "chroma",
+        "database_dir": None,
+    },
+    "rag": {
+        "chunk_size": 512,
+        "chunk_overlap": 50,
+        "embedding_model": None,
+        "max_search_results": 10,
+    },
 }
 
 VALID_AGENTS = {"opencode", "crush", "claude"}
@@ -90,12 +102,39 @@ def validate_config(config: dict) -> bool:
     # Check port ranges
     inference_port = get_config_value(config, "inference.port", 8081)
     wtmcp_port = get_config_value(config, "wtmcp.port", 8080)
+    vectordb_port = get_config_value(config, "vectordb.port", 8082)
 
     if not (1024 <= inference_port <= 65535):
         utils.error(f"inference.port must be 1024-65535, got {inference_port}")
         valid = False
     if not (1024 <= wtmcp_port <= 65535):
         utils.error(f"wtmcp.port must be 1024-65535, got {wtmcp_port}")
+        valid = False
+    if not (1024 <= vectordb_port <= 65535):
+        utils.error(f"vectordb.port must be 1024-65535, got {vectordb_port}")
+        valid = False
+
+    # Check vectordb vendor
+    vectordb_vendor = get_config_value(config, "vectordb.vendor", "chromadb")
+    if vectordb_vendor != "chromadb":
+        utils.error(f"vectordb.vendor must be 'chromadb', got {vectordb_vendor}")
+        valid = False
+
+    # Check RAG configuration
+    chunk_size = get_config_value(config, "rag.chunk_size", 512)
+    if not isinstance(chunk_size, int) or chunk_size <= 0:
+        utils.error(f"rag.chunk_size must be positive integer, got {chunk_size}")
+        valid = False
+
+    chunk_overlap = get_config_value(config, "rag.chunk_overlap", 50)
+    if not isinstance(chunk_overlap, int) or chunk_overlap < 0:
+        utils.error(f"rag.chunk_overlap must be non-negative integer, got {chunk_overlap}")
+        valid = False
+
+    if chunk_overlap >= chunk_size:
+        utils.error(
+            f"rag.chunk_overlap ({chunk_overlap}) must be less than rag.chunk_size ({chunk_size})"
+        )
         valid = False
 
     # Check numeric fields

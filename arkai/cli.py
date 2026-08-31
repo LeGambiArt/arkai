@@ -9,7 +9,9 @@ from arkai import benchmark as benchmark_module
 from arkai import config as config_module
 from arkai import engine as engine_module
 from arkai import model as model_module
+from arkai import rag as rag_module
 from arkai import sandbox as sandbox_module
+from arkai import vectordb as vectordb_module
 from arkai import wtmcp as wtmcp_module
 
 
@@ -312,6 +314,33 @@ def main():
     active_parser = sandbox_subparsers.add_parser("active", help="Set active profile")
     active_parser.add_argument("profile_name", nargs="?", help="Profile name (or empty to clear)")
 
+    # Vectordb command
+    vectordb_parser = subparsers.add_parser("vectordb", help="Manage vector database server")
+    vectordb_subparsers = vectordb_parser.add_subparsers(dest="vectordb_cmd")
+    vectordb_start_parser = vectordb_subparsers.add_parser("start", help="Start vectordb server")
+    vectordb_start_parser.add_argument("--port", type=int, help="Override port from config")
+    vectordb_subparsers.add_parser("stop", help="Stop vectordb server")
+    vectordb_subparsers.add_parser("status", help="Show vectordb server status")
+    vectordb_subparsers.add_parser("list", help="List databases")
+    vectordb_initdb_parser = vectordb_subparsers.add_parser(
+        "initdb", help="Initialize new database"
+    )
+    vectordb_initdb_parser.add_argument("db_name", help="Database name")
+    vectordb_drop_parser = vectordb_subparsers.add_parser("drop", help="Drop database")
+    vectordb_drop_parser.add_argument("db_name", help="Database name")
+
+    # RAG command
+    rag_parser = subparsers.add_parser("rag", help="Manage RAG operations")
+    rag_subparsers = rag_parser.add_subparsers(dest="rag_cmd")
+    rag_ingest_parser = rag_subparsers.add_parser("ingest", help="Ingest document into RAG")
+    rag_ingest_parser.add_argument("db_name", help="Database name")
+    rag_ingest_parser.add_argument("file_path", help="Path to document file")
+    rag_ingest_parser.add_argument("--chunk-size", type=int, help="Override chunk size from config")
+    rag_query_parser = rag_subparsers.add_parser("query", help="Query RAG database")
+    rag_query_parser.add_argument("db_name", help="Database name")
+    rag_query_parser.add_argument("query", help="Query text")
+    rag_query_parser.add_argument("-k", "--results", type=int, help="Number of results to return")
+
     # Agent command
     agent_parser = subparsers.add_parser("agent", help="Manage interactive agent")
     agent_subparsers = agent_parser.add_subparsers(dest="agent_cmd")
@@ -412,6 +441,28 @@ def main():
                 sandbox_module.cmd_sandbox_active(args.profile_name)
             else:
                 sandbox_parser.print_help()
+        elif args.command == "vectordb":
+            if args.vectordb_cmd == "start":
+                vectordb_module.cmd_vectordb_start(args.port)
+            elif args.vectordb_cmd == "stop":
+                vectordb_module.cmd_vectordb_stop()
+            elif args.vectordb_cmd == "status":
+                vectordb_module.cmd_vectordb_status()
+            elif args.vectordb_cmd == "list":
+                vectordb_module.cmd_vectordb_list()
+            elif args.vectordb_cmd == "initdb":
+                vectordb_module.cmd_vectordb_initdb(args.db_name)
+            elif args.vectordb_cmd == "drop":
+                vectordb_module.cmd_vectordb_drop(args.db_name)
+            else:
+                vectordb_parser.print_help()
+        elif args.command == "rag":
+            if args.rag_cmd == "ingest":
+                rag_module.cmd_rag_ingest(args.db_name, args.file_path, args.chunk_size)
+            elif args.rag_cmd == "query":
+                rag_module.cmd_rag_search(args.db_name, args.query, args.results)
+            else:
+                rag_parser.print_help()
         elif args.command == "agent":
             if args.agent_cmd in ("start", "prompt"):
                 agent_env = (
