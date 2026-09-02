@@ -136,13 +136,12 @@ def run_command(
 
 def load_yaml(path: str) -> dict:
     """Load and parse YAML file; raises exception if not found or invalid."""
-    if not os.path.exists(path):
-        raise FileNotFoundError(f"Config file not found: {path}")
-
     try:
         with open(path) as f:
             data = yaml.safe_load(f)
             return data or {}
+    except FileNotFoundError:
+        raise FileNotFoundError(f"Config file not found: {path}")
     except yaml.YAMLError as e:
         raise RuntimeError(str(e))
 
@@ -170,8 +169,6 @@ def merge_configs(base: dict, override: dict) -> dict:
 
 def read_pid(path: str) -> Optional[int]:
     """Read PID from file; return None if not found or invalid."""
-    if not os.path.exists(path):
-        return None
     try:
         with open(path) as f:
             return int(f.read().strip())
