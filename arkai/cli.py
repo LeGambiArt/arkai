@@ -12,6 +12,7 @@ from arkai import engine as engine_module
 from arkai import model as model_module
 from arkai import rag as rag_module
 from arkai import sandbox as sandbox_module
+from arkai import status as status_module
 from arkai import vectordb as vectordb_module
 from arkai import wtmcp as wtmcp_module
 
@@ -168,6 +169,9 @@ def main():
     )
 
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
+
+    # Status command
+    subparsers.add_parser("status", help="Show status of all servers")
 
     # Config command
     config_parser = _add_config_command_arg_parser(subparsers)
@@ -378,7 +382,9 @@ def main():
     args = parser.parse_args()
 
     try:
-        if args.command == "benchmark":
+        if args.command == "status":
+            status_module.cmd_status()
+        elif args.command == "benchmark":
             cmd_benchmark(args)
         elif args.command == "config":
             if args.config_cmd == "validate":
