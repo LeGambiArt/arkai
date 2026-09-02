@@ -22,6 +22,9 @@ def cmd_model_download(hf_repo: str) -> None:
 
     Args:
         hf_repo: HuggingFace repo path (e.g., 'ibm-granite/granite-4.1-8b-instruct-GGUF')
+
+    Raises:
+        RuntimeError: If hf CLI is not found, network fails, or download fails
     """
     try:
         code, _, stderr = utils.run_command(
@@ -35,9 +38,68 @@ def cmd_model_download(hf_repo: str) -> None:
         raise
 
     if code != 0:
-        raise RuntimeError(f"Failed to download {hf_repo}: {stderr}")
+        raise _handle_download_error(hf_repo, stderr)
 
     utils.info(f"Downloaded {hf_repo} to HuggingFace cache")
+
+
+def _handle_download_error(hf_repo: str, stderr: str) -> RuntimeError:
+    """Convert download error output to user-friendly error message.
+
+    Args:
+        hf_repo: HuggingFace repo that failed to download
+        stderr: Error message from hf command
+
+    Returns:
+        RuntimeError with actionable error message
+    """
+    error_lower = stderr.lower()
+
+    if "network" in error_lower or "connection" in error_lower or "timeout" in error_lower:
+        return RuntimeError(
+            f"Network error downloading {hf_repo}.\n"
+            "Check your internet connection and try again.\n"
+            f"If the error persists, try: hf download {hf_repo} --repo-type model --force-download"
+        )
+
+    if "authentication" in error_lower or "401" in error_lower or "forbidden" in error_lower:
+        return RuntimeError(
+            f"Authentication error accessing {hf_repo}.\n"
+            "The model may require HuggingFace login:\n"
+            "  1. Visit https://huggingface.co/{repo}/tree/main\n"
+            "  2. Accept the model license (if required)\n"
+            "  3. Run 'huggingface-cli login' or set HF_TOKEN"
+        )
+
+    if "not found" in error_lower or "404" in error_lower:
+        return RuntimeError(
+            f"Model {hf_repo} not found on HuggingFace.\n"
+            "Check the repo ID is correct: https://huggingface.co/{hf_repo}\n"
+            "Common issues:\n"
+            "  - Typo in repo name (use owner/model-name format)\n"
+            "  - Private repo without access\n"
+            "  - Repo has been deleted"
+        )
+
+    if "disk" in error_lower or "space" in error_lower:
+        return RuntimeError(
+            f"Insufficient disk space to download {hf_repo}.\n"
+            "Free up space on your system or configure HF_HOME to a different location"
+        )
+
+    if "reconstruction" in error_lower or "cas" in error_lower:
+        return RuntimeError(
+            f"File integrity error downloading {hf_repo}.\n"
+            "The download was corrupted. Try again:\n"
+            f"  hf download {hf_repo} --repo-type model --force-download\n"
+            "If the error persists, the model may have upload issues on HuggingFace"
+        )
+
+    return RuntimeError(
+        f"Failed to download {hf_repo}\n"
+        f"Error: {stderr}\n"
+        "Try again with: hf download {hf_repo} --repo-type model --force-download"
+    )
 
 
 def cmd_model_list() -> None:
