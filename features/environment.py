@@ -35,6 +35,7 @@ def setup_open_mock(context):
 
     def mock_open(filename, mode="r", *args, **kwargs):
         filepath = str(filename)
+        contents = None
         if filepath.endswith(".arkai.yaml"):
             if "w" in mode or "a" in mode:
                 # Write mode: capture data written to context.config_data
@@ -56,53 +57,29 @@ def setup_open_mock(context):
                     yaml_content = yaml.dump(context.config_data)
                     return io.StringIO(yaml_content)
                 raise FileNotFoundError(f"Config file not found: {filename}")
-        if filepath.endswith("inference.state"):
-            # Accept writes to inference.state but discard them
-            if "w" in mode or "a" in mode:
-                context.existing_files.add(filepath)
-            return io.StringIO()
         if filepath.endswith("inference.pid"):
-            if "w" in mode or "a" in mode:
-                # Write mode: track that file was created
-                context.existing_files.add(filepath)
-                return io.StringIO()
-            else:
-                # Read mode: return PID "9999" if inference is running
-                if context.inference_running:
-                    return io.StringIO("9999")
-                else:
-                    raise FileNotFoundError(f"PID file not found: {filename}")
+            contents = "9999" if context.inference_running else None
         if filepath.endswith("vectordb.pid"):
-            if "w" in mode or "a" in mode:
-                # Write mode: track that file was created
-                context.existing_files.add(filepath)
-                return io.StringIO()
-            else:
-                # Read mode: return PID "9997" for vectordb
-                return io.StringIO("9997")
+            contents = "9997" if context.vectordb_running else None
         if re.search(r"wtmcp-\d+.pid", filepath) is not None:
-            if "w" in mode or "a" in mode:
-                # Write mode: track that file was created
-                context.existing_files.add(filepath)
-                return io.StringIO()
-            else:
-                # Read mode: return PID "9998" if file exists, otherwise raise FileNotFoundError
-                if filepath in context.existing_files:
-                    return io.StringIO("9998")
-                else:
-                    raise FileNotFoundError(f"PID file not found: {filename}")
-        if filepath == getattr(context, "test_doc_path", None):
-            # Read mode: return test document content
-            if hasattr(context, "test_doc_content"):
-                return io.StringIO(context.test_doc_content)
-        raise RuntimeError(f"Test Code Error: 'open()' must be mocked. ({str(filename)})")
+            contents = "9998" if context.wtmcp_should_be_running else None
+        if filepath == getattr(context, "test_doc_path", None) and hasattr(
+            context, "test_doc_content"
+        ):
+            contents = context.test_doc_content
+        if "w" in mode or "a" in mode:  # creating a file shold always succeed
+            context.existing_files.add(filepath)
+            return io.StringIO(contents)
+        if contents:  # read case, only if data is to be returned
+            return io.StringIO(contents)
+        raise FileNotFoundError(f"File ({str(filename)}) is not mocked for mode '{mode}'.")
 
     context.open_patch = patch("builtins.open", side_effect=mock_open)
     context.open_patch.start()
 
 
-def before_scenario(context, scenario):
-    """Set up test environment before each scenario."""
+def _clean_patches(context):
+    """Clean patches."""
     # Stop any lingering patches from previous scenarios
     patches_to_clean = [
         "port_in_use_patch",
@@ -110,6 +87,7 @@ def before_scenario(context, scenario):
         "port_in_use_patch_engine",
         "is_running_patch",
         "wtmcp_running_patch",
+        "vectordb_running_patch",
         "inference_popen_patch",
         "inference_run_command_patch",
         "wait_stop_patch",
@@ -123,6 +101,7 @@ def before_scenario(context, scenario):
         "run_command_patch",
         "makedirs_patch",
         "mkdir_patch",
+        "path_mkdir_patch",
         "remove_patch",
         "glob_patch",
         "listdir_patch",
@@ -135,6 +114,11 @@ def before_scenario(context, scenario):
                     patch_obj.stop()
                 except Exception:
                     pass
+
+
+def before_scenario(context, scenario):
+    """Set up test environment before each scenario."""
+    _clean_patches(context)
 
     # Mock os.getenv for HOME and XDG_CONFIG_HOME
     original_getenv = os.getenv
@@ -152,11 +136,17 @@ def before_scenario(context, scenario):
     # Initialize config_data for load_yaml mock
     context.config_data = None
 
-    # Track inference running state for open() mock
+    # Track services running state
     context.inference_running = False
+    context.wtmcp_running = False
+    context.vectordb_running = False
 
-    # Track existing files (files that have been created and not removed)
-    context.existing_files = {".arkai.yaml", model.get_models_dir(), utils.get_pid_dir()}
+    # Track existing files
+    context.existing_files = {
+        ".arkai.yaml",
+        model.get_models_dir(),
+        utils.get_pid_dir(),
+    }
 
     # Mock utils.load_yaml to return context.config_data
     def mock_load_yaml(filepath):
@@ -219,6 +209,12 @@ def before_scenario(context, scenario):
     context.mkdir_patch = patch.object(os, "mkdir", return_value=None)
     context.mkdir_patch.start()
 
+    # Mock Path.mkdir to always succeed — in Python 3.9, pathlib uses _NormalAccessor
+    # which captures the original os.mkdir reference before the mock above is applied,
+    # so Path.mkdir() must be patched directly to prevent real directory creation.
+    context.path_mkdir_patch = patch.object(Path, "mkdir", return_value=None)
+    context.path_mkdir_patch.start()
+
     # Mock os.remove to always succeed and update existing_files set
     def mock_remove(path):
         context.existing_files.discard(str(path))
@@ -259,9 +255,50 @@ def before_scenario(context, scenario):
     context.listdir_patch = patch.object(os, "listdir", side_effect=mock_listdir)
     context.listdir_patch.start()
 
-    # Mock is_port_in_use to False by default so tests don't depend on real port state
-    context.port_in_use_patch = patch.object(utils, "is_port_in_use", return_value=False)
+    # Initialize wtmcp state for dynamic mocking
+    context.wtmcp_should_be_running = False
+    context.wtmcp_port = 9998
+
+    # Initialize vectordb state for dynamic mocking
+    context.vectordb_should_be_running = False
+    context.vectordb_port = 9997
+
+    # Mock is_port_in_use with side_effect to read context state
+    def mock_is_port_in_use(port):
+        if context.wtmcp_should_be_running and port == context.wtmcp_port:
+            return True
+        if context.vectordb_should_be_running and port == context.vectordb_port:
+            return True
+        return False
+
+    context.port_in_use_patch = patch.object(
+        utils, "is_port_in_use", side_effect=mock_is_port_in_use
+    )
     context.port_in_use_patch.start()
+
+    # Mock wtmcp.is_wtmcp_running with side_effect to read context state
+    from arkai import wtmcp
+
+    def mock_is_wtmcp_running(port=None):
+        if port is None:
+            return context.wtmcp_should_be_running
+        return context.wtmcp_should_be_running and port == context.wtmcp_port
+
+    context.wtmcp_running_patch = patch.object(
+        wtmcp, "is_wtmcp_running", side_effect=mock_is_wtmcp_running
+    )
+    context.wtmcp_running_patch.start()
+
+    # Mock vectordb.is_vectordb_running with side_effect to read context state
+    from arkai import vectordb
+
+    def mock_is_vectordb_running():
+        return context.vectordb_should_be_running
+
+    context.vectordb_running_patch = patch.object(
+        vectordb, "is_vectordb_running", side_effect=mock_is_vectordb_running
+    )
+    context.vectordb_running_patch.start()
 
     # Initialize models_dir to None; steps can set it as needed
     context.models_dir = None
@@ -309,37 +346,7 @@ def before_scenario(context, scenario):
 
 def after_scenario(context, scenario):
     """Clean up after each scenario."""
-    # Stop any running patches
-    patches_to_stop = [
-        "port_in_use_patch",
-        "is_running_patch",
-        "wtmcp_running_patch",
-        "get_config_home_patch",
-        "inference_popen_patch",
-        "inference_run_command_patch",
-        "wait_stop_patch",
-        "getenv_patch",
-        "load_yaml_patch",
-        "save_yaml_patch",
-        "get_config_value_patch",
-        "load_config_patch",
-        "exists_patch",
-        "open_patch",
-        "run_command_patch",
-        "makedirs_patch",
-        "mkdir_patch",
-        "remove_patch",
-        "glob_patch",
-        "listdir_patch",
-    ]
-    for patch_name in patches_to_stop:
-        if hasattr(context, patch_name):
-            patch_obj = getattr(context, patch_name)
-            if patch_obj:
-                try:
-                    patch_obj.stop()
-                except Exception:
-                    pass
+    _clean_patches(context)
 
     # Restore original get_data_home if mocked
     if context.original_get_data_home is not None:

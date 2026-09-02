@@ -1,6 +1,7 @@
 Feature: wtmcp Server Lifecycle
   Scenario: Start wtmcp server succeeds
     Given a valid .arkai.yaml file with plugins "workspace"
+    And the wtmcp server is not running
     When I run "arkai wtmcp start"
     Then the exit code is 0
     And the output contains "started"
@@ -33,6 +34,7 @@ Feature: wtmcp Server Lifecycle
 
   Scenario: Start with enable plugins override
     Given a valid .arkai.yaml file with plugins "workspace"
+    And the wtmcp server is not running
     When I run "arkai wtmcp start --enable terminal --enable github"
     Then the exit code is 0
     And the output contains "Effective plugins"
@@ -42,6 +44,7 @@ Feature: wtmcp Server Lifecycle
 
   Scenario: Start with disable plugins override
     Given a valid .arkai.yaml file with plugins "workspace,terminal,github"
+    And the wtmcp server is not running
     When I run "arkai wtmcp start --disable github"
     Then the exit code is 0
     And the output contains "Effective plugins"
@@ -50,6 +53,7 @@ Feature: wtmcp Server Lifecycle
 
   Scenario: Start with both enable and disable
     Given a valid .arkai.yaml file with plugins "workspace,terminal"
+    And the wtmcp server is not running
     When I run "arkai wtmcp start --enable github --disable terminal"
     Then the exit code is 0
     And the output contains "Effective plugins"

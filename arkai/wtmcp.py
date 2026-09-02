@@ -449,10 +449,7 @@ def _get_running_instances() -> list:
     """Get list of ports with running wtmcp instances."""
     running_ports = []
     pid_dir = utils.get_pid_dir()
-    if not os.path.exists(pid_dir):
-        return running_ports
-
-    for filename in os.listdir(pid_dir):
+    for filename in os.listdir(pid_dir) or []:
         if filename.startswith("wtmcp-") and filename.endswith(".pid"):
             try:
                 port = int(filename[6:-4])  # Extract port from "wtmcp-<port>.pid"

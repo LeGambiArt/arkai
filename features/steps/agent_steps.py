@@ -51,6 +51,12 @@ def _run_agent_in_tty(
     mock_proc.pid = 9999
     mock_proc.wait.return_value = 0
 
+    mock_tmp_file = MagicMock()
+    mock_tmp_file.name = "/tmp/mock-opencode-config.json"
+    mock_tmp_file.__enter__.return_value = mock_tmp_file
+    mock_tmp_file.__exit__.return_value = False
+    context.existing_files.add(mock_tmp_file.name)
+
     popen_cmd: list = []
 
     def capture_popen(cmd, **kwargs):
@@ -64,6 +70,7 @@ def _run_agent_in_tty(
         patch.object(wtmcp, "cmd_wtmcp_start") as mock_wtmcp_start,
         patch.object(utils, "resolve_binary", return_value="/usr/bin/fake-agent"),
         patch("subprocess.Popen", side_effect=capture_popen),
+        patch("tempfile.NamedTemporaryFile", return_value=mock_tmp_file),
     ):
         try:
             agent.cmd_agent(

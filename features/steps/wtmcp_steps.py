@@ -3,10 +3,39 @@
 import contextlib
 import sys
 from io import StringIO
+from unittest.mock import patch
 
 from behave import given, then, when
 
-from arkai import utils
+from arkai import utils, wtmcp
+
+
+def _patch_wtmcp_start(context, port):
+    """Mock wtmcp server as running."""
+    context.wtmcp_running_patch = patch.object(wtmcp, "is_wtmcp_running", return_value=True)
+    context.wtmcp_running_patch.start()
+
+    # Add the PID file with proper path
+    if port is not None:
+        pid_path = wtmcp.get_wtmcp_pid_path(port)
+        context.existing_files.add(pid_path)
+        # context.wtmcp_port_patch = patch.object(wtmcp, "get_wtmcp_port", return_value=port)
+        # context.wtmcp_port_patch.start()
+    context.wtmcp_running = True
+
+
+def _patch_wtmcp_stop(context, port):
+    """Mock wtmcp server as running."""
+    context.wtmcp_running_patch = patch.object(wtmcp, "is_wtmcp_running", return_value=False)
+    context.wtmcp_running_patch.start()
+
+    # Add the PID file with proper path
+    if port is not None:
+        pid_path = wtmcp.get_wtmcp_pid_path(port)
+        context.existing_files.discard(pid_path)
+        # context.wtmcp_port_patch = patch.object(wtmcp, "get_wtmcp_port", return_value=None)
+        # context.wtmcp_port_patch.start()
+    context.wtmcp_running = True
 
 
 @given("a valid .arkai.yaml file with plugins {plugins}")  # ty: ignore[call-non-callable]
@@ -50,19 +79,15 @@ tool discovery: progressive
 
     try:
         from unittest.mock import MagicMock
-        from unittest.mock import patch as mock_patch
-
-        from arkai import utils as arkai_utils
-        from arkai import wtmcp
 
         parts = cmd.split()
 
         patches = [
-            mock_patch("subprocess.run"),
-            mock_patch("subprocess.Popen"),
-            mock_patch.object(arkai_utils, "resolve_binary", return_value="/usr/bin/wtmcp"),
-            mock_patch.object(arkai_utils, "is_port_in_use", return_value=False),
-            mock_patch("arkai.wtmcp.time.sleep"),
+            patch("subprocess.run"),
+            patch("subprocess.Popen"),
+            patch.object(utils, "resolve_binary", return_value="/usr/bin/wtmcp"),
+            patch.object(utils, "is_port_in_use", return_value=False),
+            patch("arkai.wtmcp.time.sleep"),
         ]
         with contextlib.ExitStack() as stack:
             mock_run, mock_popen, *_ = [stack.enter_context(p) for p in patches]
@@ -110,25 +135,44 @@ tool discovery: progressive
                     else:
                         i += 1
 
+                # Override is_wtmcp_running for the duration of cmd_wtmcp_start:
+                # first call (pre-check) returns False, subsequent calls (post-start
+                # health check) return True, mimicking a process that just started.
+                call_count = [0]
+
+                def mock_is_running_for_start(p=None):
+                    call_count[0] += 1
+                    return call_count[0] > 1
+
+                stack.enter_context(
+                    patch.object(wtmcp, "is_wtmcp_running", side_effect=mock_is_running_for_start)
+                )
+
+                # start server
                 wtmcp.cmd_wtmcp_start(
                     path,
                     port,
                     enable_plugins if enable_plugins else None,
                     disable_plugins if disable_plugins else None,
                 )
-                # Add the PID file with proper path
+
+                # update context state after command runs
+                context.wtmcp_should_be_running = True
                 if port is not None:
-                    pid_path = wtmcp.get_wtmcp_pid_path(port)
-                    context.existing_files.add(pid_path)
+                    context.wtmcp_port = port
+                pid_path = wtmcp.get_wtmcp_pid_path(context.wtmcp_port)
+                context.existing_files.add(pid_path)
             elif parts[0] == "stop":
                 port = None
                 if len(parts) > 1 and parts[1] == "--port" and len(parts) > 2:
                     port = int(parts[2])
+                # stop server
                 wtmcp.cmd_wtmcp_stop(port)
-                # Remove PID file from existing files with proper path
-                if port is not None:
-                    pid_path = wtmcp.get_wtmcp_pid_path(port)
-                    context.existing_files.discard(pid_path)
+
+                # update context state after command runs
+                context.wtmcp_should_be_running = False
+                pid_path = wtmcp.get_wtmcp_pid_path(context.wtmcp_port)
+                context.existing_files.discard(pid_path)
             elif parts[0] == "status":
                 port = None
                 if len(parts) > 1 and parts[1] == "--port" and len(parts) > 2:
@@ -140,6 +184,9 @@ tool discovery: progressive
     except SystemExit as e:
         context.exit_code = e.code if e.code else 1
     except Exception as e:
+        import traceback
+
+        traceback.print_exc()
         context.exit_code = 1
         stderr_capture.write(str(e))
     finally:
@@ -172,31 +219,32 @@ def step_check_plugin_disabled(context, plugin):
 @given("a valid .arkai.yaml file with invalid wtmcp path")  # ty: ignore[call-non-callable]
 def step_valid_config_with_invalid_wtmcp(context):
     """Create config with invalid wtmcp path."""
-    from arkai import utils as arkai_utils
-
     context.config_file = ".arkai.yaml"
     config_data = {
         "agent": {"name": "opencode"},
         "inference": {"model": "test.gguf"},
         "wtmcp": {"plugins": ["workspace"], "path": "/nonexistent/wtmcp"},
     }
-    arkai_utils.save_yaml(context.config_file, config_data)
+    utils.save_yaml(context.config_file, config_data)
+
+
+@given("the wtmcp server is not running")  # ty: ignore[call-non-callable]
+def step_wtmcp_server_not_running(context):
+    """Ensure wtmcp server is mocked as not running."""
+    context.wtmcp_should_be_running = False
+
+    # Remove any PID files from existing files
+    pid_path = wtmcp.get_wtmcp_pid_path(context.wtmcp_port)
+    context.existing_files.discard(pid_path)
 
 
 @given("the wtmcp server is running")  # ty: ignore[call-non-callable]
 def step_wtmcp_server_running(context):
     """Mock wtmcp server as running."""
-    from unittest.mock import patch
-
-    from arkai import wtmcp as wtmcp_module
-
-    # Mock is_wtmcp_running to return True for default port
-    default_port = 8080
-    context.wtmcp_running_patch = patch.object(wtmcp_module, "is_wtmcp_running", return_value=True)
-    context.wtmcp_running_patch.start()
+    context.wtmcp_should_be_running = True
 
     # Add full PID file path to existing files
-    pid_path = wtmcp_module.get_wtmcp_pid_path(default_port)
+    pid_path = wtmcp.get_wtmcp_pid_path(context.wtmcp_port)
     context.existing_files.add(pid_path)
 
 
