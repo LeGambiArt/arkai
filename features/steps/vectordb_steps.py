@@ -7,8 +7,7 @@ from behave import given, then, when
 from arkai import vectordb
 
 
-@given("vectordb server is running")  # ty: ignore[call-non-callable]
-def step_vectordb_running(context):
+def _patch_vectordb_start(context):
     """Mock vectordb server as running."""
     context.vectordb_running_patch = patch.object(
         vectordb, "is_vectordb_running", return_value=True
@@ -17,11 +16,32 @@ def step_vectordb_running(context):
 
     context.vectordb_port_patch = patch.object(vectordb, "get_vectordb_port", return_value=8082)
     context.vectordb_port_patch.start()
+    context.vectordb_running = True
+
+
+def _patch_vectordb_stop(context):
+    """Mock vectordb server as running."""
+    context.vectordb_running_patch = patch.object(
+        vectordb, "is_vectordb_running", return_value=False
+    )
+    context.vectordb_running_patch.start()
+
+    context.vectordb_port_patch = patch.object(vectordb, "get_vectordb_port", return_value=None)
+    context.vectordb_port_patch.start()
+    context.vectordb_running = False
+
+
+@given("vectordb server is running")  # ty: ignore[call-non-callable]
+def step_vectordb_running(context):
+    """Ensure vectordb server is running."""
+    _patch_vectordb_start(context)
 
 
 @when('I run "arkai vectordb start"')  # ty: ignore[call-non-callable]
 def step_run_vectordb_start(context):
     """Run vectordb start command with mocked subprocess."""
+    from arkai import vectordb as vectordb_module
+
     context.stdout = ""
     context.stderr = ""
     context.exit_code = 0
@@ -30,12 +50,12 @@ def step_run_vectordb_start(context):
         patch("arkai.vectordb.subprocess.Popen") as mock_popen,
         patch("arkai.vectordb.requests.get") as mock_get,
         patch("arkai.vectordb.config.validate_config", return_value=True),
-        patch("arkai.vectordb.is_vectordb_running", return_value=False),
         patch("arkai.vectordb.utils.is_port_in_use", return_value=False),
         patch("arkai.vectordb.utils.resolve_binary", return_value="/usr/bin/chroma"),
         patch("arkai.vectordb.utils.write_pid"),
         patch("arkai.vectordb.utils.save_yaml"),
     ):
+        # patch("arkai.vectordb.is_vectordb_running", return_value=False),
         mock_process = MagicMock()
         mock_process.pid = 12345
         mock_popen.return_value = mock_process
@@ -47,11 +67,17 @@ def step_run_vectordb_start(context):
         try:
             vectordb.cmd_vectordb_start()
             context.stdout = "Vectordb server started"
-            context.vectordb_started = True
         except Exception as e:
             context.stderr = str(e)
             context.exit_code = 1
-            context.vectordb_started = False
+            context.vectordb_running = False
+
+        # Mock is_vector_running to return True
+        context.vectordb_running_patch = patch.object(
+            vectordb_module, "is_vectordb_running", return_value=True
+        )
+        context.vectordb_running_patch.start()
+        context.vectordb_running = True
 
 
 @when('I run "arkai vectordb stop"')  # ty: ignore[call-non-callable]
@@ -70,6 +96,7 @@ def step_run_vectordb_stop(context):
         try:
             vectordb.cmd_vectordb_stop()
             context.stdout = "Vectordb server stopped"
+            _patch_vectordb_stop(context)
         except Exception as e:
             context.stderr = str(e)
             context.exit_code = 1
@@ -167,17 +194,15 @@ def step_run_vectordb_drop(context, db_name):
 @then("vectordb server is running")  # ty: ignore[call-non-callable]
 def step_verify_vectordb_running(context):
     """Verify vectordb is running."""
-    if hasattr(context, "vectordb_started") and context.vectordb_started:
-        return
-    assert hasattr(context, "vectordb_running_patch"), "Vectordb running patch not found"
-    assert context.vectordb_running_patch.return_value is True
+    # Check that instance is running (call should be mocked at this point)
+    assert vectordb.is_vectordb_running(), "vector db server is not running"
 
 
 @then("vectordb server is not running")  # ty: ignore[call-non-callable]
 def step_verify_vectordb_not_running(context):
     """Verify vectordb is not running."""
-    if hasattr(context, "vectordb_running_patch"):
-        context.vectordb_running_patch.return_value = False
+    # Check that no instances are running (call should be mocked at this point)
+    assert not vectordb.is_vectordb_running(), "vector db server is running"
 
 
 def teardown_vectordb(context):

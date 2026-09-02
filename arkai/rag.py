@@ -8,17 +8,6 @@ import requests
 
 from arkai import config, document_processor, model, utils, vectordb
 
-# Configure sentence-transformers to cache models in arkai's models directory
-# This must be set before importing SentenceTransformer
-try:
-    _models_dir = model.get_models_dir()
-    _embeddings_dir = os.path.join(_models_dir, "embeddings")
-    os.makedirs(_embeddings_dir, exist_ok=True)
-    os.environ["SENTENCE_TRANSFORMERS_HOME"] = _embeddings_dir
-except Exception:
-    # If model dir setup fails, fall back to default cache
-    pass
-
 
 def cmd_rag_ingest(db_name: str, file_path: str, chunk_size: Optional[int] = None) -> None:
     """Ingest document into RAG vectordb.
@@ -257,11 +246,10 @@ def _load_embedding_model(model_name: Optional[str] = None):
     if model_name is None:
         model_name = "all-MiniLM-L6-v2"
 
-    try:
-        embeddings_dir = os.environ.get("SENTENCE_TRANSFORMERS_HOME")
-        if not embeddings_dir:
-            embeddings_dir = os.path.join(model.get_models_dir(), "embeddings")
+    embeddings_dir = os.path.join(model.get_models_dir(), "embeddings")
+    os.makedirs(embeddings_dir, exist_ok=True)
 
+    try:
         model_instance = SentenceTransformer(
             model_name,
             cache_folder=embeddings_dir,
@@ -271,10 +259,6 @@ def _load_embedding_model(model_name: Optional[str] = None):
     except Exception:
         try:
             utils.info("Downloading embedding model (first use only)...")
-            embeddings_dir = os.environ.get("SENTENCE_TRANSFORMERS_HOME")
-            if not embeddings_dir:
-                embeddings_dir = os.path.join(model.get_models_dir(), "embeddings")
-
             model_instance = SentenceTransformer(
                 model_name,
                 cache_folder=embeddings_dir,
