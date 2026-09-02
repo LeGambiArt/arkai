@@ -1,78 +1,33 @@
 """Step definitions for model management features."""
 
 import os
-import tempfile
-from pathlib import Path
 from unittest.mock import patch
 
 from behave import given, then, when
 
-from arkai import utils
-
-
-@given("no models in the models directory")  # ty: ignore[call-non-callable]
-def step_no_models(context):
-    """Set up a clean temp directory with no models."""
-    context.models_dir = tempfile.mkdtemp()
-    if context.original_get_data_home is None:
-        context.original_get_data_home = utils.get_data_home
-
-    def mock_get_data_home():
-        return context.models_dir
-
-    utils.get_data_home = mock_get_data_home  # ty: ignore[invalid-assignment]
+from arkai import model
 
 
 @given("a clean models directory")  # ty: ignore[call-non-callable]
 def step_clean_models(context):
-    """Set up a clean temp directory."""
-    context.models_dir = tempfile.mkdtemp()
-    if context.original_get_data_home is None:
-        context.original_get_data_home = utils.get_data_home
+    """Mock up a clean models directory."""
+    context.existing_files.union({f for f in context.existing_files if not f.endswith(".gguf")})
 
-    def mock_get_data_home():
-        return context.models_dir
 
-    utils.get_data_home = mock_get_data_home  # ty: ignore[invalid-assignment]
+def _add_model_to_storage(context, filename):
+    # Set up the existing_files set if not already set
+    if not hasattr(context, "existing_files"):
+        context.exisntig_files = set()
+    # Add the file to the set
+    if model.get_models_dir() not in filename:
+        filename = os.path.join(model.get_models_dir(), filename)
+    context.existing_files.add(filename)
 
 
 @given('a model file "{filename}" in the models directory')  # ty: ignore[call-non-callable]
 def step_add_model_file(context, filename):
-    """Create a model file in the temp directory."""
-    # Set up the models directory if not already set
-    if context.models_dir is None:
-        context.models_dir = tempfile.mkdtemp()
-        if context.original_get_data_home is None:
-            context.original_get_data_home = utils.get_data_home
-
-        def mock_get_data_home():
-            return context.models_dir
-
-        utils.get_data_home = mock_get_data_home  # ty: ignore[invalid-assignment]
-
-    models_dir = os.path.join(context.models_dir, "models")
-    os.makedirs(models_dir, exist_ok=True)
-    Path(os.path.join(models_dir, filename)).touch()
-
-
-@given('model files "{file1}" and "{file2}" in the models directory')  # ty: ignore[call-non-callable]
-def step_add_multiple_models(context, file1, file2):
-    """Create multiple model files in the temp directory."""
-    # Set up the models directory if not already set
-    if context.models_dir is None:
-        context.models_dir = tempfile.mkdtemp()
-        if context.original_get_data_home is None:
-            context.original_get_data_home = utils.get_data_home
-
-        def mock_get_data_home():
-            return context.models_dir
-
-        utils.get_data_home = mock_get_data_home  # ty: ignore[invalid-assignment]
-
-    models_dir = os.path.join(context.models_dir, "models")
-    os.makedirs(models_dir, exist_ok=True)
-    Path(os.path.join(models_dir, file1)).touch()
-    Path(os.path.join(models_dir, file2)).touch()
+    """Add a model file to the existing_files set."""
+    _add_model_to_storage(context, filename)
 
 
 @when('I run "arkai model {cmd}"')  # ty: ignore[call-non-callable]
@@ -98,7 +53,6 @@ def step_run_arkai_model(context, cmd):
 
     try:
         import importlib
-        from pathlib import Path
 
         from arkai import model
 
@@ -110,14 +64,15 @@ def step_run_arkai_model(context, cmd):
             with patch.object(model, "_get_huggingface_cached_models", return_value=[]):
                 model.cmd_model_list()
         elif cmd_name == "download":
+            # TODO: actually not checking download, but mocking it.
             # Mock the hf download by creating a dummy .gguf file
             hf_repo = args[0]
             models_dir = model.get_models_dir()
-            os.makedirs(models_dir, exist_ok=True)
             # Create a dummy .gguf file to simulate download
             model_filename = hf_repo.split("/")[-1] + ".gguf"
             model_path = os.path.join(models_dir, model_filename)
-            Path(model_path).touch()
+            # Add to existing_files set
+            context.existing_files.add(model_path)
             stdout_capture.write(f"Downloaded {hf_repo} to {models_dir}\n")
         elif cmd_name == "remove":
             model.cmd_model_remove(args[0])
@@ -182,16 +137,19 @@ def step_run_arkai_model_with_hf(context):
 
 @then("a .gguf file exists in the models directory")  # ty: ignore[call-non-callable]
 def step_check_gguf_exists(context):
-    """Verify a .gguf file exists."""
-    models_dir = os.path.join(context.models_dir, "models")
-    gguf_files = list(Path(models_dir).glob("*.gguf"))
-    assert len(gguf_files) > 0, f"No .gguf files found in {models_dir}"
+    """Verify a .gguf file exists in the existing_files set."""
+    gguf_in_models = [
+        f for f in context.existing_files if model.get_models_dir() in f and f.endswith(".gguf")
+    ]
+    assert len(gguf_in_models) > 0, (
+        f"No .gguf files found in models directory in existing_files: {context.existing_files}"
+    )
 
 
 @then('the file "{filename}" does not exist in the models directory')  # ty: ignore[call-non-callable]
 def step_check_file_not_exists(context, filename):
     """Verify file does not exist."""
-    models_dir = os.path.join(context.models_dir, "models")
+    models_dir = os.path.join(model.get_models_dir())
     filepath = os.path.join(models_dir, filename)
     assert not os.path.exists(filepath), f"File {filename} still exists"
 

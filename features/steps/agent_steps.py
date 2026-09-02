@@ -48,7 +48,7 @@ def _run_agent_in_tty(
     context.exit_code = 0
 
     mock_proc = MagicMock()
-    mock_proc.pid = 12345
+    mock_proc.pid = 9999
     mock_proc.wait.return_value = 0
 
     popen_cmd: list = []

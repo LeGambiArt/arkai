@@ -1,6 +1,6 @@
 Feature: Model Management
   Scenario: List available models
-    Given no models in the models directory
+    Given a clean models directory
     When I run "arkai model list"
     Then the exit code is 0
     And the output contains "No models found"
@@ -25,14 +25,15 @@ Feature: Model Management
     And the error contains "Model not found"
 
   Scenario: List models shows details
-    Given model files "model1.gguf" and "model2.gguf" in the models directory
+    Given a model file "model1.gguf" in the models directory
+    And a model file "model2.gguf" in the models directory
     When I run "arkai model list"
     Then the exit code is 0
     And the output contains "model1.gguf"
     And the output contains "model2.gguf"
 
   Scenario: List HuggingFace cached models with long names
-    Given no models in the models directory
+    Given a clean models directory
     When I run "arkai model list" with HuggingFace models
     Then the exit code is 0
     And the output contains "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF"

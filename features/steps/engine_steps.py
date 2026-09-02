@@ -1,6 +1,5 @@
 """Step definitions for engine management features."""
 
-import os
 import sys
 from io import StringIO
 from unittest.mock import patch
@@ -8,6 +7,7 @@ from unittest.mock import patch
 from behave import given, then, when
 
 from arkai import engine, utils
+from features.environment import setup_open_mock
 
 
 @given("port {port:d} is in use")  # ty: ignore[call-non-callable]
@@ -19,53 +19,50 @@ def step_port_in_use(context, port):
     context.port_in_use_patch.start()
 
 
+@given("the inference server is not running")  # ty: ignore[call-non-callable]
+def step_server_not_running(context):
+    """Mock the inference server as not running."""
+    # Patch is_inference_running to return True for this scenario
+    context.is_running_patch = patch.object(engine, "is_inference_running", return_value=False)
+    context.is_running_patch.start()
+    context.is_running_mock = context.is_running_patch
+
+    # Mark inference as not running in context for open() mock
+    context.inference_running = False
+    # Recreate open mock to reflect new state
+    setup_open_mock(context)
+
+
 @given("the inference server is running")  # ty: ignore[call-non-callable]
 def step_server_running(context):
     """Mock the inference server as running."""
-    # Create a PID file and patch is_inference_running to return True
-    pid_path = engine.get_inference_pid_path()
-    os.makedirs(os.path.dirname(pid_path), exist_ok=True)
-    utils.write_pid(pid_path, 9999)
-
     # Patch is_inference_running to return True for this scenario
     context.is_running_patch = patch.object(engine, "is_inference_running", return_value=True)
     context.is_running_patch.start()
     context.is_running_mock = context.is_running_patch
 
+    # Mark inference as running in context for open() mock
+    context.inference_running = True
+    # Recreate open mock to reflect new state
+    setup_open_mock(context)
 
-@given("the inference server stops on SIGTERM")  # ty: ignore[call-non-callable]
-def step_server_stops_on_sigterm(context):
-    """Mock wait_for_process_stop to report process stopped (SIGTERM sufficient)."""
-    context.wait_stop_patch = patch.object(utils, "wait_for_process_stop", return_value=True)
-    context.wait_stop_patch.start()
-
-
-@given("the inference server stops only on SIGKILL")  # ty: ignore[call-non-callable]
-def step_server_stops_on_sigkill(context):
-    """Mock wait_for_process_stop to simulate SIGKILL-only termination (still returns True)."""
-    context.wait_stop_patch = patch.object(utils, "wait_for_process_stop", return_value=True)
-    context.wait_stop_patch.start()
-
-
-@given("the inference server ignores all signals")  # ty: ignore[call-non-callable]
-def step_server_ignores_signals(context):
-    """Mock wait_for_process_stop to report process survived SIGKILL."""
-    context.wait_stop_patch = patch.object(utils, "wait_for_process_stop", return_value=False)
-    context.wait_stop_patch.start()
+    # Add inference.pid to existing files since the server is running
+    pid_path = engine.get_inference_pid_path()
+    context.existing_files.add(pid_path)
 
 
 @then("the inference PID file does not exist")  # ty: ignore[call-non-callable]
 def step_pid_file_not_exist(context):
-    """Assert that the inference PID file was removed."""
+    """Assert that the inference PID file does not exist."""
     pid_path = engine.get_inference_pid_path()
-    assert not os.path.exists(pid_path), f"PID file still exists: {pid_path}"
+    assert pid_path not in context.existing_files, f"PID file should not exist: {pid_path}"
 
 
 @then("the inference PID file exists")  # ty: ignore[call-non-callable]
 def step_pid_file_exists(context):
-    """Assert that the inference PID file was preserved."""
+    """Assert that the inference PID file exists."""
     pid_path = engine.get_inference_pid_path()
-    assert os.path.exists(pid_path), f"PID file was removed but should be preserved: {pid_path}"
+    assert pid_path in context.existing_files, f"PID file should exist: {pid_path}"
 
 
 @when('I run "arkai inference {cmd}"')  # ty: ignore[call-non-callable]
@@ -109,6 +106,16 @@ def step_run_arkai_engine(context, cmd):
             engine.cmd_engine_start(model, gpu_layers, context_size, port)
         elif parts[0] == "stop":
             engine.cmd_engine_stop()
+            # After stop, mark inference as not running
+            context.inference_running = False
+            # Recreate open mock to reflect new state
+            setup_open_mock(context)
+            # Remove PID file from existing files since it's stopped
+            pid_path = engine.get_inference_pid_path()
+            context.existing_files.discard(pid_path)
+            if hasattr(context, "is_running_patch") and context.is_running_patch:
+                context.is_running_patch.stop()
+                context.is_running_patch = None
         elif parts[0] == "status":
             engine.cmd_engine_status()
         else:

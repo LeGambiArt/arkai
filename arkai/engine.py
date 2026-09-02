@@ -206,7 +206,6 @@ def cmd_engine_status() -> None:
     pid = utils.read_pid(pid_path)
 
     utils.info("=== Engine Status ===")
-
     if pid is not None and is_inference_running():
         utils.info(f"Inference: running (PID {pid})")
 

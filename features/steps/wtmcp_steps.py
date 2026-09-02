@@ -14,12 +14,12 @@ def step_valid_config_with_plugins(context, plugins):
     """Create a valid config file with plugins."""
     context.config_file = ".arkai.yaml"
     plugin_list = [p.strip() for p in plugins.split(",")]
-    config_data = {
+    context.config_data = {
         "agent": {"name": "opencode"},
         "inference": {"model": "test.gguf"},
         "wtmcp": {"plugins": plugin_list},
     }
-    utils.save_yaml(context.config_file, config_data)
+    context.existing_files.add(context.config_file)
 
 
 @when('I run "arkai wtmcp {cmd}"')  # ty: ignore[call-non-callable]
@@ -73,7 +73,7 @@ tool discovery: progressive
             mock_run.return_value = mock_result
 
             mock_proc = MagicMock()
-            mock_proc.pid = 12345
+            mock_proc.pid = 9998
             mock_popen.return_value = mock_proc
 
             if parts[0] == "list":
@@ -116,11 +116,19 @@ tool discovery: progressive
                     enable_plugins if enable_plugins else None,
                     disable_plugins if disable_plugins else None,
                 )
+                # Add the PID file with proper path
+                if port is not None:
+                    pid_path = wtmcp.get_wtmcp_pid_path(port)
+                    context.existing_files.add(pid_path)
             elif parts[0] == "stop":
                 port = None
                 if len(parts) > 1 and parts[1] == "--port" and len(parts) > 2:
                     port = int(parts[2])
                 wtmcp.cmd_wtmcp_stop(port)
+                # Remove PID file from existing files with proper path
+                if port is not None:
+                    pid_path = wtmcp.get_wtmcp_pid_path(port)
+                    context.existing_files.discard(pid_path)
             elif parts[0] == "status":
                 port = None
                 if len(parts) > 1 and parts[1] == "--port" and len(parts) > 2:
@@ -178,34 +186,18 @@ def step_valid_config_with_invalid_wtmcp(context):
 @given("the wtmcp server is running")  # ty: ignore[call-non-callable]
 def step_wtmcp_server_running(context):
     """Mock wtmcp server as running."""
-    import os
     from unittest.mock import patch
 
     from arkai import wtmcp as wtmcp_module
 
-    # Create a mock PID file for wtmcp on default port 8080
-    default_port = 8080
-    pid_path = wtmcp_module.get_wtmcp_pid_path(default_port)
-    os.makedirs(os.path.dirname(pid_path), exist_ok=True)
-    utils.write_pid(pid_path, 99999)
-
-    # Create a mock state file with default configuration
-    state_path = wtmcp_module.get_wtmcp_state_path(default_port)
-    state = {
-        "port": default_port,
-        "workdir": None,
-        "wtmcp_path": "/usr/bin/wtmcp",
-        "config_file": os.path.abspath(".arkai.yaml") if os.path.exists(".arkai.yaml") else None,
-        "startup_dir": os.getcwd(),
-        "enable_plugins": [],
-        "disable_plugins": [],
-        "effective_plugins": [],
-    }
-    utils.save_yaml(state_path, state)
-
     # Mock is_wtmcp_running to return True for default port
+    default_port = 8080
     context.wtmcp_running_patch = patch.object(wtmcp_module, "is_wtmcp_running", return_value=True)
     context.wtmcp_running_patch.start()
+
+    # Add full PID file path to existing files
+    pid_path = wtmcp_module.get_wtmcp_pid_path(default_port)
+    context.existing_files.add(pid_path)
 
 
 @then("the wtmcp server is running")  # ty: ignore[call-non-callable]

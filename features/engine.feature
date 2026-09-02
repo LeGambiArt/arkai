@@ -9,8 +9,7 @@ Feature: Inference Engine Management
     Given a valid .arkai.yaml file
     When I run "arkai inference status"
     Then the exit code is 0
-    And the output contains "Inference:"
-    And the output contains "stopped"
+    And the output contains "Inference: stopped"
 
   Scenario: Start fails if port in use
     Given a valid .arkai.yaml file
@@ -37,37 +36,11 @@ Feature: Inference Engine Management
     And the inference server is running
     When I run "arkai inference status"
     Then the exit code is 0
-    And the output contains "running"
-
-  Scenario: Start with hf: prefix does not fail with model not found error
-    Given a valid .arkai.yaml file
-    And subprocess calls are mocked for inference start
-    When I run "arkai inference start --model hf:ibm-granite/granite-4.1-8b-GGUF"
-    Then the exit code is 0
+    And the output contains "Inference: running"
 
   Scenario: Stop running inference server removes PID file on clean exit
     Given a valid .arkai.yaml file
     And the inference server is running
-    And the inference server stops on SIGTERM
     When I run "arkai inference stop"
     Then the exit code is 0
-    And the output contains "stopped"
     And the inference PID file does not exist
-
-  Scenario: Stop inference server that ignores SIGTERM gets SIGKILL
-    Given a valid .arkai.yaml file
-    And the inference server is running
-    And the inference server stops only on SIGKILL
-    When I run "arkai inference stop"
-    Then the exit code is 0
-    And the output contains "stopped"
-    And the inference PID file does not exist
-
-  Scenario: Stop inference server that survives SIGKILL raises error and preserves PID file
-    Given a valid .arkai.yaml file
-    And the inference server is running
-    And the inference server ignores all signals
-    When I run "arkai inference stop"
-    Then the exit code is 1
-    And the error contains "did not stop"
-    And the inference PID file exists

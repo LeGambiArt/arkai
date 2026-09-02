@@ -1,7 +1,6 @@
 """Step definitions for RAG operations features."""
 
 import os
-import tempfile
 from unittest.mock import MagicMock, patch
 
 from behave import given, when
@@ -18,22 +17,21 @@ def step_create_test_database(context, db_name):
 
 @given("a text document with sample content")  # ty: ignore[call-non-callable]
 def step_create_test_document(context):
-    """Create a test text document."""
-    with tempfile.NamedTemporaryFile(mode="w", suffix=".txt", delete=False) as f:
-        f.write(
-            "This is a test document. "
-            "It contains sample content for testing RAG operations. "
-            "The document has multiple sentences and paragraphs. "
-            "Each sentence provides context for retrieval."
-        )
-        f.flush()
-        context.test_doc_path = f.name
+    """Create a test text document in memory."""
+    context.test_doc_content = (
+        "This is a test document. "
+        "It contains sample content for testing RAG operations. "
+        "The document has multiple sentences and paragraphs. "
+        "Each sentence provides context for retrieval."
+    )
+    context.test_doc_path = "test_document.txt"
+    context.existing_files.add(context.test_doc_path)
 
 
 @given("a document has been ingested")  # ty: ignore[call-non-callable]
 def step_ingest_test_document(context):
     """Ingest a test document into the database."""
-    if not hasattr(context, "test_doc_path"):
+    if not hasattr(context, "test_doc_content"):
         step_create_test_document(context)
 
     if not hasattr(context, "test_db_name"):

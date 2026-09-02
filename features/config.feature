@@ -25,7 +25,7 @@ Feature: Configuration Management
     And the output contains "Configuration initialized"
 
   Scenario: Initialize fails if config already exists
-    Given an existing .arkai.yaml file
+    Given a valid .arkai.yaml file
     When I run "arkai config init"
     Then the exit code is 1
     And the error contains "Configuration file already exists"
