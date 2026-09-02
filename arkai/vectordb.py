@@ -86,29 +86,30 @@ def cmd_vectordb_start(port: Optional[int] = None) -> None:
 
     utils.info(f"Starting vectordb server on port {vectordb_port}...")
 
-    # Disable SIGINT to increase chance of process and pid file are both created
+    # Disable SIGINT to ensure process and PID file are both created
     signal.signal(signal.SIGINT, signal.SIG_IGN)
 
-    process = subprocess.Popen(
-        [
-            resolved_path,
-            "run",
-            "--port",
-            str(vectordb_port),
-            "--host",
-            "127.0.0.1",
-            "--path",
-            database_dir,
-        ],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    try:
+        process = subprocess.Popen(
+            [
+                resolved_path,
+                "run",
+                "--port",
+                str(vectordb_port),
+                "--host",
+                "127.0.0.1",
+                "--path",
+                database_dir,
+            ],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
 
-    pid_path = get_vectordb_pid_path()
-    utils.write_pid(pid_path, process.pid)
-
-    # Restore SIGINT
-    signal.signal(signal.SIGINT, signal.SIG_DFL)
+        pid_path = get_vectordb_pid_path()
+        utils.write_pid(pid_path, process.pid)
+    finally:
+        # Always restore SIGINT
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
 
     utils.info("Waiting for vectordb to be ready...")
     for i in range(30):

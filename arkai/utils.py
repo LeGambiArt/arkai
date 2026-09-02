@@ -177,10 +177,13 @@ def read_pid(path: str) -> Optional[int]:
 
 
 def write_pid(path: str, pid: int) -> None:
-    """Write PID to file, creating parent directories if needed."""
-    Path(path).parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w") as f:
-        f.write(str(pid))
+    """Write PID to file, creating parent directories if needed. Raises on failure."""
+    try:
+        Path(path).parent.mkdir(parents=True, exist_ok=True)
+        with open(path, "w") as f:
+            f.write(str(pid))
+    except OSError as e:
+        raise RuntimeError(f"Failed to write PID to {path}: {e}") from e
 
 
 def kill_process(pid: int) -> bool:

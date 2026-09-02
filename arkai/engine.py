@@ -121,22 +121,23 @@ def cmd_engine_start(
         ]
     )
 
-    # Disable SIGINT to increase chane of process and pid file are both creted
+    # Disable SIGINT to ensure process and PID file are both created
     signal.signal(signal.SIGINT, signal.SIG_IGN)
 
-    # Start in background
-    proc = subprocess.Popen(
-        cmd,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-    )
+    try:
+        # Start in background
+        proc = subprocess.Popen(
+            cmd,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
 
-    # Write PID and state
-    pid_path = get_inference_pid_path()
-    utils.write_pid(pid_path, proc.pid)
-
-    # Restore SIGINT
-    signal.signal(signal.SIGINT, signal.SIG_DFL)
+        # Write PID and state
+        pid_path = get_inference_pid_path()
+        utils.write_pid(pid_path, proc.pid)
+    finally:
+        # Always restore SIGINT
+        signal.signal(signal.SIGINT, signal.SIG_DFL)
 
     # Save engine state (config used at startup)
     state = {
