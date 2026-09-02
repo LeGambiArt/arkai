@@ -2,8 +2,9 @@
 
 import argparse
 import sys
+import traceback
 
-from arkai import __version__
+from arkai import __version__, utils
 from arkai import agent as agent_module
 from arkai import benchmark as benchmark_module
 from arkai import config as config_module
@@ -134,6 +135,25 @@ def _add_agent_common_args(parser: argparse.ArgumentParser) -> None:
     )
 
 
+def _add_config_command_arg_parser(
+    parser: argparse._SubParsersAction,
+) -> argparse.ArgumentParser:
+    """Create config command subparser.
+
+    Args:
+        parser: The argparse subparser to add arguments to
+
+    Returns:
+        The config parser
+    """
+    config_parser = parser.add_parser("config", help="Manage configuration")
+    config_subparsers = config_parser.add_subparsers(dest="config_cmd")
+    validate_parser = config_subparsers.add_parser("validate", help="Validate configuration")
+    validate_parser.add_argument("--file", help="Config file to validate (default: .arkai.yaml)")
+    config_subparsers.add_parser("init", help="Initialize configuration file")
+    return config_parser
+
+
 def main():
     """Parse arguments and dispatch to command handlers."""
     parser = argparse.ArgumentParser(
@@ -150,11 +170,7 @@ def main():
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
 
     # Config command
-    config_parser = subparsers.add_parser("config", help="Manage configuration")
-    config_subparsers = config_parser.add_subparsers(dest="config_cmd")
-    validate_parser = config_subparsers.add_parser("validate", help="Validate configuration")
-    validate_parser.add_argument("--file", help="Config file to validate (default: .arkai.yaml)")
-    config_subparsers.add_parser("init", help="Initialize configuration file")
+    config_parser = _add_config_command_arg_parser(subparsers)
 
     # Model command
     model_parser = subparsers.add_parser("model", help="Manage models")
@@ -505,9 +521,7 @@ def main():
         else:
             parser.print_help()
     except Exception as e:
-        print(f"fatal: {e}", file=sys.stderr)
+        _, _, exc_tb = sys.exc_info()
+        fname, lineno, fn, _ = traceback.extract_tb(exc_tb, 1)[-1]
+        utils.error(f"fatal: {e}\n\tat {fn} ({fname}:{str(lineno).strip()})")
         sys.exit(1)
-
-
-if __name__ == "__main__":
-    main()
