@@ -46,7 +46,8 @@ class TestConfigLoading:
 class TestConfigValidation:
     def test_validate_missing_agent_name(self):
         cfg = {"agent": {}, "inference": {"port": 8081, "model": "test.gguf"}}
-        assert config.validate_config(cfg) is False
+        # Missing agent.name issues a warning but validation passes (uses default)
+        assert config.validate_config(cfg) is True
 
     def test_validate_invalid_agent_name(self):
         cfg = {
@@ -71,7 +72,8 @@ class TestConfigValidation:
             "agent": {"name": "opencode"},
             "inference": {"port": 8081},
         }
-        assert config.validate_config(cfg) is False
+        # With require_model=True (default), should fail without model
+        assert config.validate_config(cfg, require_model=True) is False
 
     def test_validate_valid_config(self):
         cfg = {
@@ -85,6 +87,22 @@ class TestConfigValidation:
         }
         # Should return True
         assert config.validate_config(cfg) is True
+
+    def test_validate_no_model_with_require_model_false(self):
+        cfg = {
+            "agent": {"name": "opencode"},
+            "inference": {"port": 8081},
+        }
+        # Should pass when require_model=False (for using existing inference service)
+        assert config.validate_config(cfg, require_model=False) is True
+
+    def test_validate_no_model_with_require_model_true(self):
+        cfg = {
+            "agent": {"name": "opencode"},
+            "inference": {"port": 8081},
+        }
+        # Should fail when require_model=True (default) - needed to start inference server
+        assert config.validate_config(cfg, require_model=True) is False
 
     def test_validate_invalid_inference_port(self):
         cfg = {

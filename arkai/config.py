@@ -72,18 +72,23 @@ def load_config(project_dir: str = ".") -> dict:
     return config
 
 
-def validate_config(config: dict) -> bool:
+def validate_config(config: dict, require_model: bool = True) -> bool:
     """Validate config schema, required fields, mutual exclusivity.
 
-    Returns True if valid, False if any errors found (errors printed to stderr).
+    Args:
+        config: Configuration dictionary to validate
+        require_model: If True, require inference.model or inference.hf.
+            If False, allow missing model when inference service is available.
+
+    Returns:
+        True if valid, False if any errors found (errors printed to stderr).
     """
     valid = True
 
     # Check agent name
     agent_name = get_config_value(config, "agent.name")
     if not agent_name:
-        utils.error("agent.name is required")
-        valid = False
+        utils.warn(f"agent.name is not defined. Using {get_config_value(DEFAULTS, 'agent.name')}")
     elif agent_name not in VALID_AGENTS:
         utils.error(f"agent.name must be one of {VALID_AGENTS}, got {agent_name}")
         valid = False
@@ -96,8 +101,11 @@ def validate_config(config: dict) -> bool:
         utils.error("inference.model and inference.hf are mutually exclusive")
         valid = False
     elif not model and not hf:
-        utils.error("inference.model or inference.hf is required")
-        valid = False
+        if require_model:
+            utils.error("inference.model or inference.hf is required to start inference server")
+            valid = False
+        else:
+            utils.warn("No model configured; will use available inference service")
 
     # Check port ranges
     inference_port = get_config_value(config, "inference.port", 8081)
@@ -208,7 +216,7 @@ def cmd_config_validate(config_file: Optional[str] = None) -> None:
         config_file = ".arkai.yaml"
 
     cfg = utils.load_yaml(config_file)
-    if not validate_config(cfg):
+    if not validate_config(cfg, require_model=False):
         sys.exit(2)
     utils.info(f"Configuration valid: {config_file}")
 

@@ -11,11 +11,12 @@ Feature: Configuration Management
     Then the exit code is 0
     And the output contains "Configuration valid"
 
-  Scenario: Validate invalid configuration fails
+  Scenario: Validate configuration with missing model shows warning
     Given an invalid .arkai.yaml file (missing required fields)
     When I run "arkai config validate"
-    Then the exit code is 2
-    And the error contains "agent.name is required"
+    Then the exit code is 0
+    And the output contains "Configuration valid"
+    And the error contains "No model configured"
 
   Scenario: Initialize new configuration
     Given no .arkai.yaml file exists

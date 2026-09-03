@@ -49,6 +49,9 @@ def cmd_engine_start(
         gpu_layers: Override GPU layers from config
         context_size: Override context size from config
         port: Override port from config
+
+    Raises:
+        RuntimeError: If no model specified and none available in config
     """
     # Load config
     cfg = config.load_config()
@@ -67,7 +70,7 @@ def cmd_engine_start(
     if port is not None:
         cfg["inference"]["port"] = port
 
-    if not config.validate_config(cfg):
+    if not config.validate_config(cfg, require_model=True):
         raise RuntimeError("Invalid configuration")
 
     # Check if already running

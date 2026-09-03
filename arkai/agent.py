@@ -78,7 +78,8 @@ def _agent_context(
         else:
             cfg["inference"]["model"] = model
 
-    config.validate_config(cfg)
+    require_model = not engine.is_inference_running()
+    config.validate_config(cfg, require_model=require_model)
 
     resolved_agent_name = config.get_config_value(cfg, "agent.name", "opencode")
 
@@ -246,7 +247,11 @@ def _resolve_sandbox_profile(cfg: dict, profile_name: Optional[str] = None) -> d
 
 
 def _get_model_name(cfg: dict) -> str:
-    """Extract model name from config."""
+    """Extract model name from config, with fallback for running inference service.
+
+    Returns the model name from config, or a generic name if no model configured
+    but an inference service is running.
+    """
     model_file = config.get_config_value(cfg, "inference.model")
     hf_model = config.get_config_value(cfg, "inference.hf")
 
@@ -254,7 +259,7 @@ def _get_model_name(cfg: dict) -> str:
         return hf_model.split("/")[-1].replace("-GGUF", "").replace("-gguf", "")
     elif model_file:
         return os.path.basename(model_file).split(".")[0].split("-Q")[0]
-    return "model"
+    return "local-model"
 
 
 def _start_wtmcp_server(cfg: dict) -> tuple[int, bool]:
