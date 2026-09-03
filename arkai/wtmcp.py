@@ -271,8 +271,8 @@ def cmd_wtmcp_start(
         utils.info(f"wtmcp server already running on port {port}")
         return
 
-    # Get workdir from config
-    workdir = config.get_config_value(cfg, "wtmcp.workdir")
+    # Get workdir from config, default to current working directory
+    workdir = config.get_config_value(cfg, "wtmcp.workdir", os.getcwd())
     if workdir:
         workdir = os.path.expanduser(workdir)
 
