@@ -200,8 +200,10 @@ def _get_huggingface_cached_models() -> list:
         List of tuples (repo_id, size_string) for each cached model.
         Returns empty list if 'hf' command unavailable or no models cached.
     """
+    import json
+
     try:
-        code, stdout, stderr = utils.run_command(["hf", "cache", "ls"])
+        code, stdout, stderr = utils.run_command(["hf", "cache", "ls", "--json"])
     except RuntimeError:
         # hf command not available
         return []
@@ -211,32 +213,19 @@ def _get_huggingface_cached_models() -> list:
         return []
 
     models = []
-    # Parse output: each line after header is a cached model
-    # Format: id<space>size<space>last_accessed<space>last_modified<space>refs
-    lines = stdout.strip().split("\n")
-
-    # Skip header line and summary lines
-    for line in lines:
-        if not line.strip():
-            continue
-        # Skip lines that don't look like model entries (contain "Found" or "Warning")
-        if line.startswith("Found") or line.startswith("Warning"):
-            continue
-        # Skip the header line (starts with "ID") and separator line (dashes)
-        if line.startswith("ID") or line.startswith("-"):
-            continue
-
-        # Parse model line: id<space>size<space>...
-        # Split on whitespace and take first two non-empty parts
-        parts = line.split()
-        if len(parts) >= 2:
-            full_id = parts[0].strip()
-            size = parts[1].strip()
-            # Only include if id_type is "model"
-            if "/" in full_id:
-                id_type, repo_id = full_id.split("/", 1)
-                if id_type == "model":
+    try:
+        data = json.loads(stdout)
+        # JSON format: [{"repo_id": "...", "size": "...", "repo_type": "model", ...}, ...]
+        for cache in data:
+            if isinstance(cache, dict):
+                repo_id = cache.get("repo_id")
+                size = cache.get("size", "")
+                repo_type = cache.get("repo_type", "")
+                if repo_id and repo_type == "model":
                     models.append((repo_id, size))
+    except (json.JSONDecodeError, TypeError):
+        # If JSON parsing fails, return empty list
+        return []
 
     return models
 

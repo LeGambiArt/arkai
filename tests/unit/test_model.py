@@ -1,5 +1,6 @@
 """Unit tests for model management."""
 
+import json
 import os
 from unittest.mock import patch
 
@@ -117,12 +118,27 @@ class TestGetHuggingfaceCachedModels:
 
     def test_get_hf_models_successful(self):
         """Test successful retrieval of HF cached models."""
-        hf_output = (
-            "ID                                SIZE LAST_ACCESSED LAST_MODIFIED REFS\n"
-            "model/meta-llama/Llama-2-7b       3.4G 10 hours ago  5 days ago    ['main']\n"
-            "model/mistralai/Mistral-7B        3.2G 2 hours ago   3 days ago    ['main']\n"
-            "Found 2 repo(s) for a total of 2 revision(s) and 6.6G on disk.\n"
-        )
+        hf_models = [
+            {
+                "id": "model/meta-llama/Llama-2-7b",
+                "repo_id": "meta-llama/Llama-2-7b",
+                "repo_type": "model",
+                "size": "3.4G",
+                "last_accessed": "10 hours ago",
+                "last_modified": "5 days ago",
+                "refs": ["main"],
+            },
+            {
+                "id": "model/mistralai/Mistral-7B",
+                "repo_id": "mistralai/Mistral-7B",
+                "repo_type": "model",
+                "size": "3.2G",
+                "last_accessed": "2 hours ago",
+                "last_modified": "3 days ago",
+                "refs": ["main"],
+            },
+        ]
+        hf_output = json.dumps(hf_models)
 
         with patch.object(utils, "run_command") as mock_run:
             mock_run.return_value = (0, hf_output, "")
@@ -134,14 +150,11 @@ class TestGetHuggingfaceCachedModels:
             assert result[0][1] == "3.4G"
             assert result[1][0] == "mistralai/Mistral-7B"
             assert result[1][1] == "3.2G"
-            mock_run.assert_called_once_with(["hf", "cache", "ls"])
+            mock_run.assert_called_once_with(["hf", "cache", "ls", "--json"])
 
     def test_get_hf_models_no_cache(self):
         """Test when hf cache is empty."""
-        hf_output = (
-            "ID SIZE LAST_ACCESSED LAST_MODIFIED REFS\n"
-            "Found 0 repo(s) for a total of 0 revision(s) and 0B on disk.\n"
-        )
+        hf_output = json.dumps([])
 
         with patch.object(utils, "run_command") as mock_run:
             mock_run.return_value = (0, hf_output, "")
@@ -170,12 +183,18 @@ class TestGetHuggingfaceCachedModels:
 
     def test_get_hf_models_with_warnings(self):
         """Test parsing output with warnings."""
-        hf_output = (
-            "ID                           SIZE LAST_ACCESSED LAST_MODIFIED REFS\n"
-            "model/apple/DiffuCoder-7B-Base 15.2G 10 hours ago  22 hours ago  ['main']\n"
-            "Found 1 repo(s) for a total of 1 revision(s) and 15.2G on disk.\n"
-            "Warning: Found 5 cache inconsistencies. Re-run with `--show-warnings`.\n"
-        )
+        hf_models = [
+            {
+                "id": "model/apple/DiffuCoder-7B-Base",
+                "repo_id": "apple/DiffuCoder-7B-Base",
+                "repo_type": "model",
+                "size": "15.2G",
+                "last_accessed": "10 hours ago",
+                "last_modified": "22 hours ago",
+                "refs": ["main"],
+            },
+        ]
+        hf_output = json.dumps(hf_models)
 
         with patch.object(utils, "run_command") as mock_run:
             mock_run.return_value = (0, hf_output, "")
@@ -188,13 +207,27 @@ class TestGetHuggingfaceCachedModels:
 
     def test_get_hf_models_various_sizes(self):
         """Test parsing models with various size formats."""
-        hf_output = (
-            "ID              SIZE LAST_ACCESSED LAST_MODIFIED REFS\n"
-            "model/small/model 500M 1 hour ago   1 day ago     ['main']\n"
-            "model/medium/model 2.5G 2 hours ago  2 days ago    ['main']\n"
-            "model/large/model 50G  3 hours ago  3 days ago    ['main']\n"
-            "Found 3 repo(s).\n"
-        )
+        hf_models = [
+            {
+                "id": "model/small/model",
+                "repo_id": "small/model",
+                "repo_type": "model",
+                "size": "500M",
+            },
+            {
+                "id": "model/medium/model",
+                "repo_id": "medium/model",
+                "repo_type": "model",
+                "size": "2.5G",
+            },
+            {
+                "id": "model/large/model",
+                "repo_id": "large/model",
+                "repo_type": "model",
+                "size": "50G",
+            },
+        ]
+        hf_output = json.dumps(hf_models)
 
         with patch.object(utils, "run_command") as mock_run:
             mock_run.return_value = (0, hf_output, "")
@@ -207,30 +240,46 @@ class TestGetHuggingfaceCachedModels:
             assert result[2] == ("large/model", "50G")
 
     def test_get_hf_models_filters_invalid_entries(self):
-        """Test that invalid entries without '/' are filtered out."""
-        hf_output = (
-            "ID         SIZE LAST_ACCESSED LAST_MODIFIED REFS\n"
-            "model/valid/repo 1G   1 hour ago   1 day ago     ['main']\n"
-            "invalid_entry    2G   2 hours ago  2 days ago    ['main']\n"
-            "Found 2 repo(s).\n"
-        )
+        """Test that invalid entries with non-model repo_type are filtered out."""
+        hf_models = [
+            {
+                "id": "model/valid/repo",
+                "repo_id": "valid/repo",
+                "repo_type": "model",
+                "size": "1G",
+            },
+            {
+                "id": "dataset/invalid/entry",
+                "repo_id": "invalid/entry",
+                "repo_type": "dataset",
+                "size": "2G",
+            },
+        ]
+        hf_output = json.dumps(hf_models)
 
         with patch.object(utils, "run_command") as mock_run:
             mock_run.return_value = (0, hf_output, "")
 
             result = model._get_huggingface_cached_models()
 
-            # Should only include the valid entry with 'model/' prefix
+            # Should only include entries with repo_type == "model"
             assert len(result) == 1
             assert result[0][0] == "valid/repo"
 
     def test_get_hf_models_long_repo_names(self):
         """Test that long repo names (>40 chars) are not truncated."""
-        hf_output = (
-            "ID SIZE LAST_ACCESSED LAST_MODIFIED REFS\n"
-            "model/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF 53.9G 19 hours 19 hours ['main']\n"
-            "Found 1 repo(s).\n"
-        )
+        hf_models = [
+            {
+                "id": "model/unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF",
+                "repo_id": "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF",
+                "repo_type": "model",
+                "size": "53.9G",
+                "last_accessed": "19 hours ago",
+                "last_modified": "19 hours ago",
+                "refs": ["main"],
+            },
+        ]
+        hf_output = json.dumps(hf_models)
 
         with patch.object(utils, "run_command") as mock_run:
             mock_run.return_value = (0, hf_output, "")
@@ -238,7 +287,7 @@ class TestGetHuggingfaceCachedModels:
             result = model._get_huggingface_cached_models()
 
             assert len(result) == 1
-            # Verify full repo name is preserved
+            # Verify full repo name is preserved (JSON ensures this)
             assert result[0][0] == "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF"
             assert result[0][1] == "53.9G"
 
