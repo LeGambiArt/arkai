@@ -1,15 +1,82 @@
 """wtmcp plugin management and server lifecycle."""
 
+import argparse
 import os
 import signal
 import subprocess
 import time
-from typing import Optional
 
 from arkai import config, utils
 
 
-def cmd_wtmcp_list(port: Optional[int] = None) -> None:
+def exec_cmd(args: dict | None) -> None:
+    """Select 'wtmcp' command to execute."""
+    match args.wtmcp_cmd:  # ty: ignore[unresolved-attribute]
+        case "start":
+            cmd_wtmcp_start(
+                args.path,  # ty: ignore[unresolved-attribute]
+                args.port,  # ty: ignore[unresolved-attribute]
+                args.enable_plugins,  # ty: ignore[unresolved-attribute]
+                args.disable_plugins,  # ty: ignore[unresolved-attribute]
+            )
+        case "stop":
+            cmd_wtmcp_stop(args.port)  # ty: ignore[unresolved-attribute]
+        case "status":
+            cmd_wtmcp_status(args.port)  # ty: ignore[unresolved-attribute]
+        case "list":
+            cmd_wtmcp_list(args.port)  # ty: ignore[unresolved-attribute]
+        case "enable":
+            cmd_wtmcp_enable(args.plugin)  # ty: ignore[unresolved-attribute]
+        case "disable":
+            cmd_wtmcp_disable(args.plugin)  # ty: ignore[unresolved-attribute]
+
+
+def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
+    """Create command subparser.
+
+    Args:
+        parser: The argparse subparser to add arguments to
+    """
+    wtmcp_parser = subparsers.add_parser("wtmcp", help="Manage wtmcp plugins and server")
+    wtmcp_subparsers = wtmcp_parser.add_subparsers(dest="wtmcp_cmd")
+    # status subcommand
+    status_parser = wtmcp_subparsers.add_parser("status", help="Show wtmcp server status")
+    status_parser.add_argument(
+        "--port", type=int, help="Port to show status for (or all if not specified)"
+    )
+    # start subcommand
+    start_parser = wtmcp_subparsers.add_parser("start", help="Start wtmcp server")
+    start_parser.add_argument("--path", help="Override wtmcp binary path from config")
+    start_parser.add_argument("--port", type=int, help="Override port from config")
+    start_parser.add_argument(
+        "--enable",
+        action="append",
+        dest="enable_plugins",
+        help="Enable plugin (can be used multiple times)",
+    )
+    start_parser.add_argument(
+        "--disable",
+        action="append",
+        dest="disable_plugins",
+        help="Disable plugin (can be used multiple times)",
+    )
+    # stop subcommand
+    stop_parser = wtmcp_subparsers.add_parser("stop", help="Stop wtmcp server")
+    stop_parser.add_argument("--port", type=int, help="Port of instance to stop")
+    # list subcommand
+    list_parser = wtmcp_subparsers.add_parser("list", help="List available plugins")
+    list_parser.add_argument(
+        "--port", type=int, help="Port of running instance to show plugins for"
+    )
+    # enable subcommand
+    enable_parser = wtmcp_subparsers.add_parser("enable", help="Enable a plugin")
+    enable_parser.add_argument("plugin", help="Plugin name")
+    # disable subcommand
+    disable_parser = wtmcp_subparsers.add_parser("disable", help="Disable a plugin")
+    disable_parser.add_argument("plugin", help="Plugin name")
+
+
+def cmd_wtmcp_list(port: int | None = None) -> None:
     """List available wtmcp plugins and show which are enabled.
 
     Args:
@@ -192,7 +259,7 @@ def get_wtmcp_state_path(port: int) -> str:
     return os.path.join(pid_dir, f"wtmcp-{port}.state")
 
 
-def is_wtmcp_running(port: Optional[int] = None) -> bool:
+def is_wtmcp_running(port: int | None = None) -> bool:
     """Check if wtmcp server is running on a specific port or any port.
 
     Args:
@@ -235,10 +302,10 @@ def is_wtmcp_running(port: Optional[int] = None) -> bool:
 
 
 def cmd_wtmcp_start(
-    path: Optional[str] = None,
-    port: Optional[int] = None,
-    enable_plugins: Optional[list] = None,
-    disable_plugins: Optional[list] = None,
+    path: str | None = None,
+    port: int | None = None,
+    enable_plugins: list | None = None,
+    disable_plugins: list | None = None,
 ) -> None:
     """Start wtmcp server with project configuration.
 
@@ -389,7 +456,7 @@ def cmd_wtmcp_start(
     utils.info(f"wtmcp server started on port {port}")
 
 
-def cmd_wtmcp_stop(port: Optional[int] = None) -> None:
+def cmd_wtmcp_stop(port: int | None = None) -> None:
     """Stop wtmcp server on a specific port or the only running instance.
 
     Args:
@@ -461,7 +528,7 @@ def _get_running_instances() -> list:
     return sorted(running_ports)
 
 
-def cmd_wtmcp_status(port: Optional[int] = None) -> None:
+def cmd_wtmcp_status(port: int | None = None) -> None:
     """Show wtmcp server status.
 
     Args:

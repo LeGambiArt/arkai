@@ -1,5 +1,6 @@
 """Agent and prompt execution."""
 
+import argparse
 import json
 import os
 import platform
@@ -9,9 +10,118 @@ import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Optional
 
-from arkai import config, engine, utils
+from arkai import config, inference, utils
+
+
+def exec_cmd(args: dict | None = None) -> None:
+    """Select 'agent' command to execute."""
+    agent_env = (
+        {
+            k: v
+            for e in args.environment  # ty: ignore[unresolved-attribute]
+            for k, _, v in [e.partition("=")]
+        }
+        if args.environment  # ty: ignore[unresolved-attribute]
+        else None
+    )
+    match args.agent_cmd:  # ty: ignore[unresolved-attribute]
+        case "start":
+            cmd_agent(
+                args.agent,  # ty: ignore[unresolved-attribute]
+                args.model,  # ty: ignore[unresolved-attribute]
+                args.no_inference,  # ty: ignore[unresolved-attribute]
+                args.no_mcp,  # ty: ignore[unresolved-attribute]
+                args.no_sandbox,  # ty: ignore[unresolved-attribute]
+                args.no_cwd,  # ty: ignore[unresolved-attribute]
+                args.cwd,  # ty: ignore[unresolved-attribute]
+                args.sandbox,  # ty: ignore[unresolved-attribute]
+                args.volumes,  # ty: ignore[unresolved-attribute]
+                agent_env,
+            )
+        case "prompt":
+            cmd_agent_prompt(
+                args.prompt_text,  # ty: ignore[unresolved-attribute]
+                args.agent,  # ty: ignore[unresolved-attribute]
+                args.model,  # ty: ignore[unresolved-attribute]
+                args.no_inference,  # ty: ignore[unresolved-attribute]
+                args.no_mcp,  # ty: ignore[unresolved-attribute]
+                args.no_sandbox,  # ty: ignore[unresolved-attribute]
+                args.no_cwd,  # ty: ignore[unresolved-attribute]
+                args.cwd,  # ty: ignore[unresolved-attribute]
+                args.sandbox,  # ty: ignore[unresolved-attribute]
+                args.volumes,  # ty: ignore[unresolved-attribute]
+                agent_env,
+                args.output,  # ty: ignore[unresolved-attribute]
+            )
+
+
+def _add_agent_common_args(parser: argparse.ArgumentParser) -> None:
+    """Add CLI arguments shared by agent start and agent prompt.
+
+    Args:
+        parser: The argparse subparser to add arguments to
+    """
+    parser.add_argument("-a", "--agent", help="Override agent")
+    parser.add_argument("-m", "--model", help="Override model")
+    parser.add_argument(
+        "-I",
+        "--no-inference",
+        action="store_true",
+        help="Do not start inference engine server",
+    )
+    parser.add_argument("-M", "--no-mcp", action="store_true", help="Skip wtmcp initialization")
+    parser.add_argument("--no-sandbox", action="store_true", help="Skip arapuca sandbox")
+    parser.add_argument(
+        "-s",
+        "--sandbox",
+        metavar="PROFILE",
+        help="Use specific sandbox profile for this run",
+    )
+    parser.add_argument(
+        "-v",
+        "--volume",
+        action="append",
+        dest="volumes",
+        help="Mount a volume in the sandbox (format: /path or /path:ro)",
+    )
+    parser.add_argument(
+        "-e",
+        "--env",
+        action="append",
+        dest="environment",
+        metavar="KEY=VALUE",
+        help="Set an environment variable in the sandbox (KEY=VALUE). Can be used multiple times",
+    )
+    cwd_group = parser.add_mutually_exclusive_group()
+    cwd_group.add_argument(
+        "--no-cwd", action="store_true", help="Do not mount the current directory in the sandbox"
+    )
+    cwd_group.add_argument(
+        "--cwd", metavar="PATH", help="Override the directory mounted as cwd in the sandbox"
+    )
+
+
+def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
+    """Create command subparser.
+
+    Args:
+        parser: The argparse subparser to add arguments to
+    """
+    agent_parser = subparsers.add_parser("agent", help="Manage interactive agent")
+    agent_subparsers = agent_parser.add_subparsers(dest="agent_cmd")
+    agent_start_parser = agent_subparsers.add_parser("start", help="Start interactive agent")
+    _add_agent_common_args(agent_start_parser)
+    agent_prompt_parser = agent_subparsers.add_parser(
+        "prompt", help="Run agent with a prompt non-interactively"
+    )
+    _add_agent_common_args(agent_prompt_parser)
+    agent_prompt_parser.add_argument(
+        "-o", "--output", metavar="FILE", help="Write agent output to file instead of stdout"
+    )
+    agent_prompt_parser.add_argument(
+        "prompt_text", nargs="*", help="Prompt text (reads from stdin if not provided)"
+    )
 
 
 @dataclass
@@ -23,26 +133,26 @@ class AgentContext:
     agent_path: str = ""
     use_mcp: bool = False
     use_sandbox: bool = False
-    workdir: Optional[str] = None
-    wtmcp_port: Optional[int] = None
+    workdir: str | None = None
+    wtmcp_port: int | None = None
     no_start_inference: bool = False
-    sandbox_profile: Optional[str] = None
-    sandbox_volume: Optional[list] = None
-    sandbox_environment: Optional[dict] = None
+    sandbox_profile: str | None = None
+    sandbox_volume: list | None = None
+    sandbox_environment: dict | None = None
 
 
 @contextmanager
 def _agent_context(
-    agent_name: Optional[str] = None,
-    model: Optional[str] = None,
+    agent_name: str | None = None,
+    model: str | None = None,
     no_start_inference: bool = False,
     no_mcp: bool = False,
     no_sandbox: bool = False,
     no_cwd: bool = False,
-    sandbox_cwd: Optional[str] = None,
-    sandbox_profile: Optional[str] = None,
-    sandbox_volume: Optional[list] = None,
-    sandbox_environment: Optional[dict] = None,
+    sandbox_cwd: str | None = None,
+    sandbox_profile: str | None = None,
+    sandbox_volume: list | None = None,
+    sandbox_environment: dict | None = None,
 ) -> Iterator[AgentContext]:
     """Set up and tear down agent infrastructure.
 
@@ -78,7 +188,7 @@ def _agent_context(
         else:
             cfg["inference"]["model"] = model
 
-    require_model = not engine.is_inference_running()
+    require_model = not inference.is_inference_running()
     config.validate_config(cfg, require_model=require_model)
 
     resolved_agent_name = config.get_config_value(cfg, "agent.name", "opencode")
@@ -110,7 +220,7 @@ def _agent_context(
             ) from e
 
     if no_cwd:
-        workdir: Optional[str] = None
+        workdir: str | None = None
     elif sandbox_cwd:
         workdir = os.path.abspath(sandbox_cwd)
     else:
@@ -120,11 +230,11 @@ def _agent_context(
     wtmcp_port, wtmcp_started = (None, False)
     engine_started: bool = False
     try:
-        if not engine.is_inference_running():
+        if not inference.is_inference_running():
             if no_start_inference:
                 raise RuntimeError("Inference engine is not running.")
             else:
-                engine.cmd_engine_start(model=model)  # may raise RuntimeError
+                inference.cmd_inference_start(model=model)  # may raise RuntimeError
                 engine_started = True
 
         if use_mcp:
@@ -157,9 +267,9 @@ def _agent_context(
             except Exception as ex:
                 errors.append(ex)
 
-        if engine_started and engine.is_inference_running():
+        if engine_started and inference.is_inference_running():
             try:
-                engine.cmd_engine_stop()
+                inference.cmd_inference_stop()
             except Exception as ex:
                 errors.append(ex)
         if errors:
@@ -170,7 +280,7 @@ def _agent_context(
                 raise errors[0] from None
 
 
-def _merge_volumes(profile_volumes: list, cli_volumes: Optional[list] = None) -> list:
+def _merge_volumes(profile_volumes: list, cli_volumes: list | None = None) -> list:
     """Merge profile and CLI volumes with deduplication.
 
     Args:
@@ -192,7 +302,7 @@ def _merge_volumes(profile_volumes: list, cli_volumes: Optional[list] = None) ->
     return sandbox_module._deduplicate_volumes(merged)
 
 
-def _merge_environment(profile_env: Optional[dict], cli_env: Optional[dict]) -> dict:
+def _merge_environment(profile_env: dict | None, cli_env: dict | None) -> dict:
     """Merge profile and CLI environment variables; CLI values override profile.
 
     Args:
@@ -208,7 +318,7 @@ def _merge_environment(profile_env: Optional[dict], cli_env: Optional[dict]) -> 
     return merged
 
 
-def _resolve_sandbox_profile(cfg: dict, profile_name: Optional[str] = None) -> dict:
+def _resolve_sandbox_profile(cfg: dict, profile_name: str | None = None) -> dict:
     """Resolve active sandbox profile from CLI, config, or defaults.
 
     Priority: CLI --sandbox flag > config sandbox.active_profile > defaults
@@ -282,12 +392,12 @@ def _start_wtmcp_server(cfg: dict) -> tuple[int, bool]:
 
 def _build_sandbox_cmd(
     cfg: dict,
-    workdir: Optional[str],
-    config_dir: Optional[str],
-    wtmcp_port: Optional[int],
-    sandbox_profile: Optional[str] = None,
-    cli_volumes: Optional[list] = None,
-    cli_environment: Optional[dict] = None,
+    workdir: str | None,
+    config_dir: str | None,
+    wtmcp_port: int | None,
+    sandbox_profile: str | None = None,
+    cli_volumes: list | None = None,
+    cli_environment: dict | None = None,
 ) -> list:
     """Build the arapuca sandbox command prefix for an agent invocation.
 
@@ -380,15 +490,15 @@ def _build_sandbox_cmd(
 def _start_agent_opencode(
     agent_path: str,
     cfg: dict,
-    wtmcp_port: Optional[int],
+    wtmcp_port: int | None,
     use_sandbox: bool,
-    workdir: Optional[str],
-    sandbox_profile: Optional[str] = None,
-    cli_volumes: Optional[list] = None,
-    cli_environment: Optional[dict] = None,
-    prompt: Optional[str] = None,
+    workdir: str | None,
+    sandbox_profile: str | None = None,
+    cli_volumes: list | None = None,
+    cli_environment: dict | None = None,
+    prompt: str | None = None,
     capture_stdout: bool = False,
-) -> Optional[str]:
+) -> str | None:
     """Start opencode agent.
 
     Args:
@@ -487,15 +597,15 @@ def _start_agent_opencode(
 def _start_agent_crush(
     agent_path: str,
     cfg: dict,
-    wtmcp_port: Optional[int],
+    wtmcp_port: int | None,
     use_sandbox: bool,
-    workdir: Optional[str],
-    sandbox_profile: Optional[str] = None,
-    cli_volumes: Optional[list] = None,
-    cli_environment: Optional[dict] = None,
-    prompt: Optional[str] = None,
+    workdir: str | None,
+    sandbox_profile: str | None = None,
+    cli_volumes: list | None = None,
+    cli_environment: dict | None = None,
+    prompt: str | None = None,
     capture_stdout: bool = False,
-) -> Optional[str]:
+) -> str | None:
     """Start crush agent.
 
     Args:
@@ -595,15 +705,15 @@ def _start_agent_crush(
 def _start_agent_claude(
     agent_path: str,
     cfg: dict,
-    wtmcp_port: Optional[int],
+    wtmcp_port: int | None,
     use_sandbox: bool,
-    workdir: Optional[str],
-    sandbox_profile: Optional[str] = None,
-    cli_volumes: Optional[list] = None,
-    cli_environment: Optional[dict] = None,
-    prompt: Optional[str] = None,
+    workdir: str | None,
+    sandbox_profile: str | None = None,
+    cli_volumes: list | None = None,
+    cli_environment: dict | None = None,
+    prompt: str | None = None,
     capture_stdout: bool = False,
-) -> Optional[str]:
+) -> str | None:
     """Start claude agent.
 
     Args:
@@ -645,7 +755,7 @@ def _start_agent_claude(
         "CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT": "1",
     }
 
-    mcp_config: Optional[str] = None
+    mcp_config: str | None = None
     agent_args = [agent_path]
 
     if prompt is not None:
@@ -728,9 +838,9 @@ def _start_agent_claude(
 
 def _dispatch_agent(
     ctx: AgentContext,
-    prompt: Optional[str] = None,
+    prompt: str | None = None,
     capture_stdout: bool = False,
-) -> Optional[str]:
+) -> str | None:
     """Dispatch to the appropriate agent start function.
 
     Args:
@@ -784,16 +894,16 @@ def _dispatch_agent(
 
 
 def cmd_agent(
-    agent_name: Optional[str] = None,
-    model: Optional[str] = None,
+    agent_name: str | None = None,
+    model: str | None = None,
     no_start_inference: bool = False,
     no_mcp: bool = False,
     no_sandbox: bool = False,
     no_cwd: bool = False,
-    sandbox_cwd: Optional[str] = None,
-    sandbox_profile: Optional[str] = None,
-    sandbox_volume: Optional[list] = None,
-    sandbox_environment: Optional[dict] = None,
+    sandbox_cwd: str | None = None,
+    sandbox_profile: str | None = None,
+    sandbox_volume: list | None = None,
+    sandbox_environment: dict | None = None,
 ) -> None:
     """Start interactive agent session (requires TTY).
 
@@ -832,18 +942,18 @@ def cmd_agent(
 
 
 def cmd_agent_prompt(
-    prompt_args: Optional[list] = None,
-    agent_name: Optional[str] = None,
-    model: Optional[str] = None,
+    prompt_args: list | None = None,
+    agent_name: str | None = None,
+    model: str | None = None,
     no_start_inference: bool = False,
     no_mcp: bool = False,
     no_sandbox: bool = False,
     no_cwd: bool = False,
-    sandbox_cwd: Optional[str] = None,
-    sandbox_profile: Optional[str] = None,
-    sandbox_volume: Optional[list] = None,
-    sandbox_environment: Optional[dict] = None,
-    output_file: Optional[str] = None,
+    sandbox_cwd: str | None = None,
+    sandbox_profile: str | None = None,
+    sandbox_volume: list | None = None,
+    sandbox_environment: dict | None = None,
+    output_file: str | None = None,
 ) -> None:
     """Run agent non-interactively with a prompt.
 
@@ -868,7 +978,7 @@ def cmd_agent_prompt(
     Raises:
         RuntimeError: If no prompt provided or config invalid
     """
-    prompt: Optional[str] = None
+    prompt: str | None = None
 
     if prompt_args:
         prompt = " ".join(prompt_args).strip()

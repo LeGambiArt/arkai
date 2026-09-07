@@ -1,11 +1,96 @@
 """Sandbox profile management: CRUD operations for arapuca sandbox configurations."""
 
+import argparse
 import os
 import sys
-from typing import Optional
 
 from arkai import config as config_module
 from arkai import utils
+
+
+def exec_cmd(args: dict | None = None) -> None:
+    """Select 'sandbox' command to execute."""
+    match args.sandbox_cmd:  # ty: ignore[unresolved-attribute]
+        case "create":
+            create_env = (
+                {
+                    k: v
+                    for e in args.environment  # ty: ignore[unresolved-attribute]
+                    for k, _, v in [e.partition("=")]
+                }
+                if args.environment  # ty: ignore[unresolved-attribute]
+                else None
+            )
+            cmd_sandbox_create(
+                args.name,  # ty: ignore[unresolved-attribute]
+                args.from_profile,  # ty: ignore[unresolved-attribute]
+                args.path,  # ty: ignore[unresolved-attribute]
+                args.memory,  # ty: ignore[unresolved-attribute]
+                args.cpus,  # ty: ignore[unresolved-attribute]
+                args.pids,  # ty: ignore[unresolved-attribute]
+                args.timeout,  # ty: ignore[unresolved-attribute]
+                args.volumes,  # ty: ignore[unresolved-attribute]
+                create_env,
+            )
+        case "delete":
+            cmd_sandbox_delete(args.name)  # ty: ignore[unresolved-attribute]
+        case "show":
+            cmd_sandbox_show(args.profile_name)  # ty: ignore[unresolved-attribute]
+        case "list":
+            cmd_sandbox_list()
+        case "set-default":
+            cmd_sandbox_set_default(args.name)  # ty: ignore[unresolved-attribute]
+        case "active":
+            cmd_sandbox_active(args.profile_name)  # ty: ignore[unresolved-attribute]
+
+
+def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
+    """Create command subparser.
+
+    Args:
+        parser: The argparse subparser to add arguments to
+    """
+    sandbox_parser = subparsers.add_parser("sandbox", help="Manage sandbox profiles")
+    sandbox_subparsers = sandbox_parser.add_subparsers(dest="sandbox_cmd")
+    # list subcommand
+    list_parser = sandbox_subparsers.add_parser("list", help="List sandbox profiles")
+    list_parser = list_parser  # noqa: F841 - keep reference for consistency
+    # show subcommand
+    show_parser = sandbox_subparsers.add_parser("show", help="Show sandbox profile details")
+    show_parser.add_argument("profile_name", help="Profile name to show (or 'default'/'active')")
+    # create subcommand
+    create_parser = sandbox_subparsers.add_parser("create", help="Create sandbox profile")
+    create_parser.add_argument("name", help="Profile name")
+    create_parser.add_argument("--from", dest="from_profile", help="Base profile to copy from")
+    create_parser.add_argument("--path", help="Path to arapuca binary")
+    create_parser.add_argument("--memory", type=int, help="Memory in MB")
+    create_parser.add_argument("--cpus", type=int, help="CPU count")
+    create_parser.add_argument("--pids", type=int, help="PID limit")
+    create_parser.add_argument("--timeout", type=int, help="Timeout in seconds")
+    create_parser.add_argument(
+        "-v",
+        "--volume",
+        action="append",
+        dest="volumes",
+        help="Mount a volume in the sandbox (format: /path or /path:ro)",
+    )
+    create_parser.add_argument(
+        "-e",
+        "--env",
+        action="append",
+        dest="environment",
+        metavar="KEY=VALUE",
+        help="Set an environment variable in the sandbox (KEY=VALUE). Can be used multiple times",
+    )
+    # delete subcommand
+    delete_parser = sandbox_subparsers.add_parser("delete", help="Delete sandbox profile")
+    delete_parser.add_argument("name", help="Profile name")
+    # set-default subcommand
+    setdef_parser = sandbox_subparsers.add_parser("set-default", help="Set profile as default")
+    setdef_parser.add_argument("name", help="Profile name")
+    # active subcommand
+    active_parser = sandbox_subparsers.add_parser("active", help="Set active profile")
+    active_parser.add_argument("profile_name", nargs="?", help="Profile name (or empty to clear)")
 
 
 def _deduplicate_volumes(volumes: list) -> list:
@@ -82,7 +167,7 @@ def _get_default_profile(cfg: dict) -> dict:
     return result
 
 
-def _get_profile(cfg: dict, name: str) -> Optional[dict]:
+def _get_profile(cfg: dict, name: str) -> dict | None:
     """Retrieve a profile by name from config.
 
     Args:
@@ -197,14 +282,14 @@ def cmd_sandbox_show(profile_name: str) -> None:
 
 def cmd_sandbox_create(
     name: str,
-    from_profile: Optional[str] = None,
-    path: Optional[str] = None,
-    memory: Optional[int] = None,
-    cpus: Optional[int] = None,
-    pids: Optional[int] = None,
-    timeout: Optional[int] = None,
-    volume: Optional[list] = None,
-    environment: Optional[dict] = None,
+    from_profile: str | None = None,
+    path: str | None = None,
+    memory: int | None = None,
+    cpus: int | None = None,
+    pids: int | None = None,
+    timeout: int | None = None,
+    volume: list | None = None,
+    environment: dict | None = None,
 ) -> None:
     """Create a new sandbox profile.
 
@@ -356,7 +441,7 @@ def cmd_sandbox_set_default(name: str) -> None:
     print(f"✓ Set '{name}' as default sandbox settings")
 
 
-def cmd_sandbox_active(profile_name: Optional[str]) -> None:
+def cmd_sandbox_active(profile_name: str | None) -> None:
     """Set the active sandbox profile for agent runs.
 
     Args:

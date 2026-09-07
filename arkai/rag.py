@@ -1,15 +1,50 @@
 """RAG (Retrieval-Augmented Generation) operations."""
 
+import argparse
 import json
 import os
-from typing import Optional
 
 import requests
 
 from arkai import config, document_processor, model, utils, vectordb
 
 
-def cmd_rag_ingest(db_name: str, file_path: str, chunk_size: Optional[int] = None) -> None:
+def exec_cmd(args: dict | None = None) -> None:
+    """Select 'rag' command to execute."""
+    match args.rag_cmd:  # ty: ignore[unresolved-attribute]
+        case "ingest":
+            cmd_rag_ingest(
+                args.db_name,  # ty: ignore[unresolved-attribute]
+                args.file_path,  # ty: ignore[unresolved-attribute]
+                args.chunk_size,  # ty: ignore[unresolved-attribute]
+            )
+        case "query":
+            cmd_rag_search(
+                args.db_name,  # ty: ignore[unresolved-attribute]
+                args.query,  # ty: ignore[unresolved-attribute]
+                args.results,  # ty: ignore[unresolved-attribute]
+            )
+
+
+def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
+    """Create command subparser.
+
+    Args:
+        parser: The argparse subparser to add arguments to
+    """
+    rag_parser = subparsers.add_parser("rag", help="Manage RAG operations")
+    rag_subparsers = rag_parser.add_subparsers(dest="rag_cmd")
+    rag_ingest_parser = rag_subparsers.add_parser("ingest", help="Ingest document into RAG")
+    rag_ingest_parser.add_argument("db_name", help="Database name")
+    rag_ingest_parser.add_argument("file_path", help="Path to document file")
+    rag_ingest_parser.add_argument("--chunk-size", type=int, help="Override chunk size from config")
+    rag_query_parser = rag_subparsers.add_parser("query", help="Query RAG database")
+    rag_query_parser.add_argument("db_name", help="Database name")
+    rag_query_parser.add_argument("query", help="Query text")
+    rag_query_parser.add_argument("-k", "--results", type=int, help="Number of results to return")
+
+
+def cmd_rag_ingest(db_name: str, file_path: str, chunk_size: int | None = None) -> None:
     """Ingest document into RAG vectordb.
 
     Args:
@@ -104,7 +139,7 @@ def cmd_rag_ingest(db_name: str, file_path: str, chunk_size: Optional[int] = Non
     utils.info(f"Ingestion complete: {len(chunks)} chunks, {total_words} words")
 
 
-def cmd_rag_search(db_name: str, query: str, k: Optional[int] = None) -> None:
+def cmd_rag_search(db_name: str, query: str, k: int | None = None) -> None:
     """Search RAG vectordb for similar documents.
 
     Args:
@@ -187,9 +222,7 @@ def cmd_rag_search(db_name: str, query: str, k: Optional[int] = None) -> None:
         raise RuntimeError(f"Search error: {e}")
 
 
-def _get_collection_id(
-    port: int, tenant: str, database: str, collection_name: str
-) -> Optional[str]:
+def _get_collection_id(port: int, tenant: str, database: str, collection_name: str) -> str | None:
     """Get collection ID by name from Chromadb V2 API.
 
     Args:
@@ -223,7 +256,7 @@ def _get_collection_id(
         return None
 
 
-def _load_embedding_model(model_name: Optional[str] = None):
+def _load_embedding_model(model_name: str | None = None):
     """Load embedding model from sentence-transformers.
 
     Models are cached in ~/.local/share/arkai/models/embeddings/ for centralized management.

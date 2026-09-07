@@ -9,7 +9,6 @@ import sys
 import time
 from enum import Enum
 from pathlib import Path
-from typing import Optional
 
 import yaml
 
@@ -58,7 +57,7 @@ def get_config_home() -> str:
     return os.path.join(home, ".config", "arkai")
 
 
-def get_data_home() -> Optional[str]:
+def get_data_home() -> str | None:
     """Return data directory path (~/.local/share/arkai, never XDG_DATA_HOME)."""
     home = os.getenv("HOME")
     if not home:
@@ -108,9 +107,7 @@ def is_port_in_use(port: int) -> bool:
     return code == 0
 
 
-def run_command(
-    cmd: list, capture: bool = True, timeout: Optional[int] = 30
-) -> tuple[int, str, str]:
+def run_command(cmd: list, capture: bool = True, timeout: int | None = 30) -> tuple[int, str, str]:
     """Run subprocess command, return (exit_code, stdout, stderr).
 
     Raises RuntimeError on timeout or command not found.
@@ -167,7 +164,7 @@ def merge_configs(base: dict, override: dict) -> dict:
     return result
 
 
-def read_pid(path: str) -> Optional[int]:
+def read_pid(path: str) -> int | None:
     """Read PID from file; return None if not found or invalid."""
     try:
         with open(path) as f:
@@ -259,7 +256,7 @@ def info(msg: str) -> None:
 VALID_VOLUME_FLAGS = {"ro", ""}
 
 
-def validate_volumes(volumes: list) -> Optional[str]:
+def validate_volumes(volumes: list) -> str | None:
     """Validate a list of volume mount strings.
 
     Args:
@@ -290,7 +287,7 @@ def validate_volumes(volumes: list) -> Optional[str]:
     return None
 
 
-def validate_environment(environment: object) -> Optional[str]:
+def validate_environment(environment: object) -> str | None:
     """Validate a sandbox environment dict.
 
     Args:

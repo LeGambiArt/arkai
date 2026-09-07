@@ -1,10 +1,56 @@
 """Model lifecycle management: download, list, remove, convert, benchmark."""
 
+import argparse
 import os
 from pathlib import Path
-from typing import Optional
 
 from arkai import utils
+
+
+def exec_cmd(args: dict | None = None) -> None:
+    """Select 'model' command to execute."""
+    match args.model_cmd:  # ty: ignore[unresolved-attribute]
+        case "list":
+            cmd_model_list()
+        case "download":
+            cmd_model_download(args.hf_repo)  # ty: ignore[unresolved-attribute]
+        case "remove":
+            cmd_model_remove(args.model_name)  # ty: ignore[unresolved-attribute]
+        case "convert":
+            cmd_model_convert(
+                args.model,  # ty: ignore[unresolved-attribute]
+                args.quantization,  # ty: ignore[unresolved-attribute]
+                args.output,  # ty: ignore[unresolved-attribute]
+            )
+
+
+def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
+    """Create command subparser.
+
+    Args:
+        parser: The argparse subparser to add arguments to
+    """
+    model_parser = subparsers.add_parser("model", help="Manage models")
+    model_subparsers = model_parser.add_subparsers(dest="model_cmd")
+    download_parser = model_subparsers.add_parser(
+        "download", help="Download model from HuggingFace"
+    )
+    download_parser.add_argument("hf_repo", help="HuggingFace repo ID")
+    model_subparsers.add_parser("list", help="List available models")
+    remove_parser = model_subparsers.add_parser("remove", help="Remove model")
+    remove_parser.add_argument("model_name", help="Model file name")
+    convert_parser = model_subparsers.add_parser(
+        "convert", help="Convert HuggingFace model to GGUF format"
+    )
+    convert_parser.add_argument("model", help="HuggingFace model ID or path")
+    convert_parser.add_argument(
+        "-q", "--quantization", default="Q6_K", help="Quantization level (default: Q6_K)"
+    )
+    convert_parser.add_argument(
+        "-o",
+        "--output",
+        help="Output file path (default: ~/.local/share/arkai/models/MODEL-QUANTIZATION.gguf)",
+    )
 
 
 def get_models_dir() -> str:
@@ -211,7 +257,7 @@ def cmd_model_remove(model_name: str) -> None:
     utils.info(f"Removed {model_name}")
 
 
-def cmd_model_convert(model: str, quantization: str = "Q6_K", output: Optional[str] = None) -> None:
+def cmd_model_convert(model: str, quantization: str = "Q6_K", output: str | None = None) -> None:
     """Convert HuggingFace model to GGUF format.
 
     Args:
@@ -222,7 +268,7 @@ def cmd_model_convert(model: str, quantization: str = "Q6_K", output: Optional[s
                 ~/.local/share/arkai/models/MODEL-QUANTIZATION.gguf)
     """
     # Find arkai-convert script using importlib.resources for packaging
-    convert_script: Optional[str] = None
+    convert_script: str | None = None
     try:
         from importlib.resources import files
 

@@ -1,9 +1,25 @@
 """Status monitoring for all servers (inference, wtmcp, vectordb)."""
 
-from arkai import engine as engine_module
+import argparse
+
+from arkai import inference as inference_module
 from arkai import utils
 from arkai import vectordb as vectordb_module
 from arkai import wtmcp as wtmcp_module
+
+
+def exec_cmd(*_args) -> None:
+    """Select 'status' command to execute."""
+    cmd_status()
+
+
+def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
+    """Create command subparser.
+
+    Args:
+        parser: The argparse subparser to add arguments to
+    """
+    subparsers.add_parser("status", help="Show status of all servers")
 
 
 def cmd_status() -> None:
@@ -11,12 +27,12 @@ def cmd_status() -> None:
     utils.info("=== arkai Server Status ===\n")
 
     # Check inference server
-    inference_running = engine_module.is_inference_running()
+    inference_running = inference_module.is_inference_running()
     if inference_running:
-        pid = utils.read_pid(engine_module.get_inference_pid_path())
+        pid = utils.read_pid(inference_module.get_inference_pid_path())
         utils.info(f"✓ Inference: running (PID {pid})")
         try:
-            state = utils.load_yaml(engine_module.get_inference_state_path())
+            state = utils.load_yaml(inference_module.get_inference_state_path())
             port = state.get("port", 8081)
             model = state.get("model", "unknown")
             utils.info(f"  Model: {model}")

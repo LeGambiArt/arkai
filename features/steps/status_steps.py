@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from behave import when
 
-from arkai import engine as engine_module
+from arkai import inference as inference_module
 from arkai import status as status_module
 from arkai import utils
 from arkai import vectordb as vectordb_module
@@ -33,7 +33,7 @@ def step_run_status(context):
             # Apply patches for servers not explicitly mocked as running
             if not inference_running:
                 stack.enter_context(
-                    patch.object(engine_module, "is_inference_running", return_value=False)
+                    patch.object(inference_module, "is_inference_running", return_value=False)
                 )
             if not vectordb_running:
                 stack.enter_context(

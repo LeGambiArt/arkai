@@ -5,7 +5,6 @@ import os
 import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional
 
 
 @dataclass
@@ -305,7 +304,7 @@ def detect_format(file_path: str) -> str:
     return format_map.get(ext, "")
 
 
-def get_processor(format: str) -> Optional[DocumentProcessor]:
+def get_processor(format: str) -> DocumentProcessor | None:
     """Get processor instance for detected format."""
     processors = {
         "txt": TextProcessor(),

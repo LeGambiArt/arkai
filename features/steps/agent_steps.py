@@ -2,12 +2,11 @@
 
 import sys
 from io import StringIO
-from typing import Optional
 from unittest.mock import MagicMock, patch
 
 from behave import given, then, when
 
-from arkai import agent, engine, utils, wtmcp
+from arkai import agent, inference, utils, wtmcp
 
 
 @given("a .arkai.yaml file with no model configured")  # ty: ignore[call-non-callable]
@@ -34,8 +33,8 @@ def _run_agent_in_tty(
     context,
     no_mcp: bool = False,
     no_sandbox: bool = False,
-    model: Optional[str] = None,
-    agent_name: Optional[str] = None,
+    model: str | None = None,
+    agent_name: str | None = None,
 ) -> None:
     """Run agent with a mocked TTY and capture output."""
     old_stdout = sys.stdout
@@ -65,7 +64,7 @@ def _run_agent_in_tty(
 
     with (
         patch.object(sys.stdin, "isatty", return_value=True),
-        patch.object(engine, "is_inference_running", return_value=True),
+        patch.object(inference, "is_inference_running", return_value=True),
         patch.object(wtmcp, "is_wtmcp_running", return_value=False),
         patch.object(wtmcp, "cmd_wtmcp_start") as mock_wtmcp_start,
         patch.object(utils, "resolve_binary", return_value="/usr/bin/fake-agent"),
@@ -174,7 +173,7 @@ def step_run_agent_piped(context):
         mock_proc.pid = 12345
         with (
             patch.object(sys.stdin, "isatty", return_value=False),
-            patch.object(engine, "is_inference_running", return_value=True),
+            patch.object(inference, "is_inference_running", return_value=True),
             patch.object(wtmcp, "is_wtmcp_running", return_value=True),
             patch("subprocess.Popen", return_value=mock_proc),
         ):

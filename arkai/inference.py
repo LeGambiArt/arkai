@@ -1,12 +1,45 @@
 """Inference server lifecycle management."""
 
+import argparse
 import os
 import signal
 import subprocess
 import time
-from typing import Optional
 
 from arkai import config, utils
+
+
+def exec_cmd(args: dict | None = None) -> None:
+    """Select 'inference' command to execute."""
+    match args.inference_cmd:  # ty: ignore[unresolved-attribute]
+        case "start":
+            cmd_inference_start(
+                args.model,  # ty: ignore[unresolved-attribute]
+                args.gpu_layers,  # ty: ignore[unresolved-attribute]
+                args.context,  # ty: ignore[unresolved-attribute]
+                args.port,  # ty: ignore[unresolved-attribute]
+            )
+        case "stop":
+            cmd_inference_stop()
+        case "status":
+            cmd_inference_status()
+
+
+def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
+    """Create command subparser.
+
+    Args:
+        parser: The argparse subparser to add arguments to
+    """
+    inference_parser = subparsers.add_parser("inference", help="Manage inference engine server")
+    inference_subparsers = inference_parser.add_subparsers(dest="inference_cmd")
+    start_parser = inference_subparsers.add_parser("start", help="Start inference server")
+    start_parser.add_argument("-m", "--model", help="Override model from config")
+    start_parser.add_argument("--gpu-layers", type=int, help="Override GPU layers")
+    start_parser.add_argument("--context", type=int, help="Override context size")
+    start_parser.add_argument("--port", type=int, help="Override port from config")
+    inference_subparsers.add_parser("stop", help="Stop inference server")
+    inference_subparsers.add_parser("status", help="Show inference server status")
 
 
 def get_inference_pid_path() -> str:
@@ -36,11 +69,11 @@ def is_inference_running() -> bool:
         return False
 
 
-def cmd_engine_start(
-    model: Optional[str] = None,
-    gpu_layers: Optional[int] = None,
-    context_size: Optional[int] = None,
-    port: Optional[int] = None,
+def cmd_inference_start(
+    model: str | None = None,
+    gpu_layers: int | None = None,
+    context_size: int | None = None,
+    port: int | None = None,
 ) -> None:
     """Start inference server (llama-server).
 
@@ -91,7 +124,7 @@ def cmd_engine_start(
     model_file = config.get_config_value(cfg, "inference.model")
     hf_model = config.get_config_value(cfg, "inference.hf")
 
-    model_path: Optional[str] = None
+    model_path: str | None = None
     if model_file:
         data_home = utils.get_data_home()
         model_path = os.path.join(data_home, "models", model_file)  # ty: ignore[no-matching-overload]
@@ -177,7 +210,7 @@ def cmd_engine_start(
     raise RuntimeError("Inference server failed to start")
 
 
-def cmd_engine_stop() -> None:
+def cmd_inference_stop() -> None:
     """Stop inference server."""
     pid_path = get_inference_pid_path()
     pid = utils.read_pid(pid_path)
@@ -204,7 +237,7 @@ def cmd_engine_stop() -> None:
     utils.info("Inference server stopped")
 
 
-def cmd_engine_status() -> None:
+def cmd_inference_status() -> None:
     """Show inference server status and health."""
     pid_path = get_inference_pid_path()
     pid = utils.read_pid(pid_path)

@@ -1,14 +1,52 @@
 """Vector database service lifecycle management."""
 
+import argparse
 import os
 import signal
 import subprocess
 import time
-from typing import Optional
 
 import requests
 
 from arkai import config, utils
+
+
+def exec_cmd(args: dict | None = None) -> None:
+    """Select 'vectordb' command to execute."""
+    match args.vectordb_cmd:  # ty: ignore[unresolved-attribute]
+        case "start":
+            cmd_vectordb_start(args.port)  # ty: ignore[unresolved-attribute]
+        case "stop":
+            cmd_vectordb_stop()
+        case "status":
+            cmd_vectordb_status()
+        case "list":
+            cmd_vectordb_list()
+        case "initdb":
+            cmd_vectordb_initdb(args.db_name)  # ty: ignore[unresolved-attribute]
+        case "drop":
+            cmd_vectordb_drop(args.db_name)  # ty: ignore[unresolved-attribute]
+
+
+def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
+    """Create command subparser.
+
+    Args:
+        parser: The argparse subparser to add arguments to
+    """
+    vectordb_parser = subparsers.add_parser("vectordb", help="Manage vector database server")
+    vectordb_subparsers = vectordb_parser.add_subparsers(dest="vectordb_cmd")
+    vectordb_start_parser = vectordb_subparsers.add_parser("start", help="Start vectordb server")
+    vectordb_start_parser.add_argument("--port", type=int, help="Override port from config")
+    vectordb_subparsers.add_parser("stop", help="Stop vectordb server")
+    vectordb_subparsers.add_parser("status", help="Show vectordb server status")
+    vectordb_subparsers.add_parser("list", help="List databases")
+    vectordb_initdb_parser = vectordb_subparsers.add_parser(
+        "initdb", help="Initialize new database"
+    )
+    vectordb_initdb_parser.add_argument("db_name", help="Database name")
+    vectordb_drop_parser = vectordb_subparsers.add_parser("drop", help="Drop database")
+    vectordb_drop_parser.add_argument("db_name", help="Database name")
 
 
 def get_vectordb_pid_path() -> str:
@@ -37,7 +75,7 @@ def is_vectordb_running() -> bool:
         return False
 
 
-def get_vectordb_port() -> Optional[int]:
+def get_vectordb_port() -> int | None:
     """Get port of running vectordb server from state file."""
     state_path = get_vectordb_state_path()
     if not os.path.exists(state_path):
@@ -49,7 +87,7 @@ def get_vectordb_port() -> Optional[int]:
         return None
 
 
-def cmd_vectordb_start(port: Optional[int] = None) -> None:
+def cmd_vectordb_start(port: int | None = None) -> None:
     """Start vectordb server (chromadb).
 
     Args:
@@ -376,7 +414,7 @@ def _is_valid_collection_name(name: str) -> bool:
 
 def _get_collection_id_v2(
     port: int, tenant: str, database: str, collection_name: str
-) -> Optional[str]:
+) -> str | None:
     """Get collection ID by name from Chromadb V2 API.
 
     Args:

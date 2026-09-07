@@ -1,9 +1,10 @@
 """Configuration loading, merging, and validation."""
 
+import argparse
 import copy
 import os
 import sys
-from typing import Any, Optional
+from typing import Any
 
 from arkai import utils
 
@@ -47,6 +48,28 @@ DEFAULTS = {
 }
 
 VALID_AGENTS = {"opencode", "crush", "claude"}
+
+
+def exec_cmd(args: dict | None = None) -> None:
+    """Select 'config' command to execute."""
+    match args.config_cmd:  # ty: ignore[unresolved-attribute]
+        case "validate":
+            cmd_config_validate(args.file)  # ty: ignore[unresolved-attribute]
+        case "init":
+            cmd_config_init()
+
+
+def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
+    """Create command subparser.
+
+    Args:
+        parser: The argparse subparser to add arguments to
+    """
+    config_parser = subparsers.add_parser("config", help="Manage configuration")
+    config_subparsers = config_parser.add_subparsers(dest="config_cmd")
+    validate_parser = config_subparsers.add_parser("validate", help="Validate configuration")
+    validate_parser.add_argument("--file", help="Config file to validate (default: .arkai.yaml)")
+    config_subparsers.add_parser("init", help="Initialize configuration file")
 
 
 def load_config(project_dir: str = ".") -> dict:
@@ -206,7 +229,7 @@ def get_config_value(config: dict, key: str, default: Any = None) -> Any:
     return value if value is not None else default
 
 
-def cmd_config_validate(config_file: Optional[str] = None) -> None:
+def cmd_config_validate(config_file: str | None = None) -> None:
     """Validate configuration file.
 
     Args:

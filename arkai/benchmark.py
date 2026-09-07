@@ -1,16 +1,17 @@
 """LLM model benchmarking utilities."""
 
+import argparse
 import json
 import os
 import re
 import statistics
 import time
 from dataclasses import dataclass
-from typing import Optional
 
 import requests
 
-from arkai import engine, utils
+from arkai import config as config_module
+from arkai import inference, utils
 
 BUILTIN_PROMPTS = {
     "ai": {
@@ -88,6 +89,133 @@ BUILTIN_PROMPTS = {
         ),
     },
 }
+
+
+def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
+    """Create command subparser.
+
+    Args:
+        parser: The argparse subparser to add arguments to
+    """
+    benchmark_parser = subparsers.add_parser("benchmark", help="Benchmark LLM models")
+    benchmark_parser.add_argument(
+        "-m",
+        "--model",
+        help="Override model from config (use hf:<model_id> for HuggingFace models)",
+    )
+    benchmark_parser.add_argument(
+        "--prompts",
+        default="code-review:all",
+        help=(
+            "Comma-separated prompt specs (format '<set>:<size>', e.g., 'code-review:all', "
+            "'ai:short,code-review:medium'). Sets: 'ai', 'code-review', 'coding'. Sizes: 'short', "
+            "'medium', 'long', 'all'. Default: code-review:all"
+        ),
+    )
+    benchmark_parser.add_argument(
+        "--show-prompts",
+        metavar="SET",
+        help="Show prompts from a set (ai, code-review) and exit",
+    )
+    benchmark_parser.add_argument("-p", "--prompt-file", help="Custom prompt file to benchmark")
+    benchmark_parser.add_argument(
+        "-i",
+        "--iterations",
+        type=int,
+        default=5,
+        help="Number of benchmark iterations (default: 5)",
+    )
+    benchmark_parser.add_argument("--no-warmup", action="store_true", help="Skip warmup iteration")
+    benchmark_parser.add_argument(
+        "-t", "--tokens", type=int, default=128, help="Max tokens to generate (default: 128)"
+    )
+    benchmark_parser.add_argument("--gpu-layers", type=int, help="Override GPU layers")
+    benchmark_parser.add_argument("--context", type=int, help="Override context size")
+    benchmark_parser.add_argument("--port", type=int, help="Override inference port from config")
+    benchmark_parser.add_argument(
+        "-I",
+        "--no-inference",
+        action="store_true",
+        help="Do not start inference engine server",
+    )
+    benchmark_parser.add_argument("-M", "--no-mcp", action="store_true", help="Skip wtmcp init")
+    benchmark_parser.add_argument(
+        "-q", "--quiet", action="store_true", help="Only show benchmark output"
+    )
+    benchmark_parser.add_argument("-j", "--json", action="store_true", help="Output in JSON format")
+
+
+def exec_cmd(args: argparse.Namespace) -> None:
+    """Run LLM model benchmark.
+
+    Args:
+        args: Parsed command-line arguments
+    """
+    # Handle --show-prompts option
+    if args.show_prompts:
+        print_prompt_set(args.show_prompts)
+        return
+
+    # Set message level
+    if args.quiet:
+        from arkai.utils import MessageLevel, set_message_level
+
+        set_message_level(MessageLevel.ERROR)
+
+    # Load config for defaults
+    cfg = config_module.load_config()
+
+    # Resolve model
+    model = args.model
+    if not model:
+        model = config_module.get_config_value(cfg, "inference.model")
+        if not model:
+            model = config_module.get_config_value(cfg, "inference.hf")
+
+    if not model:
+        raise RuntimeError("Model not specified")
+
+    # Resolve other settings from config with CLI overrides
+    port = args.port or config_module.get_config_value(cfg, "inference.port", 8081)
+    gpu_layers = (
+        args.gpu_layers
+        if args.gpu_layers is not None
+        else config_module.get_config_value(cfg, "inference.gpu_layers", -1)
+    )
+    context_size = (
+        args.context
+        if args.context is not None
+        else config_module.get_config_value(cfg, "inference.context_size", 65536)
+    )
+
+    # Parse prompts
+    prompts = [p.strip() for p in args.prompts.split(",")]
+
+    # Create config
+    bench_config = BenchmarkConfig(
+        model=model,
+        port=port,
+        iterations=args.iterations,
+        warmup=not args.no_warmup,
+        token_limit=args.tokens,
+        temperature=0.0,
+        seed=42,
+        prompts=prompts,
+        custom_prompt_file=args.prompt_file,
+        gpu_layers=gpu_layers,
+        context_size=context_size,
+        no_inference=args.no_inference,
+    )
+
+    # Run benchmark
+    runner = BenchmarkRunner(bench_config)
+    result = runner.run()
+
+    # Output results
+    if args.json:
+        print(format_json(result))
+    else:
+        print(format_table(result))
 
 
 def print_prompt_set(set_name: str) -> None:
@@ -209,7 +337,7 @@ class BenchmarkConfig:
     temperature: float
     seed: int
     prompts: list[str]
-    custom_prompt_file: Optional[str] = None
+    custom_prompt_file: str | None = None
     gpu_layers: int = -1
     context_size: int = 65536
     backend: str = "llama-cpp"
@@ -230,16 +358,14 @@ class BenchmarkRunner:
 
     def _ensure_server_running(self) -> None:
         """Check if inference server is running, start if needed."""
-        if self.config.no_inference:
-            if not engine.is_inference_running():
-                raise RuntimeError("Inference server not running (required with -I/--no-inference)")
+        if inference.is_inference_running():
             return
 
-        if engine.is_inference_running():
-            return
+        if self.config.no_inference:
+            raise RuntimeError("Inference server not running (required with -I/--no-inference)")
 
         utils.info("Starting inference server for benchmark...")
-        engine.cmd_engine_start(
+        inference.cmd_inference_start(
             model=self.config.model,
             gpu_layers=self.config.gpu_layers,
             context_size=self.config.context_size,
@@ -251,7 +377,7 @@ class BenchmarkRunner:
         """Stop inference server if we started it."""
         if self.started_server:
             utils.info("Stopping inference server...")
-            engine.cmd_engine_stop()
+            inference.cmd_inference_stop()
             self.started_server = False
 
     def _send_completion_request(self, prompt: str) -> tuple[dict, float, float, float]:
@@ -477,7 +603,7 @@ class BenchmarkRunner:
             Peak resident set size in MB
         """
         # Read from inference server process
-        pid_path = engine.get_inference_pid_path()
+        pid_path = inference.get_inference_pid_path()
         pid = utils.read_pid(pid_path)
 
         if pid is None:
