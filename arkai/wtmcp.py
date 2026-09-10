@@ -2,8 +2,8 @@
 
 import argparse
 import os
-import signal
 import subprocess
+import sys
 import time
 
 from arkai import config, utils
@@ -18,6 +18,7 @@ def exec_cmd(args: dict | None) -> None:
                 args.port,  # ty: ignore[unresolved-attribute]
                 args.enable_plugins,  # ty: ignore[unresolved-attribute]
                 args.disable_plugins,  # ty: ignore[unresolved-attribute]
+                args.wtmcp_config,  # ty: ignore[unresolved-attribute]
             )
         case "stop":
             cmd_wtmcp_stop(args.port)  # ty: ignore[unresolved-attribute]
@@ -48,6 +49,11 @@ def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
     start_parser = wtmcp_subparsers.add_parser("start", help="Start wtmcp server")
     start_parser.add_argument("--path", help="Override wtmcp binary path from config")
     start_parser.add_argument("--port", type=int, help="Override port from config")
+    start_parser.add_argument(
+        "--wtmcp-config",
+        dest="wtmcp_config",
+        help="Override base wtmcp config file path (default: ~/.config/wtmcp/config.yaml)",
+    )
     start_parser.add_argument(
         "--enable",
         action="append",
@@ -259,6 +265,23 @@ def get_wtmcp_state_path(port: int) -> str:
     return os.path.join(pid_dir, f"wtmcp-{port}.state")
 
 
+def get_wtmcp_server_pid_path(port: int) -> str:
+    """Return path to the PID file written by the wtmcp supervisor."""
+    pid_dir = utils.get_pid_dir()
+    return os.path.join(pid_dir, f"wtmcp-{port}.server.pid")
+
+
+def _is_process_running(pid: int | None) -> bool:
+    """Return whether a PID identifies a currently running process."""
+    if pid is None:
+        return False
+    try:
+        code, _, _ = utils.run_command(["kill", "-0", str(pid)])
+        return code == 0
+    except RuntimeError:
+        return False
+
+
 def is_wtmcp_running(port: int | None = None) -> bool:
     """Check if wtmcp server is running on a specific port or any port.
 
@@ -275,12 +298,22 @@ def is_wtmcp_running(port: int | None = None) -> bool:
         if pid is None:
             return False
 
-        # Check if process still exists
-        try:
-            code, _, _ = utils.run_command(["kill", "-0", str(pid)])
-            return code == 0
-        except RuntimeError:
+        if not _is_process_running(pid):
             return False
+
+        state_path = get_wtmcp_state_path(port)
+        if not os.path.exists(state_path):
+            return True
+        try:
+            state = utils.load_yaml(state_path)
+        except (FileNotFoundError, RuntimeError):
+            return False
+
+        supervisor_pid = state.get("supervisor_pid")
+        if supervisor_pid is None:
+            return True
+        server_pid = utils.read_pid(get_wtmcp_server_pid_path(port))
+        return _is_process_running(supervisor_pid) and _is_process_running(server_pid)
     else:
         # Check if any instance is running
         pid_dir = utils.get_pid_dir()
@@ -292,12 +325,8 @@ def is_wtmcp_running(port: int | None = None) -> bool:
                 pid_path = os.path.join(pid_dir, filename)
                 pid = utils.read_pid(pid_path)
                 if pid is not None:
-                    try:
-                        code, _, _ = utils.run_command(["kill", "-0", str(pid)])
-                        if code == 0:
-                            return True
-                    except RuntimeError:
-                        pass
+                    if _is_process_running(pid):
+                        return True
         return False
 
 
@@ -306,6 +335,7 @@ def cmd_wtmcp_start(
     port: int | None = None,
     enable_plugins: list | None = None,
     disable_plugins: list | None = None,
+    wtmcp_config: str | None = None,
 ) -> None:
     """Start wtmcp server with project configuration.
 
@@ -314,6 +344,7 @@ def cmd_wtmcp_start(
         port: Override wtmcp port from config
         enable_plugins: List of plugins to enable (overrides config)
         disable_plugins: List of plugins to disable (overrides config)
+        wtmcp_config: Override base wtmcp config file path
 
     Raises:
         RuntimeError: If wtmcp binary not found or server fails to start
@@ -338,8 +369,8 @@ def cmd_wtmcp_start(
         utils.info(f"wtmcp server already running on port {port}")
         return
 
-    # Get workdir from config, default to current working directory
-    workdir = config.get_config_value(cfg, "wtmcp.workdir", os.getcwd())
+    # Let wtmcp use its own configuration home unless explicitly overridden.
+    workdir = config.get_config_value(cfg, "wtmcp.workdir", None)
     if workdir:
         workdir = os.path.expanduser(workdir)
 
@@ -384,15 +415,40 @@ def cmd_wtmcp_start(
         os.path.abspath(project_config_path) if os.path.exists(project_config_path) else None
     )
 
-    # Create wtmcp configuration with effective plugins
-    wtmcp_config = {"mcp-servers": {}}
-    for plugin_name in effective_plugins:
-        wtmcp_config["mcp-servers"][plugin_name] = {"command": f"uvx {plugin_name}"}
+    # Determine whether a custom config file needs to be generated.
+    # Priority for the base config path: CLI arg > arkai config > default wtmcp config location.
+    # If wtmcp_config is explicitly provided or arkai has plugins to inject, we must write a
+    # merged config so wtmcp picks up the arkai-managed mcp-servers. Otherwise we let wtmcp
+    # use its own defaults (env.d, credentials, etc.) untouched.
+    explicit_config = wtmcp_config or config.get_config_value(cfg, "wtmcp.config")
 
-    # Write temporary wtmcp config file
-    pid_dir = utils.get_pid_dir()
-    wtmcp_config_path = os.path.join(pid_dir, f"wtmcp-{port}.config.yaml")
-    utils.save_yaml(wtmcp_config_path, wtmcp_config)
+    if explicit_config or effective_plugins:
+        if explicit_config:
+            base_wtmcp_config_path = os.path.expanduser(explicit_config)
+        else:
+            base_wtmcp_config_path = os.path.expanduser(
+                os.path.join(utils.get_config_home(), "wtmcp", "config.yaml")
+            )
+
+        merged: dict = {}
+        if os.path.exists(base_wtmcp_config_path):
+            try:
+                merged = utils.load_yaml(base_wtmcp_config_path) or {}
+            except Exception:
+                utils.warn(f"Could not load base wtmcp config from {base_wtmcp_config_path}")
+
+        if "mcp-servers" not in merged:
+            merged["mcp-servers"] = {}
+        for plugin_name in effective_plugins:
+            if plugin_name not in merged["mcp-servers"]:
+                merged["mcp-servers"][plugin_name] = {"command": f"uvx {plugin_name}"}
+
+        pid_dir = utils.get_pid_dir()
+        generated_config_path: str | None = os.path.join(pid_dir, f"wtmcp-{port}.config.yaml")
+        utils.save_yaml(generated_config_path, merged)
+    else:
+        base_wtmcp_config_path = None
+        generated_config_path = None
 
     # Start wtmcp server in background
     cmd = [
@@ -400,38 +456,43 @@ def cmd_wtmcp_start(
         "serve",
         "--port",
         str(port),
-        "--config",
-        wtmcp_config_path,
         "--transport",
         "streamable-http",
     ]
+    if generated_config_path:
+        cmd.extend(["--config", generated_config_path])
     if workdir:
         cmd.extend(["--workdir", workdir])
 
-    # Disable SIGINT to ensure process and PID file are both created
-    signal.signal(signal.SIGINT, signal.SIG_IGN)
-
     try:
         proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
+            [
+                sys.executable,
+                "-m",
+                "arkai.wtmcp_supervisor",
+                "--child-pid-path",
+                get_wtmcp_server_pid_path(port),
+                "--",
+            ]
+            + cmd
         )
+    except OSError as e:
+        raise RuntimeError(f"Failed to start wtmcp server: {e}") from e
 
-        # Write PID
-        pid_path = get_wtmcp_pid_path(port)
-        utils.write_pid(pid_path, proc.pid)
-    finally:
-        # Always restore SIGINT
-        signal.signal(signal.SIGINT, signal.SIG_DFL)
+    # Write PID
+    pid_path = get_wtmcp_pid_path(port)
+    utils.write_pid(pid_path, proc.pid)
 
     # Save server state with full context
     state = {
         "port": port,
         "workdir": workdir,
         "wtmcp_path": wtmcp_path,
+        "supervisor_pid": proc.pid,
+        "wtmcp_pid_path": get_wtmcp_server_pid_path(port),
         "config_file": config_file,
-        "wtmcp_config_file": wtmcp_config_path,
+        "base_wtmcp_config": base_wtmcp_config_path,
+        "wtmcp_config_file": generated_config_path,
         "startup_dir": os.getcwd(),
         "enable_plugins": enable_plugins or [],
         "disable_plugins": disable_plugins or [],
@@ -442,15 +503,23 @@ def cmd_wtmcp_start(
     # Brief wait to check if process starts successfully
     time.sleep(0.5)
     if not is_wtmcp_running(port):
-        try:
-            os.kill(proc.pid, signal.SIGKILL)
-        except (ProcessLookupError, OSError):
-            pass
+        utils.kill_process(proc.pid)
+        utils.wait_for_process_stop(proc.pid)
+        server_pid = utils.read_pid(get_wtmcp_server_pid_path(port))
+        if server_pid is not None and _is_process_running(server_pid):
+            utils.kill_process(server_pid)
+            utils.wait_for_process_stop(server_pid)
         pid_path_cleanup = get_wtmcp_pid_path(port)
         if os.path.exists(pid_path_cleanup):
             os.remove(pid_path_cleanup)
-        if os.path.exists(wtmcp_config_path):
-            os.remove(wtmcp_config_path)
+        if generated_config_path and os.path.exists(generated_config_path):
+            os.remove(generated_config_path)
+        server_pid_path = get_wtmcp_server_pid_path(port)
+        if os.path.exists(server_pid_path):
+            os.remove(server_pid_path)
+        state_path = get_wtmcp_state_path(port)
+        if os.path.exists(state_path):
+            os.remove(state_path)
         raise RuntimeError("wtmcp server failed to start")
 
     utils.info(f"wtmcp server started on port {port}")
@@ -481,22 +550,34 @@ def cmd_wtmcp_stop(port: int | None = None) -> None:
             )
 
     pid_path = get_wtmcp_pid_path(port)
-    pid = utils.read_pid(pid_path)
+    supervisor_pid = utils.read_pid(pid_path)
 
-    if pid is None:
+    if supervisor_pid is None:
         utils.info(f"wtmcp server not running on port {port}")
         return
 
-    utils.info(f"Stopping wtmcp server on port {port} (PID {pid})...")
-    utils.kill_process(pid)
+    server_pid = utils.read_pid(get_wtmcp_server_pid_path(port))
+    utils.info(f"Stopping wtmcp server on port {port} (supervisor PID {supervisor_pid})...")
+    utils.kill_process(supervisor_pid)
 
-    if not utils.wait_for_process_stop(pid):
+    if not utils.wait_for_process_stop(supervisor_pid):
         raise RuntimeError(
-            f"wtmcp server (PID {pid}) did not stop after SIGKILL; PID file preserved"
+            f"wtmcp supervisor (PID {supervisor_pid}) did not stop after SIGKILL; "
+            "PID file preserved"
         )
+
+    if server_pid is not None and _is_process_running(server_pid):
+        utils.kill_process(server_pid)
+        if not utils.wait_for_process_stop(server_pid):
+            raise RuntimeError(
+                f"wtmcp server (PID {server_pid}) did not stop after SIGKILL; PID file preserved"
+            )
 
     if os.path.exists(pid_path):
         os.remove(pid_path)
+    server_pid_path = get_wtmcp_server_pid_path(port)
+    if os.path.exists(server_pid_path):
+        os.remove(server_pid_path)
 
     state_path = get_wtmcp_state_path(port)
     if os.path.exists(state_path):
@@ -542,7 +623,7 @@ def cmd_wtmcp_status(port: int | None = None) -> None:
         utils.info("=== wtmcp Server Status ===")
 
         if pid is not None and is_wtmcp_running(port):
-            utils.info(f"Status: running (PID {pid})")
+            utils.info(f"Status: running (supervisor PID {pid})")
 
             # Load state saved at startup
             state_path = get_wtmcp_state_path(port)
@@ -552,6 +633,7 @@ def cmd_wtmcp_status(port: int | None = None) -> None:
                 workdir = state.get("workdir")
                 config_file = state.get("config_file")
                 startup_dir = state.get("startup_dir")
+                server_pid = utils.read_pid(get_wtmcp_server_pid_path(port))
 
                 utils.info(f"Port: {port}")
                 if workdir:
@@ -561,6 +643,8 @@ def cmd_wtmcp_status(port: int | None = None) -> None:
                 else:
                     utils.info("Config: (none)")
                 utils.info(f"Startup dir: {startup_dir}")
+                if server_pid is not None:
+                    utils.info(f"Server PID: {server_pid}")
             except FileNotFoundError:
                 utils.info("Status: running (state file missing)")
         else:
@@ -578,8 +662,9 @@ def cmd_wtmcp_status(port: int | None = None) -> None:
         utils.info(f"Status: {len(running_ports)} instance(s) running")
         for p in running_ports:
             pid_path = get_wtmcp_pid_path(p)
-            pid = utils.read_pid(pid_path)
-            utils.info(f"  Port {p} (PID {pid})")
+            supervisor_pid = utils.read_pid(pid_path)
+            server_pid = utils.read_pid(get_wtmcp_server_pid_path(p))
+            utils.info(f"  Port {p} (supervisor PID {supervisor_pid}, server PID {server_pid})")
 
             # Load state
             state_path = get_wtmcp_state_path(p)

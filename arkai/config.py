@@ -22,6 +22,7 @@ DEFAULTS = {
     "wtmcp": {
         "port": 8080,
         "path": "wtmcp",
+        "config": None,
     },
     "sandbox": {
         "enabled": True,
