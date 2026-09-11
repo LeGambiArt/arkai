@@ -94,6 +94,9 @@ def cmd_inference_start(
     """
     # Load config
     cfg = config.load_config()
+    # A port supplied on the CLI identifies a separate instance. Otherwise use
+    # the default PID/state paths, even when the config changes the port.
+    instance_port = port
 
     # Apply CLI overrides before validation so they can satisfy required fields
     if model:
@@ -109,7 +112,7 @@ def cmd_inference_start(
         raise RuntimeError("Invalid configuration")
 
     # Check only the requested instance, allowing explicit ports to coexist.
-    if is_inference_running(port):
+    if is_inference_running(instance_port):
         utils.info("Inference server already running")
         return
 
@@ -173,7 +176,7 @@ def cmd_inference_start(
         )
 
         # Write PID and state
-        pid_path = get_inference_pid_path(port)
+        pid_path = get_inference_pid_path(instance_port)
         utils.write_pid(pid_path, proc.pid)
     finally:
         # Always restore SIGINT
@@ -186,7 +189,7 @@ def cmd_inference_start(
         "context_size": context_size_val,
         "port": port,
     }
-    utils.save_yaml(get_inference_state_path(port), state)
+    utils.save_yaml(get_inference_state_path(instance_port), state)
 
     # Wait for server to be ready
     utils.info("Waiting for inference server...")
@@ -214,7 +217,7 @@ def cmd_inference_start(
         pass
     if os.path.exists(pid_path):
         os.remove(pid_path)
-    state_path = get_inference_state_path(port)
+    state_path = get_inference_state_path(instance_port)
     if os.path.exists(state_path):
         os.remove(state_path)
     raise RuntimeError(startup_error)

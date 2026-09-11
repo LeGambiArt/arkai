@@ -34,6 +34,12 @@ def test_inference_paths_are_unique_for_explicit_ports() -> None:
     assert inference.get_inference_state_path() != inference.get_inference_state_path(9090)
 
 
+def test_configured_port_without_cli_override_uses_default_paths() -> None:
+    """A configured port still uses the default instance bookkeeping paths."""
+    assert inference.get_inference_pid_path() == inference.get_inference_pid_path(None)
+    assert inference.get_inference_state_path() == inference.get_inference_state_path(None)
+
+
 def test_agent_model_name_uses_huggingface_model_prefix() -> None:
     """The model name is derived from the repository in model: hf:<repo>."""
     assert agent._get_model_name({"inference": {"model": "hf:org/model-GGUF"}}) == "model"
