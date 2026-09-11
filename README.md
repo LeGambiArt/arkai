@@ -1,5 +1,12 @@
 # arkai
 
+For troubleshooting, add the global `--debug` option before a command. It enables
+maximum log output and prints a full exception traceback when a command fails:
+
+```bash
+arkai --debug inference start
+```
+
 arkai is a CLI for running AI agents with local models on your own hardware. It orchestrates three services — a llama.cpp inference server, an MCP plugin server (wtmcp), and optionally an arapuca sandbox — so you can launch a fully configured agent session with a single command. Configuration is layered: user-level defaults, per-project overrides, and CLI flags.
 
 ## How It Works

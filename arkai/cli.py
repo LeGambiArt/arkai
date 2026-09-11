@@ -19,6 +19,11 @@ def main():
         action="version",
         version=f"%(prog)s {__version__}",
     )
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="show maximum log output and full exception tracebacks",
+    )
 
     subparsers = parser.add_subparsers(dest="command", help="Command to run")
 
@@ -42,12 +47,16 @@ def main():
         getattr(sys.modules[module_name], "ingest_cli_options")(subparsers)
 
     args = parser.parse_args()
+    if args.debug:
+        utils.set_message_level(utils.MessageLevel.INFO)
 
     try:
         cmd = getattr(sys.modules[f"arkai.{args.command}"], "exec_cmd")
         cmd(args)
         # cmd(args, parser=subparser_pool.get(args.command))
     except Exception as e:
+        if args.debug:
+            traceback.print_exc()
         _, _, exc_tb = sys.exc_info()
         fname, lineno, fn, _ = traceback.extract_tb(exc_tb, 1)[-1]
         utils.error(f"fatal: {e}\n\tat {fn} ({fname}:{str(lineno).strip()})")
