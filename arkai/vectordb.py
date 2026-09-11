@@ -93,6 +93,7 @@ def cmd_vectordb_start(port: int | None = None) -> None:
     Args:
         port: Override port from config
     """
+    utils.warn("Vectordb commands are not fully functional yet.")
     cfg = config.load_config()
 
     if port is not None:

@@ -3,14 +3,16 @@
 import argparse
 import json
 import os
+import types
 
 import requests
 
 from arkai import config, document_processor, model, utils, vectordb
 
 
-def exec_cmd(args: dict | None = None) -> None:
+def exec_cmd(args: types.SimpleNamespace | None = None) -> None:
     """Select 'rag' command to execute."""
+    utils.warn("RAG commands are not fully functional yet.")
     match args.rag_cmd:  # ty: ignore[unresolved-attribute]
         case "ingest":
             cmd_rag_ingest(

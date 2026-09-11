@@ -62,6 +62,19 @@ class TestVectordbStart:
     @patch("arkai.vectordb.is_vectordb_running")
     @patch("arkai.vectordb.utils")
     @patch("arkai.vectordb.config")
+    def test_start_warns_about_incomplete_functionality(
+        self, mock_config, mock_utils, mock_is_running
+    ):
+        """Test starting vectordb displays the incomplete functionality warning."""
+        mock_is_running.return_value = True
+
+        vectordb.cmd_vectordb_start()
+
+        mock_utils.warn.assert_called_once_with("Vectordb commands are not fully functional yet.")
+
+    @patch("arkai.vectordb.is_vectordb_running")
+    @patch("arkai.vectordb.utils")
+    @patch("arkai.vectordb.config")
     def test_start_already_running(self, mock_config, mock_utils, mock_is_running):
         """Test starting when already running."""
         mock_is_running.return_value = True
