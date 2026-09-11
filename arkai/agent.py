@@ -108,7 +108,7 @@ def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
         parser: The argparse subparser to add arguments to
     """
     agent_parser = subparsers.add_parser("agent", help="Manage interactive agent")
-    agent_subparsers = agent_parser.add_subparsers(dest="agent_cmd")
+    agent_subparsers = agent_parser.add_subparsers(dest="agent_cmd", required=True)
     agent_start_parser = agent_subparsers.add_parser("start", help="Start interactive agent")
     _add_agent_common_args(agent_start_parser)
     agent_prompt_parser = agent_subparsers.add_parser(

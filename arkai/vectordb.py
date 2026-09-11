@@ -35,7 +35,7 @@ def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
         parser: The argparse subparser to add arguments to
     """
     vectordb_parser = subparsers.add_parser("vectordb", help="Manage vector database server")
-    vectordb_subparsers = vectordb_parser.add_subparsers(dest="vectordb_cmd")
+    vectordb_subparsers = vectordb_parser.add_subparsers(dest="vectordb_cmd", required=True)
     vectordb_start_parser = vectordb_subparsers.add_parser("start", help="Start vectordb server")
     vectordb_start_parser.add_argument("--port", type=int, help="Override port from config")
     vectordb_subparsers.add_parser("stop", help="Stop vectordb server")

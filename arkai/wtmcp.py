@@ -39,7 +39,7 @@ def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
         parser: The argparse subparser to add arguments to
     """
     wtmcp_parser = subparsers.add_parser("wtmcp", help="Manage wtmcp plugins and server")
-    wtmcp_subparsers = wtmcp_parser.add_subparsers(dest="wtmcp_cmd")
+    wtmcp_subparsers = wtmcp_parser.add_subparsers(dest="wtmcp_cmd", required=True)
     # status subcommand
     status_parser = wtmcp_subparsers.add_parser("status", help="Show wtmcp server status")
     status_parser.add_argument(

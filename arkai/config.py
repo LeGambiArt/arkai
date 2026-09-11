@@ -96,7 +96,7 @@ def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
         parser: The argparse subparser to add arguments to
     """
     config_parser = subparsers.add_parser("config", help="Manage configuration")
-    config_subparsers = config_parser.add_subparsers(dest="config_cmd")
+    config_subparsers = config_parser.add_subparsers(dest="config_cmd", required=True)
     validate_parser = config_subparsers.add_parser("validate", help="Validate configuration")
     validate_parser.add_argument("--file", help="Config file to validate (default: .arkai.yaml)")
     config_subparsers.add_parser("init", help="Initialize configuration file")

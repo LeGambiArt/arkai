@@ -32,7 +32,7 @@ def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
         parser: The argparse subparser to add arguments to
     """
     inference_parser = subparsers.add_parser("inference", help="Manage inference engine server")
-    inference_subparsers = inference_parser.add_subparsers(dest="inference_cmd")
+    inference_subparsers = inference_parser.add_subparsers(dest="inference_cmd", required=True)
     start_parser = inference_subparsers.add_parser("start", help="Start inference server")
     start_parser.add_argument("-m", "--model", help="Override model from config")
     start_parser.add_argument("--gpu-layers", type=int, help="Override GPU layers")

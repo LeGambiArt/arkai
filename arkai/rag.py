@@ -35,7 +35,7 @@ def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
         parser: The argparse subparser to add arguments to
     """
     rag_parser = subparsers.add_parser("rag", help="Manage RAG operations")
-    rag_subparsers = rag_parser.add_subparsers(dest="rag_cmd")
+    rag_subparsers = rag_parser.add_subparsers(dest="rag_cmd", required=True)
     rag_ingest_parser = rag_subparsers.add_parser("ingest", help="Ingest document into RAG")
     rag_ingest_parser.add_argument("db_name", help="Database name")
     rag_ingest_parser.add_argument("file_path", help="Path to document file")

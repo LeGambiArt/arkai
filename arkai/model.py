@@ -31,7 +31,7 @@ def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
         parser: The argparse subparser to add arguments to
     """
     model_parser = subparsers.add_parser("model", help="Manage models")
-    model_subparsers = model_parser.add_subparsers(dest="model_cmd")
+    model_subparsers = model_parser.add_subparsers(dest="model_cmd", required=True)
     download_parser = model_subparsers.add_parser(
         "download", help="Download model from HuggingFace"
     )

@@ -51,7 +51,7 @@ def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
         parser: The argparse subparser to add arguments to
     """
     sandbox_parser = subparsers.add_parser("sandbox", help="Manage sandbox profiles")
-    sandbox_subparsers = sandbox_parser.add_subparsers(dest="sandbox_cmd")
+    sandbox_subparsers = sandbox_parser.add_subparsers(dest="sandbox_cmd", required=True)
     # list subcommand
     list_parser = sandbox_subparsers.add_parser("list", help="List sandbox profiles")
     list_parser = list_parser  # noqa: F841 - keep reference for consistency
