@@ -84,4 +84,31 @@ def test_start_opencode_passes_tui_config_environment_variable(tmp_path, monkeyp
 
     launch_env = popen.call_args.kwargs["env"]
     assert launch_env["OPENCODE_TUI_CONFIG"] == str(sessions_dir / "tui.json")
+    assert list(sessions_dir.glob("opencode-*.json")) == []
     assert not (sessions_dir / "tui.json").exists()
+
+
+def test_start_opencode_removes_config_when_creation_fails(tmp_path, monkeypatch) -> None:
+    """A partially-created config is removed when config generation fails."""
+    sessions_dir = tmp_path / "sessions"
+    monkeypatch.setattr(agent.os.path, "expanduser", lambda path: str(sessions_dir))
+
+    def fail_model_lookup(cfg: dict) -> str:
+        raise RuntimeError("model lookup failed")
+
+    monkeypatch.setattr(agent, "_get_model_name", fail_model_lookup)
+
+    try:
+        agent._start_agent_opencode(
+            "/agent",
+            {"inference": {"model": "model.gguf"}},
+            None,
+            False,
+            None,
+        )
+    except RuntimeError as error:
+        assert str(error) == "model lookup failed"
+    else:
+        raise AssertionError("expected model lookup failure")
+
+    assert list(sessions_dir.glob("opencode-*.json")) == []

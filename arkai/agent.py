@@ -570,43 +570,44 @@ def _start_agent_opencode(
     """
     config_dir = os.path.expanduser("~/.local/state/arkai/sessions")
     os.makedirs(config_dir, exist_ok=True)
+    config_file = ""
     tui_file: str | None = None
 
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        dir=config_dir,
-        prefix="opencode-",
-        suffix=".json",
-        delete=False,
-    ) as f:
-        config_file = f.name
-        inference_port = config.get_config_value(cfg, "inference.port", 8081)
-        inference_backend = config.get_config_value(cfg, "inference.backend", "llama-cpp")
-        model_name = _get_model_name(cfg)
-
-        config_data: dict = {
-            "$schema": "https://opencode.ai/config.json",
-            "provider": {
-                "local-llm": {
-                    "name": f"Local LLM ({inference_backend})",
-                    "npm": "@ai-sdk/openai-compatible",
-                    "options": {"baseURL": f"http://127.0.0.1:{inference_port}/v1"},
-                    "models": {model_name: {"name": model_name}},
-                }
-            },
-            "model": f"local-llm/{model_name}",
-        }
-        if wtmcp_port is not None:
-            config_data["mcp"] = {
-                "wtmcp": {
-                    "type": "remote",
-                    "url": f"http://127.0.0.1:{wtmcp_port}/mcp",
-                    "oauth": False,
-                }
-            }
-        json.dump(config_data, f, indent=2)
-
     try:
+        with tempfile.NamedTemporaryFile(
+            mode="w",
+            dir=config_dir,
+            prefix="opencode-",
+            suffix=".json",
+            delete=False,
+        ) as f:
+            config_file = f.name
+            inference_port = config.get_config_value(cfg, "inference.port", 8081)
+            inference_backend = config.get_config_value(cfg, "inference.backend", "llama-cpp")
+            model_name = _get_model_name(cfg)
+
+            config_data: dict = {
+                "$schema": "https://opencode.ai/config.json",
+                "provider": {
+                    "local-llm": {
+                        "name": f"Local LLM ({inference_backend})",
+                        "npm": "@ai-sdk/openai-compatible",
+                        "options": {"baseURL": f"http://127.0.0.1:{inference_port}/v1"},
+                        "models": {model_name: {"name": model_name}},
+                    },
+                },
+                "model": f"local-llm/{model_name}",
+            }
+            if wtmcp_port is not None:
+                config_data["mcp"] = {
+                    "wtmcp": {
+                        "type": "remote",
+                        "url": f"http://127.0.0.1:{wtmcp_port}/mcp",
+                        "oauth": False,
+                    }
+                }
+            json.dump(config_data, f, indent=2)
+
         tui_file = _prepare_opencode_tui_config(
             config_dir, config.get_config_value(cfg, "agent.theme")
         )
@@ -645,10 +646,11 @@ def _start_agent_opencode(
         utils.error(str(e), 3)
         sys.exit(3)
     finally:
-        try:
-            os.remove(config_file)
-        except FileNotFoundError:
-            pass
+        if config_file:
+            try:
+                os.remove(config_file)
+            except FileNotFoundError:
+                pass
         if tui_file is not None:
             try:
                 os.remove(tui_file)
