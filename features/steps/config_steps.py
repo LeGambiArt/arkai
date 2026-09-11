@@ -37,6 +37,18 @@ def step_no_config(context):
     context.existing_files.discard(".arkai.yaml")
 
 
+@given("a valid .arkai.yaml file with inference context_size of {value}")  # ty: ignore[call-non-callable]
+def step_valid_config_with_context_size(context, value):
+    context.config_file = ".arkai.yaml"
+    context.config_data = {
+        "agent": {"name": "opencode"},
+        "inference": {
+            "model": "test.gguf",
+            "context_size": value,
+        },
+    }
+
+
 @when('I run "arkai config {cmd}"')  # ty: ignore[call-non-callable]
 def step_run_config(context, cmd):
     parts = cmd.split()
@@ -47,6 +59,13 @@ def step_run_config(context, cmd):
 def step_check_exit_code(context, code):
     assert context.exit_code == code, (
         f"Expected exit {code}, got {context.exit_code}\nstderr: {context.stderr}"
+    )
+
+
+@then("the exit code is not {code:d}")  # ty: ignore[call-non-callable]
+def step_check_exit_code_not(context, code):
+    assert context.exit_code != code, (
+        f"Expected exit not {code}, got {context.exit_code}\nstderr: {context.stderr}"
     )
 
 

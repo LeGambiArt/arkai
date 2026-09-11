@@ -144,6 +144,39 @@ class TestConfigValidation:
         }
         assert config.validate_config(cfg) is False
 
+    def test_validate_context_size_with_k_suffix(self):
+        cfg = {
+            "agent": {"name": "opencode"},
+            "inference": {
+                "port": 8081,
+                "model": "test.gguf",
+                "context_size": "50k",
+            },
+        }
+        assert config.validate_config(cfg) is True
+
+    def test_validate_context_size_with_m_suffix(self):
+        cfg = {
+            "agent": {"name": "opencode"},
+            "inference": {
+                "port": 8081,
+                "model": "test.gguf",
+                "context_size": "1M",
+            },
+        }
+        assert config.validate_config(cfg) is True
+
+    def test_validate_invalid_context_size_string(self):
+        cfg = {
+            "agent": {"name": "opencode"},
+            "inference": {
+                "port": 8081,
+                "model": "test.gguf",
+                "context_size": "invalid",
+            },
+        }
+        assert config.validate_config(cfg) is False
+
 
 class TestValidateVolumes:
     """Test volume validation in config."""
@@ -234,6 +267,53 @@ class TestValidateEnvironment:
         """Profile environment must be a dict."""
         cfg = self._cfg_with_sandbox({"profiles": {"gpu": {"environment": "FOO=bar"}}})
         assert config.validate_config(cfg) is False
+
+
+class TestParseContextSize:
+    def test_plain_failing_integer(self):
+        assert config.parse_context_size("65536") == 65536
+
+    def test_plain_integer(self):
+        assert config.parse_context_size(65536) == 65536
+
+    def test_positive_zero(self):
+        assert config.parse_context_size(0) is None
+
+    def test_negative_integer(self):
+        assert config.parse_context_size(-1) is None
+
+    def test_kilotokens_lowercase(self):
+        assert config.parse_context_size("50k") == 51200
+
+    def test_kilotokens_uppercase(self):
+        assert config.parse_context_size("50K") == 51200
+
+    def test_kilotokens_with_whitespace(self):
+        assert config.parse_context_size(" 50k ") == 51200
+
+    def test_megatokens_lowercase(self):
+        assert config.parse_context_size("1m") == 1048576
+
+    def test_megatokens_uppercase(self):
+        assert config.parse_context_size("1M") == 1048576
+
+    def test_invalid_string(self):
+        assert config.parse_context_size("invalid") is None
+
+    def test_empty_string(self):
+        assert config.parse_context_size("") is None
+
+    def test_non_numeric_k(self):
+        assert config.parse_context_size("abc k") is None
+
+    def test_non_numeric_m(self):
+        assert config.parse_context_size("xyz m") is None
+
+    def test_small_kilotokens(self):
+        assert config.parse_context_size("1k") == 1024
+
+    def test_small_megatokens(self):
+        assert config.parse_context_size("1m") == 1048576
 
 
 class TestGetConfigValue:

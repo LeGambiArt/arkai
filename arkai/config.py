@@ -51,6 +51,35 @@ DEFAULTS = {
 VALID_AGENTS = {"opencode", "crush", "claude"}
 
 
+def parse_context_size(value: int | str) -> int | None:
+    """Parse context size value, supporting integer or string with k/m suffix.
+
+    Supports:
+    - Plain integers (e.g., 65536)
+    - String with 'k' suffix for kilotokens (e.g., "50k" = 51200)
+    - String with 'm' suffix for megatokens (e.g., "1M" = 1048576)
+
+    Args:
+        value: The value to parse (int, str, or other)
+
+    Returns:
+        Parsed integer value, or None if parsing fails.
+    """
+    if isinstance(value, str):
+        try:
+            value = value.strip().lower()
+            print("value", value, file=sys.stderr)
+            if value.endswith("k"):
+                value = int(value[:-1]) * 1024
+            elif value.endswith("m"):
+                value = int(value[:-1]) * 1024 * 1024
+            else:
+                value = int(value)
+        except (ValueError, TypeError):
+            return None
+    return value if value > 0 else None
+
+
 def exec_cmd(args: dict | None = None) -> None:
     """Select 'config' command to execute."""
     match args.config_cmd:  # ty: ignore[unresolved-attribute]
@@ -176,9 +205,14 @@ def validate_config(config: dict, require_model: bool = True) -> bool:
         valid = False
 
     context_size = get_config_value(config, "inference.context_size", 65536)
-    if not isinstance(context_size, int) or context_size <= 0:
+    parsed = parse_context_size(context_size)
+    if parsed is None:
         utils.error(f"inference.context_size must be positive integer, got {context_size}")
         valid = False
+    else:
+        # Replace string value with parsed int for consistency
+        if isinstance(context_size, str):
+            config.setdefault("inference", {})["context_size"] = parsed
 
     # Validate sandbox volumes at root level
     root_volumes = get_config_value(config, "sandbox.volume", [])

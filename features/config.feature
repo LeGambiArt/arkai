@@ -30,3 +30,45 @@ Feature: Configuration Management
     When I run "arkai config init"
     Then the exit code is 1
     And the error contains "Configuration file already exists"
+
+  Scenario Outline: Validate configuration with context size
+    Given a valid .arkai.yaml file with inference context_size of <value>
+    When I run "arkai config validate"
+    Then the exit code is <code>
+    And the <stream> contains "<message>"
+    Examples:  Success
+        | value   | code | stream | message |
+        | 32768   | 0    | output | Configuration valid |
+        | 32k     | 0    | output | Configuration valid |
+        | 50K     | 0    | output | Configuration valid |
+        | 1m      | 0    | output | Configuration valid |
+        | 1M      | 0    | output | Configuration valid |
+    Examples:  Failure
+        | value   | code | stream | message |
+        | -100    | 2    | error  | context_size must be positive integer |
+        | invalid | 2    | error  | context_size must be positive integer |
+        | 0       | 2    | error  | context_size must be positive integer |
+
+  Scenario: Validate configuration with positive integer context size
+    Given a valid .arkai.yaml file with inference context_size of 32768
+    When I run "arkai config validate"
+    Then the exit code is 0
+    And the output contains "Configuration valid"
+
+  Scenario: Validate configuration with negative context size fails
+    Given a valid .arkai.yaml file with inference context_size of -1000
+    When I run "arkai config validate"
+    Then the exit code is not 0
+    And the error contains "context_size must be positive integer"
+
+  Scenario: Validate configuration with zero context size fails
+    Given a valid .arkai.yaml file with inference context_size of 0
+    When I run "arkai config validate"
+    Then the exit code is not 0
+    And the error contains "context_size must be positive integer"
+
+  Scenario: Validate configuration with invalid context size string fails
+    Given a valid .arkai.yaml file with inference context_size of "invalid"
+    When I run "arkai config validate"
+    Then the exit code is not 0
+    And the error contains "context_size must be positive integer"
