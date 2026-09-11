@@ -48,7 +48,6 @@ def main():
         cmd(args)
         # cmd(args, parser=subparser_pool.get(args.command))
     except Exception as e:
-        traceback.print_exc()
         _, _, exc_tb = sys.exc_info()
         fname, lineno, fn, _ = traceback.extract_tb(exc_tb, 1)[-1]
         utils.error(f"fatal: {e}\n\tat {fn} ({fname}:{str(lineno).strip()})")
