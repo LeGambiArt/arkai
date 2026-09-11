@@ -58,3 +58,5 @@ def test_agent_cli_registers_port_for_start_and_prompt() -> None:
 
     assert start_args.port == 9090
     assert prompt_args.port == 9091
+    assert not hasattr(start_args, "theme")
+    assert not hasattr(prompt_args, "theme")

@@ -1,0 +1,87 @@
+"""Tests for opencode TUI configuration."""
+
+import json
+from unittest.mock import MagicMock, patch
+
+from arkai import agent
+
+
+def test_prepare_opencode_tui_copies_global_config(tmp_path, monkeypatch) -> None:
+    """A global tui.json is copied when no project theme is configured."""
+    config_home = tmp_path / "config"
+    global_tui = config_home / "opencode" / "tui.json"
+    global_tui.parent.mkdir(parents=True)
+    global_tui.write_text('{"$schema":"custom","theme":"catppuccin","keybinds":{}}')
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+
+    target = agent._prepare_opencode_tui_config(str(tmp_path / "sessions"), None)
+
+    assert target is not None
+    assert json.loads((tmp_path / "sessions" / "tui.json").read_text()) == {
+        "$schema": "custom",
+        "theme": "catppuccin",
+        "keybinds": {},
+    }
+
+
+def test_prepare_opencode_tui_overrides_global_theme(tmp_path, monkeypatch) -> None:
+    """agent.theme overrides the theme from the copied global configuration."""
+    config_home = tmp_path / "config"
+    global_tui = config_home / "opencode" / "tui.json"
+    global_tui.parent.mkdir(parents=True)
+    global_tui.write_text('{"theme":"catppuccin","keybinds":{}}')
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+
+    agent._prepare_opencode_tui_config(str(tmp_path / "sessions"), "orng")
+
+    assert json.loads((tmp_path / "sessions" / "tui.json").read_text()) == {
+        "theme": "orng",
+        "keybinds": {},
+    }
+
+
+def test_prepare_opencode_tui_creates_config_for_theme(tmp_path, monkeypatch) -> None:
+    """A configured theme creates tui.json when no global file exists."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+    agent._prepare_opencode_tui_config(str(tmp_path / "sessions"), "orng")
+
+    assert json.loads((tmp_path / "sessions" / "tui.json").read_text()) == {
+        "$schema": "https://opencode.ai/tui.json",
+        "theme": "orng",
+    }
+
+
+def test_prepare_opencode_tui_does_nothing_without_source_or_theme(tmp_path, monkeypatch) -> None:
+    """No TUI file is created when neither global nor agent configuration exists."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "config"))
+
+    target = agent._prepare_opencode_tui_config(str(tmp_path / "sessions"), None)
+
+    assert target is None
+    assert not (tmp_path / "sessions" / "tui.json").exists()
+
+
+def test_start_opencode_passes_tui_config_environment_variable(tmp_path, monkeypatch) -> None:
+    """A configured theme is passed to opencode through OPENCODE_TUI_CONFIG."""
+    config_home = tmp_path / "config"
+    global_tui = config_home / "opencode" / "tui.json"
+    global_tui.parent.mkdir(parents=True)
+    global_tui.write_text('{"theme":"catppuccin"}')
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    sessions_dir = tmp_path / "sessions"
+    monkeypatch.setattr(agent.os.path, "expanduser", lambda path: str(sessions_dir))
+    process = MagicMock()
+
+    with patch.object(agent.subprocess, "Popen", return_value=process) as popen:
+        agent._start_agent_opencode(
+            "/agent",
+            {"agent": {"theme": "orng"}, "inference": {"model": "model.gguf"}},
+            None,
+            False,
+            None,
+        )
+
+    launch_env = popen.call_args.kwargs["env"]
+    assert launch_env["OPENCODE_TUI_CONFIG"] == str(sessions_dir / "tui.json")
+    assert not (sessions_dir / "tui.json").exists()

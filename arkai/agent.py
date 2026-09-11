@@ -4,12 +4,14 @@ import argparse
 import json
 import os
 import platform
+import shutil
 import subprocess
 import sys
 import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from arkai import config, inference, utils
 
@@ -495,6 +497,48 @@ def _build_sandbox_cmd(
     return cmd
 
 
+def _prepare_opencode_tui_config(config_dir: str, theme: str | None) -> str | None:
+    """Copy the global opencode TUI config and apply an agent theme override.
+
+    Args:
+        config_dir: Directory from which opencode loads its temporary config.
+        theme: Optional theme configured as ``agent.theme``.
+
+    Returns:
+        Path to the prepared tui.json, or None when no TUI config is needed.
+    """
+    xdg_config_home = os.environ.get("XDG_CONFIG_HOME")
+    global_config_home = Path(xdg_config_home) if xdg_config_home else Path.home() / ".config"
+    global_tui = global_config_home / "opencode" / "tui.json"
+    tui_path = Path(config_dir) / "tui.json"
+
+    if global_tui.exists():
+        tui_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(global_tui, tui_path)
+    elif theme is not None:
+        tui_path.parent.mkdir(parents=True, exist_ok=True)
+        tui_path.write_text(
+            json.dumps(
+                {"$schema": "https://opencode.ai/tui.json", "theme": theme},
+                indent=2,
+            )
+        )
+    else:
+        return None
+
+    if theme is not None:
+        try:
+            tui_config = json.loads(tui_path.read_text())
+        except (OSError, json.JSONDecodeError) as error:
+            raise RuntimeError(f"Invalid opencode TUI configuration: {tui_path}") from error
+        if not isinstance(tui_config, dict):
+            raise RuntimeError(f"Invalid opencode TUI configuration: {tui_path}")
+        tui_config["theme"] = theme
+        tui_path.write_text(json.dumps(tui_config, indent=2))
+
+    return str(tui_path)
+
+
 def _start_agent_opencode(
     agent_path: str,
     cfg: dict,
@@ -526,6 +570,7 @@ def _start_agent_opencode(
     """
     config_dir = os.path.expanduser("~/.local/state/arkai/sessions")
     os.makedirs(config_dir, exist_ok=True)
+    tui_file: str | None = None
 
     with tempfile.NamedTemporaryFile(
         mode="w",
@@ -561,21 +606,29 @@ def _start_agent_opencode(
             }
         json.dump(config_data, f, indent=2)
 
-    if use_sandbox:
-        sandbox_prefix = _build_sandbox_cmd(
-            cfg, workdir, config_dir, wtmcp_port, sandbox_profile, cli_volumes, cli_environment
-        )
-        cmd = sandbox_prefix + ["env", f"OPENCODE_CONFIG={config_file}", agent_path]
-        env = os.environ.copy()
-    else:
-        env = os.environ.copy()
-        env["OPENCODE_CONFIG"] = config_file
-        cmd = [agent_path]
-
-    if prompt is not None:
-        cmd.extend(["run", prompt])
-
     try:
+        tui_file = _prepare_opencode_tui_config(
+            config_dir, config.get_config_value(cfg, "agent.theme")
+        )
+        if use_sandbox:
+            sandbox_prefix = _build_sandbox_cmd(
+                cfg, workdir, config_dir, wtmcp_port, sandbox_profile, cli_volumes, cli_environment
+            )
+            env_args = ["env", f"OPENCODE_CONFIG={config_file}"]
+            if tui_file is not None:
+                env_args.append(f"OPENCODE_TUI_CONFIG={tui_file}")
+            cmd = sandbox_prefix + env_args + [agent_path]
+            env = os.environ.copy()
+        else:
+            env = os.environ.copy()
+            env["OPENCODE_CONFIG"] = config_file
+            if tui_file is not None:
+                env["OPENCODE_TUI_CONFIG"] = tui_file
+            cmd = [agent_path]
+
+        if prompt is not None:
+            cmd.extend(["run", prompt])
+
         proc = subprocess.Popen(
             cmd,
             stdin=sys.stdin,
@@ -596,6 +649,11 @@ def _start_agent_opencode(
             os.remove(config_file)
         except FileNotFoundError:
             pass
+        if tui_file is not None:
+            try:
+                os.remove(tui_file)
+            except FileNotFoundError:
+                pass
 
     if capture_stdout and stdout_data is not None:
         return stdout_data.decode("utf-8", errors="replace")
