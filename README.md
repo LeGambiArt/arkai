@@ -55,10 +55,10 @@ When you run `arkai agent start`, it starts `llama-server` (loading your GGUF mo
    cd arkai
    ```
 
-2. Create and activate a Python 3.9 virtual environment:
+2. Create and activate a Python virtual environment:
 
    ```bash
-   python3.9 -m venv venv
+   python3 -m venv venv
    source venv/bin/activate
    ```
 
