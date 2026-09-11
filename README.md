@@ -232,7 +232,6 @@ arkai agent start [-a AGENT] [-m MODEL] [options]
 | `-M/--keep-mcp` | Leave wtmcp running after exit |
 | `-v/--volume PATH` | Mount extra volume in sandbox (repeatable) |
 | `-e/--env KEY=VALUE` | Set env var in sandbox (repeatable) |
-| `--no-cwd` | Do not mount current directory in sandbox |
 | `--cwd PATH` | Override directory mounted as cwd in sandbox |
 
 > Note: using model name as `hf:org/model` with use a HuggingFace model.
@@ -300,8 +299,8 @@ what the agent can access:
   all other network access is denied
 - **Network (macOS):** `baseline` seccomp profile is applied
 
-The current working directory is mounted read-write by default (override with
-`--cwd` or disable with `--no-cwd`).
+The current working directory is mounted read-write by default (override path with
+`--cwd`).
 
 ### Profiles
 
@@ -367,7 +366,6 @@ These flags on `arkai agent start` override the active profile for that run only
 | `-v/--volume PATH` | Add an extra volume mount |
 | `-e/--env KEY=VALUE` | Add an env var inside the sandbox |
 | `--cwd PATH` | Override cwd mounted in sandbox |
-| `--no-cwd` | Do not mount cwd at all |
 
 ## Configuration Reference
 

@@ -33,7 +33,6 @@ def exec_cmd(args: dict | None = None) -> None:
                 args.no_inference,  # ty: ignore[unresolved-attribute]
                 args.no_mcp,  # ty: ignore[unresolved-attribute]
                 args.no_sandbox,  # ty: ignore[unresolved-attribute]
-                args.no_cwd,  # ty: ignore[unresolved-attribute]
                 args.cwd,  # ty: ignore[unresolved-attribute]
                 args.sandbox,  # ty: ignore[unresolved-attribute]
                 args.volumes,  # ty: ignore[unresolved-attribute]
@@ -48,7 +47,6 @@ def exec_cmd(args: dict | None = None) -> None:
                 args.no_inference,  # ty: ignore[unresolved-attribute]
                 args.no_mcp,  # ty: ignore[unresolved-attribute]
                 args.no_sandbox,  # ty: ignore[unresolved-attribute]
-                args.no_cwd,  # ty: ignore[unresolved-attribute]
                 args.cwd,  # ty: ignore[unresolved-attribute]
                 args.sandbox,  # ty: ignore[unresolved-attribute]
                 args.volumes,  # ty: ignore[unresolved-attribute]
@@ -96,12 +94,10 @@ def _add_agent_common_args(parser: argparse.ArgumentParser) -> None:
         metavar="KEY=VALUE",
         help="Set an environment variable in the sandbox (KEY=VALUE). Can be used multiple times",
     )
-    cwd_group = parser.add_mutually_exclusive_group()
-    cwd_group.add_argument(
-        "--no-cwd", action="store_true", help="Do not mount the current directory in the sandbox"
-    )
-    cwd_group.add_argument(
-        "--cwd", metavar="PATH", help="Override the directory mounted as cwd in the sandbox"
+    parser.add_argument(
+        "--cwd",
+        metavar="PATH",
+        help="Override the directory mounted as cwd in the sandbox (defaults to os.getcwd())",
     )
 
 
@@ -152,7 +148,6 @@ def _agent_context(
     no_start_inference: bool = False,
     no_mcp: bool = False,
     no_sandbox: bool = False,
-    no_cwd: bool = False,
     sandbox_cwd: str | None = None,
     sandbox_profile: str | None = None,
     sandbox_volume: list | None = None,
@@ -171,7 +166,6 @@ def _agent_context(
         no_start_inference: Do not start inference engine
         no_mcp: Skip wtmcp initialization regardless of config
         no_sandbox: Skip arapuca sandbox regardless of config
-        no_cwd: Do not mount the current directory in the sandbox
         sandbox_cwd: Override the directory mounted and set as cwd in the sandbox
         sandbox_profile: Use specific sandbox profile for this run
         sandbox_volume: List of volumes to mount in the sandbox
@@ -232,9 +226,7 @@ def _agent_context(
                 f"arapuca not found: {e}. Install arapuca or use --no-sandbox"
             ) from e
 
-    if no_cwd:
-        workdir: str | None = None
-    elif sandbox_cwd:
+    if sandbox_cwd:
         workdir = os.path.abspath(sandbox_cwd)
     else:
         workdir = os.getcwd()
@@ -422,8 +414,8 @@ def _build_sandbox_cmd(
 
     Args:
         cfg: Loaded configuration
-        workdir: Directory to mount read-write and use as --cwd, or None to skip both.
-            Defaults to the current directory at the call site; pass None only for --no-cwd.
+        workdir: Directory to mount read-write and use as --cwd.
+            Defaults to the current directory at the call site.
         config_dir: Directory containing agent config files; mounted separately when not
             already covered by workdir. Pass None when the agent has no config file.
         wtmcp_port: wtmcp port to allow on Linux, or None if MCP is disabled
@@ -464,6 +456,8 @@ def _build_sandbox_cmd(
 
     if workdir:
         cmd += ["-v", f"{workdir}:rw"]
+    else:
+        cmd += ["-v", f"{os.getcwd()}:ro"]
 
     # Mount config_dir separately when it is not already covered by the workdir mount
     if config_dir:
@@ -918,7 +912,6 @@ def cmd_agent(
     no_start_inference: bool = False,
     no_mcp: bool = False,
     no_sandbox: bool = False,
-    no_cwd: bool = False,
     sandbox_cwd: str | None = None,
     sandbox_profile: str | None = None,
     sandbox_volume: list | None = None,
@@ -934,7 +927,6 @@ def cmd_agent(
         no_start_inference: Do not start inference engine
         no_mcp: Skip wtmcp initialization regardless of config
         no_sandbox: Skip arapuca sandbox regardless of config
-        no_cwd: Do not mount the current directory in the sandbox
         sandbox_cwd: Override the directory mounted and set as cwd in the sandbox
         sandbox_profile: Use specific sandbox profile for this run
         sandbox_volume: List of volumes to mount in the sandbox
@@ -954,7 +946,6 @@ def cmd_agent(
         no_start_inference=no_start_inference,
         no_mcp=no_mcp,
         no_sandbox=no_sandbox,
-        no_cwd=no_cwd,
         sandbox_cwd=sandbox_cwd,
         sandbox_profile=sandbox_profile,
         sandbox_volume=sandbox_volume,
@@ -970,7 +961,6 @@ def cmd_agent_prompt(
     no_start_inference: bool = False,
     no_mcp: bool = False,
     no_sandbox: bool = False,
-    no_cwd: bool = False,
     sandbox_cwd: str | None = None,
     sandbox_profile: str | None = None,
     sandbox_volume: list | None = None,
@@ -992,7 +982,6 @@ def cmd_agent_prompt(
         no_start_inference: Do not start inference engine
         no_mcp: Skip wtmcp initialization regardless of config
         no_sandbox: Skip arapuca sandbox regardless of config
-        no_cwd: Do not mount the current directory in the sandbox
         sandbox_cwd: Override the directory mounted and set as cwd in the sandbox
         sandbox_profile: Use specific sandbox profile for this run
         sandbox_volume: List of volumes to mount in the sandbox
@@ -1028,7 +1017,6 @@ def cmd_agent_prompt(
         no_start_inference=no_start_inference,
         no_mcp=no_mcp,
         no_sandbox=no_sandbox,
-        no_cwd=no_cwd,
         sandbox_cwd=sandbox_cwd,
         sandbox_profile=sandbox_profile,
         sandbox_volume=sandbox_volume,
