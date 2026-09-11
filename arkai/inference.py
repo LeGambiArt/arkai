@@ -42,21 +42,27 @@ def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
     inference_subparsers.add_parser("status", help="Show inference server status")
 
 
-def get_inference_pid_path() -> str:
-    """Return path to inference server PID file."""
+def get_inference_pid_path(port: int | None = None) -> str:
+    """Return path to an inference server PID file.
+
+    The default instance retains the historical path. Explicit ports use separate
+    files so multiple inference servers can run concurrently.
+    """
     pid_dir = utils.get_pid_dir()
-    return os.path.join(pid_dir, "inference.pid")
+    filename = "inference.pid" if port is None else f"inference-{port}.pid"
+    return os.path.join(pid_dir, filename)
 
 
-def get_inference_state_path() -> str:
-    """Return path to inference server state file (stores startup config)."""
+def get_inference_state_path(port: int | None = None) -> str:
+    """Return path to an inference server state file."""
     pid_dir = utils.get_pid_dir()
-    return os.path.join(pid_dir, "inference.state")
+    filename = "inference.state" if port is None else f"inference-{port}.state"
+    return os.path.join(pid_dir, filename)
 
 
-def is_inference_running() -> bool:
-    """Check if inference server is running."""
-    pid_path = get_inference_pid_path()
+def is_inference_running(port: int | None = None) -> bool:
+    """Check if the inference server for ``port`` is running."""
+    pid_path = get_inference_pid_path(port)
     pid = utils.read_pid(pid_path)
     if pid is None:
         return False
@@ -106,8 +112,8 @@ def cmd_inference_start(
     if not config.validate_config(cfg, require_model=True):
         raise RuntimeError("Invalid configuration")
 
-    # Check if already running
-    if is_inference_running():
+    # Check only the requested instance, allowing explicit ports to coexist.
+    if is_inference_running(port):
         utils.info("Inference server already running")
         return
 
@@ -169,7 +175,7 @@ def cmd_inference_start(
         )
 
         # Write PID and state
-        pid_path = get_inference_pid_path()
+        pid_path = get_inference_pid_path(port)
         utils.write_pid(pid_path, proc.pid)
     finally:
         # Always restore SIGINT
@@ -182,7 +188,7 @@ def cmd_inference_start(
         "context_size": context_size_val,
         "port": port,
     }
-    utils.save_yaml(get_inference_state_path(), state)
+    utils.save_yaml(get_inference_state_path(port), state)
 
     # Wait for server to be ready
     utils.info("Waiting for inference server...")
@@ -204,15 +210,15 @@ def cmd_inference_start(
         pass
     if os.path.exists(pid_path):
         os.remove(pid_path)
-    state_path = get_inference_state_path()
+    state_path = get_inference_state_path(port)
     if os.path.exists(state_path):
         os.remove(state_path)
     raise RuntimeError("Inference server failed to start")
 
 
-def cmd_inference_stop() -> None:
-    """Stop inference server."""
-    pid_path = get_inference_pid_path()
+def cmd_inference_stop(port: int | None = None) -> None:
+    """Stop the inference server for ``port``."""
+    pid_path = get_inference_pid_path(port)
     pid = utils.read_pid(pid_path)
 
     if pid is None:
@@ -230,7 +236,7 @@ def cmd_inference_stop() -> None:
     if os.path.exists(pid_path):
         os.remove(pid_path)
 
-    state_path = get_inference_state_path()
+    state_path = get_inference_state_path(port)
     if os.path.exists(state_path):
         os.remove(state_path)
 

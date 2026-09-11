@@ -38,6 +38,7 @@ def exec_cmd(args: dict | None = None) -> None:
                 args.sandbox,  # ty: ignore[unresolved-attribute]
                 args.volumes,  # ty: ignore[unresolved-attribute]
                 agent_env,
+                args.port,  # ty: ignore[unresolved-attribute]
             )
         case "prompt":
             cmd_agent_prompt(
@@ -53,6 +54,7 @@ def exec_cmd(args: dict | None = None) -> None:
                 args.volumes,  # ty: ignore[unresolved-attribute]
                 agent_env,
                 args.output,  # ty: ignore[unresolved-attribute]
+                args.port,  # ty: ignore[unresolved-attribute]
             )
 
 
@@ -64,6 +66,7 @@ def _add_agent_common_args(parser: argparse.ArgumentParser) -> None:
     """
     parser.add_argument("-a", "--agent", help="Override agent")
     parser.add_argument("-m", "--model", help="Override model")
+    parser.add_argument("--port", type=int, help="Use a separate inference server port")
     parser.add_argument(
         "-I",
         "--no-inference",
@@ -145,6 +148,7 @@ class AgentContext:
 def _agent_context(
     agent_name: str | None = None,
     model: str | None = None,
+    port: int | None = None,
     no_start_inference: bool = False,
     no_mcp: bool = False,
     no_sandbox: bool = False,
@@ -162,6 +166,8 @@ def _agent_context(
     Args:
         agent_name: Override agent from config
         model: Override model from config
+        port: Override inference server port from config. An explicit port allows a
+            separate inference server to run alongside an existing one.
         no_start_inference: Do not start inference engine
         no_mcp: Skip wtmcp initialization regardless of config
         no_sandbox: Skip arapuca sandbox regardless of config
@@ -187,8 +193,15 @@ def _agent_context(
             cfg["inference"].pop("model", None)
         else:
             cfg["inference"]["model"] = model
+    if port is not None:
+        cfg["inference"]["port"] = port
 
-    require_model = not inference.is_inference_running()
+    inference_running = (
+        inference.is_inference_running(port)
+        if port is not None
+        else inference.is_inference_running()
+    )
+    require_model = not inference_running
     config.validate_config(cfg, require_model=require_model)
 
     resolved_agent_name = config.get_config_value(cfg, "agent.name", "opencode")
@@ -230,11 +243,14 @@ def _agent_context(
     wtmcp_port, wtmcp_started = (None, False)
     engine_started: bool = False
     try:
-        if not inference.is_inference_running():
+        if not inference_running:
             if no_start_inference:
                 raise RuntimeError("Inference engine is not running.")
             else:
-                inference.cmd_inference_start(model=model)  # may raise RuntimeError
+                if port is None:
+                    inference.cmd_inference_start(model=model)  # may raise RuntimeError
+                else:
+                    inference.cmd_inference_start(model=model, port=port)  # may raise RuntimeError
                 engine_started = True
 
         if use_mcp:
@@ -267,9 +283,12 @@ def _agent_context(
             except Exception as ex:
                 errors.append(ex)
 
-        if engine_started and inference.is_inference_running():
+        if engine_started and inference.is_inference_running(port):
             try:
-                inference.cmd_inference_stop()
+                if port is None:
+                    inference.cmd_inference_stop()
+                else:
+                    inference.cmd_inference_stop(port)
             except Exception as ex:
                 errors.append(ex)
         if errors:
@@ -904,12 +923,14 @@ def cmd_agent(
     sandbox_profile: str | None = None,
     sandbox_volume: list | None = None,
     sandbox_environment: dict | None = None,
+    port: int | None = None,
 ) -> None:
     """Start interactive agent session (requires TTY).
 
     Args:
         agent_name: Override agent from config
         model: Override model from config
+        port: Use a separate inference server on this port
         no_start_inference: Do not start inference engine
         no_mcp: Skip wtmcp initialization regardless of config
         no_sandbox: Skip arapuca sandbox regardless of config
@@ -929,6 +950,7 @@ def cmd_agent(
     with _agent_context(
         agent_name=agent_name,
         model=model,
+        port=port,
         no_start_inference=no_start_inference,
         no_mcp=no_mcp,
         no_sandbox=no_sandbox,
@@ -954,6 +976,7 @@ def cmd_agent_prompt(
     sandbox_volume: list | None = None,
     sandbox_environment: dict | None = None,
     output_file: str | None = None,
+    port: int | None = None,
 ) -> None:
     """Run agent non-interactively with a prompt.
 
@@ -965,6 +988,7 @@ def cmd_agent_prompt(
         prompt_args: Prompt text from CLI positional arguments
         agent_name: Override agent from config
         model: Override model from config
+        port: Use a separate inference server on this port
         no_start_inference: Do not start inference engine
         no_mcp: Skip wtmcp initialization regardless of config
         no_sandbox: Skip arapuca sandbox regardless of config
@@ -1000,6 +1024,7 @@ def cmd_agent_prompt(
     with _agent_context(
         agent_name=agent_name,
         model=model,
+        port=port,
         no_start_inference=no_start_inference,
         no_mcp=no_mcp,
         no_sandbox=no_sandbox,
