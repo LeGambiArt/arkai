@@ -18,6 +18,7 @@ DEFAULTS = {
         "port": 8081,
         "gpu_layers": -1,
         "context_size": 65536,
+        "startup_timeout": 600,
     },
     "wtmcp": {
         "port": 8080,
@@ -208,6 +209,11 @@ def validate_config(config: dict, require_model: bool = True) -> bool:
         # Replace string value with parsed int for consistency
         if isinstance(context_size, str):
             config.setdefault("inference", {})["context_size"] = parsed
+
+    startup_timeout = get_config_value(config, "inference.startup_timeout", 600)
+    if not isinstance(startup_timeout, int) or startup_timeout <= 0:
+        utils.error(f"inference.startup_timeout must be a positive integer, got {startup_timeout}")
+        valid = False
 
     # Validate sandbox volumes at root level
     root_volumes = get_config_value(config, "sandbox.volume", [])

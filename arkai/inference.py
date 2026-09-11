@@ -190,8 +190,14 @@ def cmd_inference_start(
 
     # Wait for server to be ready
     utils.info("Waiting for inference server...")
-    max_retries = 30
-    for i in range(max_retries):
+    startup_timeout = config.get_config_value(cfg, "inference.startup_timeout", 600)
+    startup_error = "Inference server failed to start"
+    for _ in range(startup_timeout):
+        if proc.poll() is not None:
+            startup_error = (
+                f"Inference server exited before becoming ready (code {proc.returncode})"
+            )
+            break
         try:
             code, _, _ = utils.run_command(["curl", "-sf", f"http://127.0.0.1:{port}/v1/models"])
             if code == 0:
@@ -211,7 +217,7 @@ def cmd_inference_start(
     state_path = get_inference_state_path(port)
     if os.path.exists(state_path):
         os.remove(state_path)
-    raise RuntimeError("Inference server failed to start")
+    raise RuntimeError(startup_error)
 
 
 def cmd_inference_stop(port: int | None = None) -> None:

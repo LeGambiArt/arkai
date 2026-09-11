@@ -400,6 +400,7 @@ arkai config validate --file PATH  # validate a specific file
 | `inference.port` | int | `8081` | Port for inference server (1024–65535) |
 | `inference.gpu_layers` | int | `-1` | GPU layers to offload (`-1` = all) |
 | `inference.context_size` | int | `65536` | Context window size in tokens |
+| `inference.startup_timeout` | int | `600` | Maximum seconds to wait for the server to become ready |
 
 ### `wtmcp`
 

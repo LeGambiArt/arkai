@@ -274,6 +274,14 @@ class TestValidateEnvironment:
         cfg = self._cfg_with_sandbox({"profiles": {"gpu": {"environment": "FOO=bar"}}})
         assert config.validate_config(cfg) is False
 
+    def test_invalid_inference_startup_timeout(self) -> None:
+        """Inference startup timeout must be positive."""
+        cfg = {
+            "agent": {"name": "opencode"},
+            "inference": {"model": "test.gguf", "startup_timeout": 0},
+        }
+        assert config.validate_config(cfg) is False
+
 
 class TestParseContextSize:
     def test_plain_failing_integer(self):
