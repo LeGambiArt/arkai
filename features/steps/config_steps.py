@@ -26,7 +26,7 @@ def step_valid_config_at_path(context, filepath):
 @given("an invalid .arkai.yaml file (missing required fields)")  # ty: ignore[call-non-callable]
 def step_invalid_config(context):
     context.config_file = ".arkai.yaml"
-    # Missing required inference.model (and inference.hf)
+    # Missing required inference.model
     context.config_data = {"agent": {"name": "opencode"}}
 
 

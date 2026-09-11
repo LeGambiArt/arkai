@@ -129,7 +129,7 @@ def validate_config(config: dict, require_model: bool = True) -> bool:
 
     Args:
         config: Configuration dictionary to validate
-        require_model: If True, require inference.model or inference.hf.
+        require_model: If True, require inference.model.
             If False, allow missing model when inference service is available.
 
     Returns:
@@ -147,14 +147,10 @@ def validate_config(config: dict, require_model: bool = True) -> bool:
 
     # Check inference config
     model = get_config_value(config, "inference.model")
-    hf = get_config_value(config, "inference.hf")
 
-    if model and hf:
-        utils.error("inference.model and inference.hf are mutually exclusive")
-        valid = False
-    elif not model and not hf:
+    if not model:
         if require_model:
-            utils.error("inference.model or inference.hf is required to start inference server")
+            utils.error("inference.model is required to start inference server")
             valid = False
         else:
             utils.warn("No model configured; will use available inference service")

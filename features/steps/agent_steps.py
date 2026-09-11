@@ -11,7 +11,7 @@ from arkai import agent, inference, utils, wtmcp
 
 @given("a .arkai.yaml file with no model configured")  # ty: ignore[call-non-callable]
 def step_config_no_model(context):
-    """Create a config file that omits inference.model and inference.hf."""
+    """Create a config file that omits inference.model."""
     config_data = {
         "agent": {"name": "opencode"},
         "inference": {},

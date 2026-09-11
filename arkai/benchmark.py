@@ -169,8 +169,6 @@ def exec_cmd(args: argparse.Namespace) -> None:
     model = args.model
     if not model:
         model = config_module.get_config_value(cfg, "inference.model")
-        if not model:
-            model = config_module.get_config_value(cfg, "inference.hf")
 
     if not model:
         raise RuntimeError("Model not specified")

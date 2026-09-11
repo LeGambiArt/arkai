@@ -29,7 +29,7 @@ Feature: Agent Execution
     Then the exit code is 0
     And the agent was not sandboxed
 
-  Scenario: Agent accepts -m/--model flag without inference.model or inference.hf in config
+  Scenario: Agent accepts -m/--model flag without inference.model in config
     Given a .arkai.yaml file with no model configured
     When I run "arkai agent start" with "-m test-model.gguf" in a TTY
     Then the exit code is 0

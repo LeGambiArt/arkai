@@ -97,11 +97,7 @@ def cmd_inference_start(
 
     # Apply CLI overrides before validation so they can satisfy required fields
     if model:
-        if model.startswith("hf:"):
-            cfg["inference"]["hf"] = model[3:]
-            cfg["inference"].pop("model", None)
-        else:
-            cfg["inference"]["model"] = model
+        cfg["inference"]["model"] = model
     if gpu_layers is not None:
         cfg["inference"]["gpu_layers"] = gpu_layers
     if context_size is not None:
@@ -127,13 +123,15 @@ def cmd_inference_start(
         raise RuntimeError(f"Port {port} already in use")
 
     # Resolve model path
-    model_file = config.get_config_value(cfg, "inference.model")
-    hf_model = config.get_config_value(cfg, "inference.hf")
+    model = config.get_config_value(cfg, "inference.model")
 
     model_path: str | None = None
-    if model_file:
+    hf_model: str | None = None
+    if model.startswith("hf:"):
+        hf_model = model[3:]
+    elif model:
         data_home = utils.get_data_home()
-        model_path = os.path.join(data_home, "models", model_file)  # ty: ignore[no-matching-overload]
+        model_path = os.path.join(data_home, "models", model)  # ty: ignore[no-matching-overload]
         if not os.path.exists(model_path):
             raise RuntimeError(f"Model not found: {model_path}")
 
@@ -183,7 +181,7 @@ def cmd_inference_start(
 
     # Save engine state (config used at startup)
     state = {
-        "model": model_file or hf_model,
+        "model": model,
         "gpu_layers": gpu_layers_val,
         "context_size": context_size_val,
         "port": port,

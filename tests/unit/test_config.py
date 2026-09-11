@@ -56,18 +56,24 @@ class TestConfigValidation:
         }
         assert config.validate_config(cfg) is False
 
-    def test_validate_both_model_and_hf(self):
+    def test_validate_legacy_hf_option_without_model(self):
         cfg = {
             "agent": {"name": "opencode"},
             "inference": {
                 "port": 8081,
-                "model": "test.gguf",
                 "hf": "repo/model",
             },
         }
         assert config.validate_config(cfg) is False
 
-    def test_validate_neither_model_nor_hf(self):
+    def test_validate_huggingface_model_prefix(self):
+        cfg = {
+            "agent": {"name": "opencode"},
+            "inference": {"port": 8081, "model": "hf:repo/model"},
+        }
+        assert config.validate_config(cfg) is True
+
+    def test_validate_without_model(self):
         cfg = {
             "agent": {"name": "opencode"},
             "inference": {"port": 8081},
@@ -88,7 +94,7 @@ class TestConfigValidation:
         # Should return True
         assert config.validate_config(cfg) is True
 
-    def test_validate_no_model_with_require_model_false(self):
+    def test_validate_without_model_with_require_model_false(self):
         cfg = {
             "agent": {"name": "opencode"},
             "inference": {"port": 8081},
@@ -96,7 +102,7 @@ class TestConfigValidation:
         # Should pass when require_model=False (for using existing inference service)
         assert config.validate_config(cfg, require_model=False) is True
 
-    def test_validate_no_model_with_require_model_true(self):
+    def test_validate_without_model_with_require_model_true(self):
         cfg = {
             "agent": {"name": "opencode"},
             "inference": {"port": 8081},

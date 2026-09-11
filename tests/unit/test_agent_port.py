@@ -34,6 +34,11 @@ def test_inference_paths_are_unique_for_explicit_ports() -> None:
     assert inference.get_inference_state_path() != inference.get_inference_state_path(9090)
 
 
+def test_agent_model_name_uses_huggingface_model_prefix() -> None:
+    """The model name is derived from the repository in model: hf:<repo>."""
+    assert agent._get_model_name({"inference": {"model": "hf:org/model-GGUF"}}) == "model"
+
+
 def test_agent_cli_registers_port_for_start_and_prompt() -> None:
     """Both agent subcommands accept the inference port option."""
     import argparse

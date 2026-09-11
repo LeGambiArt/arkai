@@ -182,11 +182,7 @@ def _agent_context(
     if agent_name:
         cfg["agent"]["name"] = agent_name
     if model:
-        if model.startswith("hf:"):
-            cfg["inference"]["hf"] = model[3:]
-            cfg["inference"].pop("model", None)
-        else:
-            cfg["inference"]["model"] = model
+        cfg["inference"]["model"] = model
     if port is not None:
         cfg["inference"]["port"] = port
 
@@ -374,10 +370,9 @@ def _get_model_name(cfg: dict) -> str:
     but an inference service is running.
     """
     model_file = config.get_config_value(cfg, "inference.model")
-    hf_model = config.get_config_value(cfg, "inference.hf")
 
-    if hf_model:
-        return hf_model.split("/")[-1].replace("-GGUF", "").replace("-gguf", "")
+    if model_file and model_file.startswith("hf:"):
+        return model_file[3:].split("/")[-1].replace("-GGUF", "").replace("-gguf", "")
     elif model_file:
         return os.path.basename(model_file).split(".")[0].split("-Q")[0]
     return "local-model"

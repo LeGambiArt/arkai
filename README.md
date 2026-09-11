@@ -182,7 +182,7 @@ config values for that run only.
 | `--context N` | Override context window size in tokens |
 | `--port N` | Override port from config |
 
-> Note: using model name as `hf:org/model` with use a HuggingFace model.
+> Note: use `hf:org/model` as the model value to load a HuggingFace model.
 
 **GPU detection:** arkai auto-detects Metal (Apple Silicon), CUDA (NVIDIA),
 ROCm (AMD), or falls back to CPU. Setting `gpu_layers: -1` in config offloads
@@ -234,7 +234,7 @@ arkai agent start [-a AGENT] [-m MODEL] [options]
 | `-e/--env KEY=VALUE` | Set env var in sandbox (repeatable) |
 | `--cwd PATH` | Override directory mounted as cwd in sandbox |
 
-> Note: using model name as `hf:org/model` with use a HuggingFace model.
+> Note: use `hf:org/model` as the model value to load a HuggingFace model.
 
 ### Lifecycle
 
@@ -394,8 +394,7 @@ arkai config validate --file PATH  # validate a specific file
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `inference.model` | string | — | GGUF filename in models dir (mutually exclusive with `hf`) |
-| `inference.hf` | string | — | HuggingFace repo ID to load directly (mutually exclusive with `model`) |
+| `inference.model` | string | — | Local model filename, or `hf:<repo>` for a HuggingFace model |
 | `inference.backend` | string | `llama-cpp` | Inference backend (only `llama-cpp` supported) |
 | `inference.path` | string | `llama-server` | Path to inference backend binary |
 | `inference.port` | int | `8081` | Port for inference server (1024–65535) |
