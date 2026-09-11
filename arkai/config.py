@@ -68,7 +68,6 @@ def parse_context_size(value: int | str) -> int | None:
     if isinstance(value, str):
         try:
             value = value.strip().lower()
-            print("value", value, file=sys.stderr)
             if value.endswith("k"):
                 value = int(value[:-1]) * 1024
             elif value.endswith("m"):
