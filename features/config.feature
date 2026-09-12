@@ -11,6 +11,18 @@ Feature: Configuration Management
     Then the exit code is 0
     And the output contains "Configuration valid"
 
+  Scenario: Validate configuration with explicit inference backend
+    Given a valid .arkai.yaml file with inference backend "llama-cpp"
+    When I run "arkai config validate"
+    Then the exit code is 0
+    And the output contains "Configuration valid"
+
+  Scenario: Reject unsupported inference backend
+    Given a valid .arkai.yaml file with inference backend "unsupported"
+    When I run "arkai config validate"
+    Then the exit code is 2
+    And the error contains "inference.backend must be one of"
+
   Scenario: Validate configuration with missing model shows warning
     Given an invalid .arkai.yaml file (missing required fields)
     When I run "arkai config validate"

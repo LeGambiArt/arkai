@@ -191,8 +191,8 @@ arkai model remove granite-4.1-8b-instruct-Q6_K.gguf
 
 ## Running an Inference Server
 
-`arkai inference` manages the llama-server process. The server runs in the
-background and stays running between agent sessions.
+`arkai inference` manages the configured OpenAI-compatible inference server.
+The server runs in the background and stays running between agent sessions.
 
 ### Start
 
@@ -423,12 +423,18 @@ arkai config validate --file PATH  # validate a specific file
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `inference.model` | string | — | Local model filename, or `hf:<repo>` for a HuggingFace model |
-| `inference.backend` | string | `llama-cpp` | Inference backend (only `llama-cpp` supported) |
+| `inference.backend` | string | `llama-cpp` | Registered OpenAI-compatible inference backend |
 | `inference.path` | string | `llama-server` | Path to inference backend binary |
 | `inference.port` | int | `8081` | Port for inference server (1024–65535) |
 | `inference.gpu_layers` | int | `-1` | GPU layers to offload (`-1` = all) |
 | `inference.context_size` | int | `65536` | Context window size in tokens |
 | `inference.startup_timeout` | int | `600` | Maximum seconds to wait for the server to become ready |
+
+Inference backends are registered command builders. The manager supplies the
+common model, port, GPU-layer, and context settings, then handles the process
+lifecycle and OpenAI-compatible REST API. Add a backend by implementing
+`InferenceBackend.build_command()` and registering it with
+`register_backend()`.
 
 ### `wtmcp`
 

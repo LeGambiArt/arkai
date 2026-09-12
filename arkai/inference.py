@@ -8,7 +8,8 @@ import time
 
 import requests
 
-from arkai import config, providers, utils
+from arkai import config, utils
+from arkai.inference_backend import get_backend
 
 
 def exec_cmd(args: dict | None = None) -> None:
@@ -164,47 +165,21 @@ def cmd_inference_start(
     if utils.is_port_in_use(port):
         raise RuntimeError(f"Port {port} already in use")
 
-    # Resolve model path
+    # Build the backend-specific server command. The manager owns lifecycle and
+    # readiness handling; the backend only translates common settings to CLI flags.
     model = config.get_config_value(cfg, "inference.model")
-
-    model_path: str | None = None
-    hf_model: str | None = None
-    if model.startswith("hf:"):
-        reference = providers.ModelReference.parse(model)
-        hf_model = reference.identifier
-    elif model.startswith("ollama:"):
-        model_path = str(providers.resolve_model(model))
-    elif model:
-        data_home = utils.get_data_home()
-        model_path = os.path.join(data_home, "models", model)  # ty: ignore[no-matching-overload]
-        if not os.path.exists(model_path):
-            raise RuntimeError(f"Model not found: {model_path}")
-
-    # Start llama-server
     utils.info(f"Starting inference server on port {port}...")
-
-    # Resolve llama-server binary path
-    llama_bin = config.get_config_value(cfg, "inference.path", "llama-server")
-    llama_server_path = utils.resolve_binary(llama_bin)
-
-    cmd = [llama_server_path, "--port", str(port), "--host", "127.0.0.1"]
-
-    if model_path:
-        cmd.extend(["--model", model_path])
-    elif hf_model:
-        cmd.extend(["-hf", hf_model])
+    backend = get_backend(config.get_config_value(cfg, "inference.backend", "llama-cpp"))
+    cmd = backend.build_command(
+        config.get_config_value(cfg, "inference.path", "llama-server"),
+        model,
+        port,
+        config.get_config_value(cfg, "inference.gpu_layers", -1),
+        config.get_config_value(cfg, "inference.context_size", 65536),
+    )
 
     gpu_layers_val = config.get_config_value(cfg, "inference.gpu_layers", -1)
     context_size_val = config.get_config_value(cfg, "inference.context_size", 65536)
-
-    cmd.extend(
-        [
-            "--n-gpu-layers",
-            str(gpu_layers_val),
-            "--ctx-size",
-            str(context_size_val),
-        ]
-    )
 
     # Disable SIGINT to ensure process and PID file are both created
     signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -226,6 +201,7 @@ def cmd_inference_start(
 
     # Save engine state (config used at startup)
     state = {
+        "backend": backend.name,
         "model": model,
         "gpu_layers": gpu_layers_val,
         "context_size": context_size_val,
@@ -310,6 +286,7 @@ def cmd_inference_status() -> None:
                 utils.info("Health: unresponsive")
 
             # Show startup config
+            utils.info(f"Backend: {state.get('backend', 'unknown')}")
             utils.info(f"Model: {state.get('model')}")
             utils.info(f"GPU layers: {state.get('gpu_layers')}")
             utils.info(f"Context: {state.get('context_size')}")

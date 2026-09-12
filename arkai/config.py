@@ -147,6 +147,16 @@ def validate_config(config: dict, require_model: bool = True) -> bool:
         valid = False
 
     # Check inference config
+    inference_backend = get_config_value(config, "inference.backend", "llama-cpp")
+    from arkai.inference_backend import get_backend_names
+
+    supported_backends = get_backend_names()
+    if inference_backend not in supported_backends:
+        utils.error(
+            f"inference.backend must be one of {supported_backends}, got {inference_backend}"
+        )
+        valid = False
+
     model = get_config_value(config, "inference.model")
 
     if not model:
