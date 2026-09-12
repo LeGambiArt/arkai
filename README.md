@@ -50,7 +50,7 @@ When you run `arkai agent start`, it starts `llama-server` (loading your GGUF mo
 - `llama.cpp` (`llama-server` and `llama-quantize`)
 - `wtmcp` — for MCP tool integration with agents *(optional)*
 - `arapuca` — for sandboxed agent execution *(optional)*
-- Agent binary: `opencode`, `crush`, or `claude` — at least one required
+- Agent binary: `opencode`, `crush`, `claude`, or `pi` — at least one required
 
 
 ## Installation
@@ -97,6 +97,20 @@ Start agent:
 ```
 arkai agent start -m hf:ibm-granite/granite-4.1-8b-GGUF -a opencode
 ```
+
+Install pi.dev and its standard MCP, web-access, and subagent packages:
+
+```
+arkai agent install pi
+```
+
+Run `arkai agent install` without a name to list installable agents. The command
+warns that installation writes files to disk and requires confirmation.
+It installs `@earendil-works/pi-coding-agent`, `pi-mcp-adapter`, `pi-web-access`,
+and `pi-subagents`.
+
+Pi is installed only for arkai under `~/.local/state/arkai/pi/`; it is not added to
+your global npm installation or shell `PATH`. Node.js and npm must be installed.
 
 If you think you only live once (or don't have `wtmcp` or `arapuca` installed):
 

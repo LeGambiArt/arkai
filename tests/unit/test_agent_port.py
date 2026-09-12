@@ -60,3 +60,12 @@ def test_agent_cli_registers_port_for_start_and_prompt() -> None:
     assert prompt_args.port == 9091
     assert not hasattr(start_args, "theme")
     assert not hasattr(prompt_args, "theme")
+
+
+def test_pi_agent_dispatches_to_pi_launcher() -> None:
+    """Pi agent sessions are dispatched to the Pi launcher."""
+    ctx = agent.AgentContext(agent_name="pi", agent_path="/bin/pi")
+    with patch.object(agent, "_start_agent_pi", return_value=None) as launcher:
+        agent._dispatch_agent(ctx)
+
+    launcher.assert_called_once()

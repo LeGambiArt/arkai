@@ -15,16 +15,16 @@ from pathlib import Path
 
 from arkai import config, inference, utils
 
+PI_CORE_PACKAGE = "@earendil-works/pi-coding-agent"
+PI_PACKAGES = ("pi-mcp-adapter", "pi-web-access", "pi-subagents")
+INSTALLABLE_AGENTS = ("pi",)
+
 
 def exec_cmd(args: dict | None = None) -> None:
     """Select 'agent' command to execute."""
     agent_env = (
-        {
-            k: v
-            for e in args.environment  # ty: ignore[unresolved-attribute]
-            for k, _, v in [e.partition("=")]
-        }
-        if args.environment  # ty: ignore[unresolved-attribute]
+        {k: v for e in getattr(args, "environment", None) or [] for k, _, v in [e.partition("=")]}
+        if getattr(args, "environment", None)
         else None
     )
     match args.agent_cmd:  # ty: ignore[unresolved-attribute]
@@ -56,6 +56,8 @@ def exec_cmd(args: dict | None = None) -> None:
                 args.output,  # ty: ignore[unresolved-attribute]
                 args.port,  # ty: ignore[unresolved-attribute]
             )
+        case "install":
+            cmd_agent_install(args.agent_name)  # ty: ignore[unresolved-attribute]
 
 
 def _add_agent_common_args(parser: argparse.ArgumentParser) -> None:
@@ -122,6 +124,12 @@ def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
     )
     agent_prompt_parser.add_argument(
         "prompt_text", nargs="*", help="Prompt text (reads from stdin if not provided)"
+    )
+    agent_install_parser = agent_subparsers.add_parser("install", help="Install a supported agent")
+    agent_install_parser.add_argument(
+        "agent_name",
+        nargs="?",
+        help="Agent to install (omit to list supported agents)",
     )
 
 
@@ -198,9 +206,10 @@ def _agent_context(
 
     resolved_agent_name = config.get_config_value(cfg, "agent.name", "opencode")
 
-    if resolved_agent_name not in {"opencode", "crush", "claude"}:
+    if resolved_agent_name not in config.VALID_AGENTS:
         utils.error(
-            f"Unsupported agent: {resolved_agent_name} (supported: opencode, crush, claude)",
+            f"Unsupported agent: {resolved_agent_name} "
+            f"(supported: {', '.join(sorted(config.VALID_AGENTS))})",
             2,
         )
         sys.exit(2)
@@ -210,7 +219,11 @@ def _agent_context(
         config.get_config_value(cfg, "sandbox.disable", False)
     )
 
-    agent_bin = config.get_config_value(cfg, "agent.path", resolved_agent_name)
+    configured_agent_bin = config.get_config_value(cfg, "agent.path")
+    if resolved_agent_name == "pi" and configured_agent_bin is None:
+        agent_bin = str(_get_pi_core_dir() / "bin" / "pi")
+    else:
+        agent_bin = configured_agent_bin or resolved_agent_name
     agent_path: str = utils.resolve_binary(agent_bin)
 
     # Validate arapuca binary early, before starting any servers.
@@ -958,7 +971,217 @@ def _dispatch_agent(
             prompt,
             capture_stdout,
         )
+    elif ctx.agent_name == "pi":
+        return _start_agent_pi(
+            ctx.agent_path,
+            ctx.cfg,
+            ctx.wtmcp_port,
+            ctx.use_sandbox,
+            ctx.workdir,
+            ctx.sandbox_profile,
+            ctx.sandbox_volume,
+            ctx.sandbox_environment,
+            prompt,
+            capture_stdout,
+        )
     return None
+
+
+def _get_pi_install_dir() -> Path:
+    """Return the root directory for arkai-managed Pi files."""
+    return Path(os.path.expanduser("~/.local/state/arkai/pi"))
+
+
+def _get_pi_core_dir() -> Path:
+    """Return the directory containing Pi's locally installed executable."""
+    return _get_pi_install_dir() / "core"
+
+
+def _get_pi_agent_dir() -> Path:
+    """Return the directory containing Pi's arkai-managed runtime data."""
+    return _get_pi_install_dir() / "agent"
+
+
+def _get_pi_runtime_volumes(agent_path: str) -> list[str]:
+    """Return read-only volumes needed by the Pi Node launcher in a sandbox.
+
+    npm places locally scoped executables in ``<prefix>/bin`` and their packages in
+    ``<prefix>/lib/node_modules``. Node also needs to traverse the complete
+    prefix while resolving package metadata, so mount the prefix as one
+    read-only tree rather than mounting only its child directories.
+    """
+    # Do not resolve symlinks: npm's pi executable points into the package,
+    # but its global Node prefix is derived from the symlink's bin directory.
+    bin_dir = Path(os.path.abspath(agent_path)).parent
+    prefix = bin_dir.parent
+    return [f"{prefix}:ro"] if prefix.exists() else []
+
+
+def _prepare_pi_agent_dir(cfg: dict, wtmcp_port: int | None) -> str:
+    """Configure Pi's persistent arkai-managed agent directory.
+
+    arapuca gives each sandbox run a new home directory. Keeping Pi's config
+    under arkai's state directory lets it retain its helper binaries while
+    always selecting the current local inference model.
+    """
+    agent_dir = _get_pi_agent_dir()
+    agent_dir.mkdir(parents=True, exist_ok=True)
+    inference_port = config.get_config_value(cfg, "inference.port", 8081)
+    model_name = _get_model_name(cfg)
+    context_size = config.get_config_value(cfg, "inference.context_size", 65536)
+    models = {
+        "providers": {
+            "local-llm": {
+                "baseUrl": f"http://127.0.0.1:{inference_port}/v1",
+                "api": "openai-completions",
+                "apiKey": "local",
+                "compat": {
+                    "supportsDeveloperRole": False,
+                    "supportsReasoningEffort": False,
+                },
+                "models": [
+                    {
+                        "id": model_name,
+                        "name": model_name,
+                        "reasoning": False,
+                        "contextWindow": context_size,
+                        "maxTokens": min(8192, context_size),
+                    }
+                ],
+            }
+        }
+    }
+    Path(agent_dir, "models.json").write_text(json.dumps(models, indent=2))
+    if wtmcp_port is not None:
+        Path(agent_dir, "mcp.json").write_text(
+            json.dumps(
+                {"mcpServers": {"wtmcp": {"url": f"http://127.0.0.1:{wtmcp_port}/mcp"}}},
+                indent=2,
+            )
+        )
+    else:
+        Path(agent_dir, "mcp.json").unlink(missing_ok=True)
+    return str(agent_dir)
+
+
+def _start_agent_pi(
+    agent_path: str,
+    cfg: dict,
+    wtmcp_port: int | None,
+    use_sandbox: bool,
+    workdir: str | None,
+    sandbox_profile: str | None = None,
+    cli_volumes: list | None = None,
+    cli_environment: dict | None = None,
+    prompt: str | None = None,
+    capture_stdout: bool = False,
+) -> str | None:
+    """Start the pi.dev coding agent.
+
+    Pi extensions provide MCP support through the installed ``pi-mcp-adapter``
+    package. Pass its configuration explicitly only while wtmcp is available.
+    """
+    mcp_available = False
+    if wtmcp_port is not None:
+        from arkai import wtmcp
+
+        mcp_available = wtmcp.is_wtmcp_running(wtmcp_port)
+
+    agent_dir = _prepare_pi_agent_dir(cfg, wtmcp_port if mcp_available else None)
+    model_name = _get_model_name(cfg)
+    env = os.environ.copy()
+    env["PI_CODING_AGENT_DIR"] = agent_dir
+    if use_sandbox:
+        runtime_volumes = list(cli_volumes or [])
+        runtime_volumes.extend(_get_pi_runtime_volumes(agent_path))
+        sandbox_environment = dict(cli_environment or {})
+        sandbox_environment["PI_CODING_AGENT_DIR"] = agent_dir
+        cmd = _build_sandbox_cmd(
+            cfg,
+            workdir,
+            agent_dir,
+            None,
+            sandbox_profile,
+            runtime_volumes,
+            sandbox_environment,
+        ) + [agent_path]
+    else:
+        cmd = [agent_path]
+
+    cmd.extend(["--model", f"local-llm/{model_name}"])
+    if mcp_available:
+        cmd.extend(["--mcp-config", str(Path(agent_dir, "mcp.json"))])
+    if prompt is not None:
+        cmd.extend(["-p", prompt])
+
+    proc = subprocess.Popen(
+        cmd,
+        stdin=sys.stdin,
+        stdout=subprocess.PIPE if capture_stdout else None,
+        stderr=None,
+        env=env,
+    )
+    if capture_stdout:
+        stdout_data, _ = proc.communicate()
+        return stdout_data.decode("utf-8", errors="replace")
+    proc.wait()
+    return None
+
+
+def _run_install_command(command: list[str], env: dict[str, str] | None = None) -> None:
+    """Run an installation command and raise an actionable error on failure."""
+    code, _, stderr = utils.run_command(command, timeout=None, env=env)
+    if code != 0:
+        detail = stderr.strip() or f"exit code {code}"
+        raise RuntimeError(f"Installation command failed ({' '.join(command)}): {detail}")
+
+
+def cmd_agent_install(agent_name: str | None = None) -> None:
+    """Install a supported agent, or list agents with an available installer.
+
+    Args:
+        agent_name: Agent to install. If omitted, print the installable agents.
+
+    Raises:
+        ValueError: If the requested agent has no installer.
+    """
+    if agent_name is None:
+        utils.info("Agents supported for installation: " + ", ".join(INSTALLABLE_AGENTS))
+        return
+    if agent_name not in INSTALLABLE_AGENTS:
+        raise ValueError(
+            f"Agent '{agent_name}' is not supported for installation. "
+            f"Supported agents: {', '.join(INSTALLABLE_AGENTS)}"
+        )
+    if agent_name != "pi":  # pragma: no cover - guarded by INSTALLABLE_AGENTS
+        raise ValueError(f"No installer is defined for agent '{agent_name}'")
+
+    utils.warn("This will install:\n- pi.dev\n- pi-mcp-adapter\n- pi-web-access\n- pi-subagents")
+    try:
+        answer = input("Proceed with the installation? [y/N] ")
+    except EOFError:
+        answer = ""
+    if answer.strip().lower() not in {"y", "yes"}:
+        utils.info("Pi installation cancelled.")
+        return
+
+    npm_path = shutil.which("npm")
+    if npm_path is None:
+        raise RuntimeError("npm was not found. Install Node.js and npm, then retry.")
+    core_dir = _get_pi_core_dir()
+    agent_dir = _get_pi_agent_dir()
+    utils.info(f"Installing {PI_CORE_PACKAGE}...")
+    _run_install_command(
+        [npm_path, "install", "--prefix", str(core_dir), "-g", "--ignore-scripts", PI_CORE_PACKAGE]
+    )
+
+    pi_path = core_dir / "bin" / "pi"
+    install_env = os.environ.copy()
+    install_env["PI_CODING_AGENT_DIR"] = str(agent_dir)
+    for package in PI_PACKAGES:
+        utils.info(f"Installing {package}...")
+        _run_install_command([str(pi_path), "install", f"npm:{package}"], env=install_env)
+    utils.info(f"Pi installation complete: {core_dir}")
 
 
 def cmd_agent(

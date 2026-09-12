@@ -49,7 +49,7 @@ DEFAULTS = {
     },
 }
 
-VALID_AGENTS = {"opencode", "crush", "claude"}
+VALID_AGENTS = {"opencode", "crush", "claude", "pi"}
 
 
 def parse_context_size(value: int | str) -> int | None:

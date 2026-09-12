@@ -107,7 +107,12 @@ def is_port_in_use(port: int) -> bool:
     return code == 0
 
 
-def run_command(cmd: list, capture: bool = True, timeout: int | None = 30) -> tuple[int, str, str]:
+def run_command(
+    cmd: list,
+    capture: bool = True,
+    timeout: int | None = 30,
+    env: dict[str, str] | None = None,
+) -> tuple[int, str, str]:
     """Run subprocess command, return (exit_code, stdout, stderr).
 
     Raises RuntimeError on timeout or command not found.
@@ -116,6 +121,7 @@ def run_command(cmd: list, capture: bool = True, timeout: int | None = 30) -> tu
         cmd: Command to run as list of strings
         capture: Whether to capture output (default True)
         timeout: Timeout in seconds (default 30); None for no timeout
+        env: Optional environment variables for the command
     """
     try:
         result = subprocess.run(
@@ -123,6 +129,7 @@ def run_command(cmd: list, capture: bool = True, timeout: int | None = 30) -> tu
             capture_output=capture,
             text=True,
             timeout=timeout,
+            env=env,
         )
         return result.returncode, result.stdout, result.stderr
     except subprocess.TimeoutExpired as e:

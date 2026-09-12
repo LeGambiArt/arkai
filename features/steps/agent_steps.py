@@ -9,6 +9,23 @@ from behave import given, then, when
 from arkai import agent, inference, utils, wtmcp
 
 
+@when("I cancel the pi agent installation")  # ty: ignore[call-non-callable]
+def step_cancel_pi_installation(context):
+    """Decline the Pi installation warning."""
+    with (
+        patch("builtins.input", return_value="n"),
+        patch.object(agent.utils, "run_command") as run_command,
+    ):
+        agent.cmd_agent_install("pi")
+    context.pi_install_run = run_command.called
+
+
+@then("the pi agent installation was not run")  # ty: ignore[call-non-callable]
+def step_pi_installation_not_run(context):
+    """Assert that no Pi installation subprocess was started."""
+    assert not context.pi_install_run
+
+
 @given("a .arkai.yaml file with no model configured")  # ty: ignore[call-non-callable]
 def step_config_no_model(context):
     """Create a config file that omits inference.model."""

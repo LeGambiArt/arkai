@@ -33,3 +33,7 @@ Feature: Agent Execution
     Given a .arkai.yaml file with no model configured
     When I run "arkai agent start" with "-m test-model.gguf" in a TTY
     Then the exit code is 0
+
+  Scenario: Pi installation can be cancelled
+    When I cancel the pi agent installation
+    Then the pi agent installation was not run
