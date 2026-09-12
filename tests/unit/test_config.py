@@ -94,6 +94,17 @@ class TestConfigValidation:
         # Should return True
         assert config.validate_config(cfg) is True
 
+    def test_validate_unknown_inference_backend(self):
+        cfg = {
+            "agent": {"name": "opencode"},
+            "inference": {
+                "port": 8081,
+                "model": "test.gguf",
+                "backend": "missing",
+            },
+        }
+        assert config.validate_config(cfg) is False
+
     def test_validate_without_model_with_require_model_false(self):
         cfg = {
             "agent": {"name": "opencode"},

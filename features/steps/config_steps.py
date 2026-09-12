@@ -10,7 +10,7 @@ def step_valid_config(context):
     context.config_file = ".arkai.yaml"
     context.config_data = {
         "agent": {"name": "opencode"},
-        "inference": {"model": "test.gguf"},
+        "inference": {"backend": "llama-cpp", "model": "test.gguf"},
     }
 
 
@@ -19,7 +19,7 @@ def step_valid_config_at_path(context, filepath):
     context.config_file = filepath
     context.config_data = {
         "agent": {"name": "opencode"},
-        "inference": {"model": "test.gguf"},
+        "inference": {"backend": "llama-cpp", "model": "test.gguf"},
     }
 
 
@@ -43,9 +43,20 @@ def step_valid_config_with_context_size(context, value):
     context.config_data = {
         "agent": {"name": "opencode"},
         "inference": {
+            "backend": "llama-cpp",
             "model": "test.gguf",
             "context_size": value,
         },
+    }
+
+
+@given('a valid .arkai.yaml file with inference backend "{backend}"')  # ty: ignore[call-non-callable]
+def step_valid_config_with_backend(context, backend):
+    """Create a config with an explicit inference backend."""
+    context.config_file = ".arkai.yaml"
+    context.config_data = {
+        "agent": {"name": "opencode"},
+        "inference": {"backend": backend, "model": "test.gguf"},
     }
 
 
@@ -90,3 +101,4 @@ def step_check_config_created(context):
     cfg = utils.load_yaml(".arkai.yaml")
     assert "agent" in cfg, "Missing agent key"
     assert "inference" in cfg, "Missing inference key"
+    assert cfg["inference"].get("backend") == "llama-cpp", "Missing default inference backend"
