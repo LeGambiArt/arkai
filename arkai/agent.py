@@ -598,7 +598,7 @@ def _dispatch_agent(
     return None
 
 
-def _run_install_command(command: list[str], env: dict[str, str] | None = None) -> None:
+def run_install_command(command: list[str], env: dict[str, str] | None = None) -> None:
     """Run an installation command and raise an actionable error on failure."""
     code, _, stderr = utils.run_command(command, timeout=None, env=env)
     if code != 0:

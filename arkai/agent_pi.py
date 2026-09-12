@@ -6,7 +6,7 @@ import shutil
 from pathlib import Path
 
 from arkai import config, utils
-from arkai.agent import AgentLaunchSpec, run_launch_spec
+from arkai.agent import AgentLaunchSpec, run_install_command, run_launch_spec
 
 PI_CORE_PACKAGE = "@earendil-works/pi-coding-agent"
 PI_PACKAGES = ("pi-mcp-adapter", "pi-web-access", "pi-subagents")
@@ -157,14 +157,6 @@ def start(
     )
 
 
-def _run_install_command(command: list[str], env: dict[str, str] | None = None) -> None:
-    """Run an installation command and raise an actionable error on failure."""
-    code, _, stderr = utils.run_command(command, timeout=None, env=env)
-    if code != 0:
-        detail = stderr.strip() or f"exit code {code}"
-        raise RuntimeError(f"Installation command failed ({' '.join(command)}): {detail}")
-
-
 def install() -> None:
     """Install Pi and its supported package extensions."""
     utils.warn("This will install:\n- pi.dev\n- pi-mcp-adapter\n- pi-web-access\n- pi-subagents")
@@ -182,7 +174,7 @@ def install() -> None:
     core_dir = get_core_dir()
     agent_dir = get_agent_dir()
     utils.info(f"Installing {PI_CORE_PACKAGE}...")
-    _run_install_command(
+    run_install_command(
         [npm_path, "install", "--prefix", str(core_dir), "-g", "--ignore-scripts", PI_CORE_PACKAGE]
     )
     pi_path = core_dir / "bin" / "pi"
@@ -190,5 +182,5 @@ def install() -> None:
     install_env["PI_CODING_AGENT_DIR"] = str(agent_dir)
     for package in PI_PACKAGES:
         utils.info(f"Installing {package}...")
-        _run_install_command([str(pi_path), "install", f"npm:{package}"], env=install_env)
+        run_install_command([str(pi_path), "install", f"npm:{package}"], env=install_env)
     utils.info(f"Pi installation complete: {core_dir}")
