@@ -117,6 +117,7 @@ class GitModelProvider(ModelProvider):
                 shutil.rmtree(repository_dir, ignore_errors=True)
             error_text = stderr or "Git returned a non-zero exit status without an error message."
             raise RuntimeError(f"Failed to download {reference.identifier} with Git:\n{error_text}")
+        self._materialize_lfs_files(repository_dir, git_path, git_env, reference.identifier)
         utils.info(f"Git transfer complete: {reference.provider}:{reference.identifier}")
         return repository_dir
 
@@ -136,7 +137,69 @@ class GitModelProvider(ModelProvider):
         repository_dir = self._repository_dir(reference.identifier)
         if not (repository_dir / ".git").exists():
             raise RuntimeError(f"Model not downloaded: {reference.provider}:{reference.identifier}")
+        git_path = shutil.which("git")
+        if git_path is None:
+            raise RuntimeError("git command not found; install Git to use the cached model")
+        self._materialize_lfs_files(
+            repository_dir,
+            git_path,
+            {**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+            reference.identifier,
+        )
         return repository_dir
+
+    def _materialize_lfs_files(
+        self,
+        repository_dir: Path,
+        git_path: str,
+        git_env: dict[str, str],
+        identifier: str,
+    ) -> None:
+        """Download Git-LFS objects when a repository contains pointer files."""
+        if not _contains_lfs_pointer(repository_dir):
+            return
+
+        if shutil.which("git-lfs") is None:
+            raise RuntimeError(
+                f"Model {identifier} contains Git-LFS files. Install Git LFS and retry: "
+                "https://git-lfs.com/"
+            )
+
+        install_code, _, install_stderr = utils.run_command(
+            [git_path, "-C", str(repository_dir), "lfs", "install"],
+            capture=False,
+            timeout=None,
+            env=git_env,
+        )
+        if install_code != 0:
+            error_text = install_stderr or "Git LFS initialization failed."
+            raise RuntimeError(f"Failed to initialize Git LFS for {identifier}: {error_text}")
+
+        utils.info(f"Downloading Git-LFS files for hf:{identifier}")
+        code, _, stderr = utils.run_command(
+            [git_path, "-C", str(repository_dir), "lfs", "pull"],
+            capture=False,
+            timeout=None,
+            env=git_env,
+        )
+        if code != 0 or _contains_lfs_pointer(repository_dir):
+            error_text = stderr or "Git LFS did not materialize all model files."
+            raise RuntimeError(f"Failed to download Git-LFS files for {identifier}: {error_text}")
+
+
+def _contains_lfs_pointer(repository_dir: Path) -> bool:
+    """Return whether a checked-out repository contains a Git-LFS pointer file."""
+    pointer_header = b"version https://git-lfs.github.com/spec/v1\n"
+    for path in repository_dir.rglob("*"):
+        if path.is_dir() or ".git" in path.parts:
+            continue
+        try:
+            with path.open("rb") as model_file:
+                if model_file.read(len(pointer_header)) == pointer_header:
+                    return True
+        except OSError:
+            continue
+    return False
 
 
 class OllamaProvider(ModelProvider):

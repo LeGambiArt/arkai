@@ -43,3 +43,9 @@ Feature: Model Management
     When I run "arkai model convert" without model argument
     Then the exit code is 2
     And the error contains "required"
+
+  Scenario: Cached HuggingFace model fails clearly without Git-LFS
+    Given a cached HuggingFace model with Git-LFS pointer files
+    When I resolve model "hf:org/model"
+    Then the exit code is 1
+    And the error contains "Install Git LFS"
