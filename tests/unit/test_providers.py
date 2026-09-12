@@ -50,6 +50,100 @@ def test_model_reference_rejects_unknown_provider():
         providers.ModelReference.parse("unknown:model")
 
 
+def test_huggingface_download_materializes_lfs_files(tmp_path, monkeypatch):
+    """Hugging Face repositories have their Git-LFS model files downloaded."""
+    monkeypatch.setattr(utils, "get_data_home", lambda: str(tmp_path))
+    commands = []
+    pointer = b"version https://git-lfs.github.com/spec/v1\noid sha256:test\nsize 4\n"
+
+    def run_command(command, **kwargs):
+        commands.append(command)
+        if "clone" in command:
+            repository_dir = tmp_path / "models" / "providers" / "huggingface" / "org" / "model"
+            (repository_dir / ".git").mkdir(parents=True)
+            (repository_dir / "model.safetensors").write_bytes(pointer)
+        elif command[-2:] == ["lfs", "pull"]:
+            repository_dir = tmp_path / "models" / "providers" / "huggingface" / "org" / "model"
+            (repository_dir / "model.safetensors").write_bytes(b"real")
+        return 0, "", ""
+
+    with (
+        patch.object(providers.shutil, "which", side_effect=lambda name: f"/usr/bin/{name}"),
+        patch.object(providers.utils, "run_command", side_effect=run_command),
+    ):
+        result = providers.download_model("hf:org/model")
+
+    assert result.joinpath("model.safetensors").read_bytes() == b"real"
+    assert commands[1][-2:] == ["lfs", "install"]
+    assert commands[2][-2:] == ["lfs", "pull"]
+    assert commands[1][0:2] == ["/usr/bin/git", "-C"]
+    repository_path = tmp_path / "models" / "providers" / "huggingface" / "org" / "model"
+    assert commands[1][2] == str(repository_path)
+
+
+def test_huggingface_lfs_install_failure_is_reported(tmp_path, monkeypatch):
+    """A failed repository Git-LFS initialization stops model materialization."""
+    monkeypatch.setattr(utils, "get_data_home", lambda: str(tmp_path))
+    repository_dir = tmp_path / "models" / "providers" / "huggingface" / "org" / "model"
+    (repository_dir / ".git").mkdir(parents=True)
+    (repository_dir / "model.safetensors").write_bytes(
+        b"version https://git-lfs.github.com/spec/v1\noid sha256:test\nsize 4\n"
+    )
+
+    def run_command(command, **kwargs):
+        if command[-2:] == ["lfs", "install"]:
+            return 1, "", "git lfs install failed"
+        raise AssertionError(f"git lfs pull should not run: {command}")
+
+    with (
+        patch.object(providers.shutil, "which", side_effect=lambda name: f"/usr/bin/{name}"),
+        patch.object(providers.utils, "run_command", side_effect=run_command),
+    ):
+        with pytest.raises(RuntimeError, match="Failed to initialize Git LFS"):
+            providers.resolve_model("hf:org/model")
+
+
+def test_huggingface_resolve_repairs_existing_lfs_cache(tmp_path, monkeypatch):
+    """Resolving a cached model also materializes old Git-LFS pointers."""
+    monkeypatch.setattr(utils, "get_data_home", lambda: str(tmp_path))
+    repository_dir = tmp_path / "models" / "providers" / "huggingface" / "org" / "model"
+    (repository_dir / ".git").mkdir(parents=True)
+    (repository_dir / "model.safetensors").write_bytes(
+        b"version https://git-lfs.github.com/spec/v1\noid sha256:test\nsize 4\n"
+    )
+
+    def run_command(command, **kwargs):
+        (repository_dir / "model.safetensors").write_bytes(b"real")
+        return 0, "", ""
+
+    with (
+        patch.object(providers.shutil, "which", side_effect=lambda name: f"/usr/bin/{name}"),
+        patch.object(providers.utils, "run_command", side_effect=run_command),
+    ):
+        result = providers.resolve_model("hf:org/model")
+
+    assert result == repository_dir
+    assert (repository_dir / "model.safetensors").read_bytes() == b"real"
+
+
+def test_huggingface_lfs_requires_git_lfs(tmp_path, monkeypatch):
+    """A missing Git-LFS installation produces an actionable error."""
+    monkeypatch.setattr(utils, "get_data_home", lambda: str(tmp_path))
+    repository_dir = tmp_path / "models" / "providers" / "huggingface" / "org" / "model"
+    (repository_dir / ".git").mkdir(parents=True)
+    (repository_dir / "model.safetensors").write_bytes(
+        b"version https://git-lfs.github.com/spec/v1\noid sha256:test\nsize 4\n"
+    )
+
+    with patch.object(
+        providers.shutil,
+        "which",
+        side_effect=lambda name: "/usr/bin/git" if name == "git" else None,
+    ):
+        with pytest.raises(RuntimeError, match="Install Git LFS"):
+            providers.resolve_model("hf:org/model")
+
+
 def test_ollama_provider_reports_missing_model_tag():
     """A missing registry model produces an actionable error."""
     response = FakeResponse(

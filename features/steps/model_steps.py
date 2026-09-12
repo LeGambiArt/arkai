@@ -1,17 +1,60 @@
 """Step definitions for model management features."""
 
 import os
+import sys
+from io import StringIO
+from pathlib import Path
 from unittest.mock import patch
 
 from behave import given, then, when
 
-from arkai import model
+from arkai import model, providers
 
 
 @given("a clean models directory")  # ty: ignore[call-non-callable]
 def step_clean_models(context):
     """Mock up a clean models directory."""
     context.existing_files.union({f for f in context.existing_files if not f.endswith(".gguf")})
+
+
+@given("a cached HuggingFace model with Git-LFS pointer files")  # ty: ignore[call-non-callable]
+def step_cached_huggingface_lfs_model(context):
+    """Set up a cached model whose files require Git-LFS."""
+    context.lfs_exists_patch = patch.object(Path, "exists", return_value=True)
+    context.lfs_exists_patch.start()
+    context.lfs_which_patch = patch.object(
+        providers.shutil,
+        "which",
+        side_effect=lambda name: "/usr/bin/git" if name == "git" else None,
+    )
+    context.lfs_which_patch.start()
+    context.lfs_pointer_patch = patch.object(providers, "_contains_lfs_pointer", return_value=True)
+    context.lfs_pointer_patch.start()
+
+
+@when('I resolve model "{model_ref}"')  # ty: ignore[call-non-callable]
+def step_resolve_model(context, model_ref):
+    """Resolve a cached model and capture its user-facing error."""
+    stdout = StringIO()
+    stderr = StringIO()
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+    sys.stdout = stdout
+    sys.stderr = stderr
+    context.exit_code = 0
+    try:
+        providers.resolve_model(model_ref)
+    except Exception as error:
+        context.exit_code = 1
+        stderr.write(str(error))
+    finally:
+        sys.stdout = old_stdout
+        sys.stderr = old_stderr
+        context.stdout = stdout.getvalue()
+        context.stderr = stderr.getvalue()
+        context.lfs_exists_patch.stop()
+        context.lfs_which_patch.stop()
+        context.lfs_pointer_patch.stop()
 
 
 def _add_model_to_storage(context, filename):
