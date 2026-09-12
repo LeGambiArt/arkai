@@ -109,6 +109,16 @@ def get_inference_model(port: int | None = None) -> str:
     return model_id
 
 
+def _is_inference_server_healthy(port: int) -> bool:
+    """Return whether the inference server responds successfully to a health check."""
+    try:
+        response = requests.get(f"http://127.0.0.1:{port}/v1/models", timeout=5)
+        response.raise_for_status()
+        return True
+    except requests.RequestException:
+        return False
+
+
 def cmd_inference_start(
     model: str | None = None,
     gpu_layers: int | None = None,
@@ -238,13 +248,9 @@ def cmd_inference_start(
                 f"Inference server exited before becoming ready (code {proc.returncode})"
             )
             break
-        try:
-            code, _, _ = utils.run_command(["curl", "-sf", f"http://127.0.0.1:{port}/v1/models"])
-            if code == 0:
-                utils.info(f"Inference server ready on port {port}")
-                return
-        except RuntimeError:
-            pass
+        if _is_inference_server_healthy(port):
+            utils.info(f"Inference server ready on port {port}")
+            return
         time.sleep(1)
 
     # Kill the process that failed to become ready and clean up its files
@@ -303,15 +309,9 @@ def cmd_inference_status() -> None:
             port = state.get("port", 8081)
 
             # Check health
-            try:
-                code, _, _ = utils.run_command(
-                    ["curl", "-sf", f"http://127.0.0.1:{port}/v1/models"]
-                )
-                if code == 0:
-                    utils.info("Health: healthy")
-                else:
-                    utils.info("Health: unresponsive")
-            except RuntimeError:
+            if _is_inference_server_healthy(port):
+                utils.info("Health: healthy")
+            else:
                 utils.info("Health: unresponsive")
 
             # Show startup config

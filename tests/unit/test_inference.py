@@ -39,3 +39,23 @@ def test_get_inference_model_reports_server_failure() -> None:
     ):
         with pytest.raises(RuntimeError, match="port 8081: connection refused"):
             inference.get_inference_model()
+
+
+def test_health_check_uses_requests_and_accepts_successful_response() -> None:
+    """The inference health check uses the requests client directly."""
+    response = MagicMock()
+    with patch.object(inference.requests, "get", return_value=response) as get:
+        assert inference._is_inference_server_healthy(9090) is True
+
+    get.assert_called_once_with("http://127.0.0.1:9090/v1/models", timeout=5)
+    response.raise_for_status.assert_called_once_with()
+
+
+def test_health_check_returns_false_for_request_failure() -> None:
+    """Unavailable or unsuccessful inference servers are reported as unhealthy."""
+    with patch.object(
+        inference.requests,
+        "get",
+        side_effect=inference.requests.ConnectionError("connection refused"),
+    ):
+        assert inference._is_inference_server_healthy(9090) is False
