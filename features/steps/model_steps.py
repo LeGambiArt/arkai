@@ -73,6 +73,15 @@ def step_add_model_file(context, filename):
     _add_model_to_storage(context, filename)
 
 
+@given('a cached provider model "{model_ref}"')  # ty: ignore[call-non-callable]
+def step_cached_provider_model(context, model_ref):
+    """Mock a provider cache entry for provider-qualified removal."""
+    context.provider_remove_patch = patch.object(
+        providers, "remove_model", return_value=Path("/cached/model")
+    )
+    context.provider_remove_patch.start()
+
+
 @when('I run "arkai model {cmd}"')  # ty: ignore[call-non-callable]
 def step_run_arkai_model(context, cmd):
     """Run arkai model command."""
@@ -132,6 +141,9 @@ def step_run_arkai_model(context, cmd):
         sys.stderr = old_stderr
         context.stdout = stdout_capture.getvalue()
         context.stderr = stderr_capture.getvalue()
+        if hasattr(context, "provider_remove_patch"):
+            context.provider_remove_patch.stop()
+            context.provider_remove_patch = None
 
 
 @when('I run "arkai model list" with HuggingFace models')  # ty: ignore[call-non-callable]

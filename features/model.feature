@@ -18,6 +18,12 @@ Feature: Model Management
     Then the exit code is 0
     And the file "test-model.gguf" does not exist in the models directory
 
+  Scenario: Remove a provider-cached model
+    Given a cached provider model "hf:mlx-community/Qwen3-4B-4bit"
+    When I run "arkai model remove hf:mlx-community/Qwen3-4B-4bit"
+    Then the exit code is 0
+    And the output contains "Removed hf:mlx-community/Qwen3-4B-4bit"
+
   Scenario: Remove non-existent model fails
     Given a clean models directory
     When I run "arkai model remove nonexistent.gguf"
