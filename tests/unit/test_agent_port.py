@@ -2,7 +2,7 @@
 
 from unittest.mock import patch
 
-from arkai import agent, inference
+from arkai import agent, agent_pi, inference
 
 
 def test_agent_start_passes_explicit_port_to_inference() -> None:
@@ -22,7 +22,7 @@ def test_agent_start_passes_explicit_port_to_inference() -> None:
         patch.object(agent.inference, "cmd_inference_stop"),
         patch.object(agent.utils, "resolve_binary", return_value="/agent"),
     ):
-        with agent._agent_context(model="other.gguf", port=9090):
+        with agent._agent_context("opencode", model="other.gguf", port=9090):
             pass
 
     running.assert_any_call(9090)
@@ -71,7 +71,7 @@ def test_agent_context_uses_model_reported_by_inference_server() -> None:
         ) as get_model,
         patch.object(agent.utils, "resolve_binary", return_value="/agent"),
     ):
-        with agent._agent_context():
+        with agent._agent_context("opencode"):
             assert cfg["inference"]["model"] == "/models/active.gguf"
 
     get_model.assert_called_once_with(9090)
@@ -97,7 +97,7 @@ def test_agent_cli_registers_port_for_start_and_prompt() -> None:
 def test_pi_agent_dispatches_to_pi_launcher() -> None:
     """Pi agent sessions are dispatched to the Pi launcher."""
     ctx = agent.AgentContext(agent_name="pi", agent_path="/bin/pi")
-    with patch.object(agent, "_start_agent_pi", return_value=None) as launcher:
+    with patch.object(agent_pi, "start", return_value=None) as launcher:
         agent._dispatch_agent(ctx)
 
     launcher.assert_called_once()

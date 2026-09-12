@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-from arkai import agent, config
+from arkai import agent, agent_pi, config
 
 
 def test_pi_is_a_valid_agent() -> None:
@@ -36,10 +36,10 @@ def test_install_pi_installs_core_and_packages() -> None:
     agent_dir = Path("/arkai-state/pi/agent")
     with (
         patch("builtins.input", return_value="yes"),
-        patch.object(agent.shutil, "which", side_effect=lambda name: f"/bin/{name}"),
+        patch.object(agent_pi.shutil, "which", side_effect=lambda name: f"/bin/{name}"),
         patch.object(agent.utils, "run_command", side_effect=capture_command),
-        patch.object(agent, "_get_pi_core_dir", return_value=core_dir),
-        patch.object(agent, "_get_pi_agent_dir", return_value=agent_dir),
+        patch.object(agent_pi, "get_core_dir", return_value=core_dir),
+        patch.object(agent_pi, "get_agent_dir", return_value=agent_dir),
     ):
         agent.cmd_agent_install("pi")
 
@@ -50,7 +50,7 @@ def test_install_pi_installs_core_and_packages() -> None:
         str(core_dir),
         "-g",
         "--ignore-scripts",
-        agent.PI_CORE_PACKAGE,
+        agent_pi.PI_CORE_PACKAGE,
     ]
     assert commands[0][1] == {"timeout": None, "env": None}
     assert [command for command, _ in commands[1:]] == [
@@ -65,7 +65,7 @@ def test_install_pi_installs_core_and_packages() -> None:
 def test_pi_default_binary_is_arkai_local(tmp_path: Path, monkeypatch) -> None:
     """Pi uses the local arkai installation unless agent.path overrides it."""
     core_dir = tmp_path / "pi" / "core"
-    monkeypatch.setattr(agent, "_get_pi_core_dir", lambda: core_dir)
+    monkeypatch.setattr(agent_pi, "get_core_dir", lambda: core_dir)
     cfg = {"agent": {"name": "pi"}, "inference": {"model": "test.gguf"}}
 
     with (
@@ -76,7 +76,7 @@ def test_pi_default_binary_is_arkai_local(tmp_path: Path, monkeypatch) -> None:
             agent.utils, "resolve_binary", return_value=str(core_dir / "bin" / "pi")
         ) as resolve,
     ):
-        with agent._agent_context(no_mcp=True, no_sandbox=True):
+        with agent._agent_context("pi", no_mcp=True, no_sandbox=True):
             pass
 
     resolve.assert_called_once_with(str(core_dir / "bin" / "pi"))
@@ -86,14 +86,14 @@ def test_install_pi_reports_each_package(capsys) -> None:
     """The installer reports progress for the core and extension packages."""
     with (
         patch("builtins.input", return_value="yes"),
-        patch.object(agent.shutil, "which", side_effect=lambda name: f"/bin/{name}"),
+        patch.object(agent_pi.shutil, "which", side_effect=lambda name: f"/bin/{name}"),
         patch.object(agent.utils, "run_command", return_value=(0, "", "")),
     ):
         agent.cmd_agent_install("pi")
 
     output = capsys.readouterr().out
-    assert agent.PI_CORE_PACKAGE in output
-    for package in agent.PI_PACKAGES:
+    assert agent_pi.PI_CORE_PACKAGE in output
+    for package in agent_pi.PI_PACKAGES:
         assert package in output
     assert "installation complete" in output.lower()
 
@@ -135,7 +135,7 @@ def test_pi_runtime_volumes_include_node_global_paths(tmp_path: Path, monkeypatc
     pi_path = bin_dir / "pi"
     pi_path.touch()
 
-    assert agent._get_pi_runtime_volumes(str(pi_path)) == [
+    assert agent_pi.get_runtime_volumes(str(pi_path)) == [
         f"{tmp_path}:ro",
     ]
 
@@ -153,20 +153,20 @@ def test_pi_runtime_volumes_preserve_npm_bin_symlink_location(tmp_path: Path, mo
     pi_path = bin_dir / "pi"
     pi_path.symlink_to(target)
 
-    assert agent._get_pi_runtime_volumes(str(pi_path)) == [f"{prefix}:ro"]
+    assert agent_pi.get_runtime_volumes(str(pi_path)) == [f"{prefix}:ro"]
 
 
 def test_pi_passes_mcp_config_when_wtmcp_is_running(tmp_path: Path, monkeypatch) -> None:
     """Pi receives its MCP configuration only when wtmcp is available."""
     agent_dir = tmp_path / "pi-agent"
-    monkeypatch.setattr(agent, "_get_pi_agent_dir", lambda: agent_dir)
+    monkeypatch.setattr(agent_pi, "get_agent_dir", lambda: agent_dir)
     cfg = {"inference": {"model": "test.gguf", "port": 8123}}
 
     with (
         patch("arkai.wtmcp.is_wtmcp_running", return_value=True),
         patch.object(agent.subprocess, "Popen") as popen,
     ):
-        agent._start_agent_pi("/bin/pi", cfg, 8080, False, None)
+        agent_pi.start("/bin/pi", cfg, 8080, False, None)
 
     command = popen.call_args.args[0]
     assert command == [
@@ -186,14 +186,14 @@ def test_pi_omits_mcp_config_when_wtmcp_is_not_running(tmp_path: Path, monkeypat
     agent_dir = tmp_path / "pi-agent"
     agent_dir.mkdir()
     (agent_dir / "mcp.json").write_text("{}")
-    monkeypatch.setattr(agent, "_get_pi_agent_dir", lambda: agent_dir)
+    monkeypatch.setattr(agent_pi, "get_agent_dir", lambda: agent_dir)
     cfg = {"inference": {"model": "test.gguf"}}
 
     with (
         patch("arkai.wtmcp.is_wtmcp_running", return_value=False),
         patch.object(agent.subprocess, "Popen") as popen,
     ):
-        agent._start_agent_pi("/bin/pi", cfg, 8080, False, None)
+        agent_pi.start("/bin/pi", cfg, 8080, False, None)
 
     assert "--mcp-config" not in popen.call_args.args[0]
     assert not (agent_dir / "mcp.json").exists()
@@ -202,11 +202,11 @@ def test_pi_omits_mcp_config_when_wtmcp_is_not_running(tmp_path: Path, monkeypat
 def test_pi_omits_mcp_config_when_mcp_is_disabled(tmp_path: Path, monkeypatch) -> None:
     """Pi starts without an MCP configuration when MCP is disabled."""
     agent_dir = tmp_path / "pi-agent"
-    monkeypatch.setattr(agent, "_get_pi_agent_dir", lambda: agent_dir)
+    monkeypatch.setattr(agent_pi, "get_agent_dir", lambda: agent_dir)
     cfg = {"inference": {"model": "test.gguf"}}
 
     with patch.object(agent.subprocess, "Popen") as popen:
-        agent._start_agent_pi("/bin/pi", cfg, None, False, None)
+        agent_pi.start("/bin/pi", cfg, None, False, None)
 
     assert "--mcp-config" not in popen.call_args.args[0]
     assert not (agent_dir / "mcp.json").exists()

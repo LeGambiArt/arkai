@@ -1,23 +1,16 @@
 """Agent and prompt execution."""
 
 import argparse
-import json
 import os
 import platform
-import shutil
 import subprocess
 import sys
-import tempfile
 from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
 from arkai import config, inference, utils
-
-PI_CORE_PACKAGE = "@earendil-works/pi-coding-agent"
-PI_PACKAGES = ("pi-mcp-adapter", "pi-web-access", "pi-subagents")
-INSTALLABLE_AGENTS = ("pi",)
 
 
 def exec_cmd(args: dict | None = None) -> None:
@@ -150,9 +143,56 @@ class AgentContext:
     sandbox_environment: dict | None = None
 
 
+@dataclass
+class AgentLaunchSpec:
+    """Command and resources prepared for one agent process."""
+
+    command: list[str]
+    environment: dict[str, str]
+    cleanup_paths: list[Path] = field(default_factory=list)
+
+
+def run_launch_spec(spec: AgentLaunchSpec, capture_stdout: bool = False) -> str | None:
+    """Run an agent launch specification and clean up its temporary files."""
+    try:
+        process = subprocess.Popen(
+            spec.command,
+            stdin=sys.stdin,
+            stdout=subprocess.PIPE if capture_stdout else None,
+            stderr=None,
+            env=spec.environment,
+        )
+        if capture_stdout:
+            stdout_data, _ = process.communicate()
+        else:
+            process.wait()
+            stdout_data = None
+    except FileNotFoundError as error:
+        utils.error(str(error), 3)
+        sys.exit(3)
+    finally:
+        for path in spec.cleanup_paths:
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                pass
+
+    if capture_stdout and stdout_data is not None:
+        return stdout_data.decode("utf-8", errors="replace")
+    return None
+
+
+def _select_agent_name(agent_name: str | None) -> str:
+    """Select the CLI agent override or the configured agent name."""
+    if agent_name:
+        return agent_name
+    cfg = config.load_config()
+    return config.get_config_value(cfg, "agent.name", "opencode")
+
+
 @contextmanager
 def _agent_context(
-    agent_name: str | None = None,
+    agent_name: str,
     model: str | None = None,
     port: int | None = None,
     no_start_inference: bool = False,
@@ -169,7 +209,7 @@ def _agent_context(
     and yields an AgentContext. On exit, stops services unless keep flags are set.
 
     Args:
-        agent_name: Override agent from config
+        agent_name: Selected agent name
         model: Override model from config
         port: Override inference server port from config. An explicit port allows a
             separate inference server to run alongside an existing one.
@@ -189,8 +229,7 @@ def _agent_context(
     """
     cfg = config.load_config()
 
-    if agent_name:
-        cfg["agent"]["name"] = agent_name
+    cfg["agent"]["name"] = agent_name
     if model:
         cfg["inference"]["model"] = model
     if port is not None:
@@ -204,11 +243,9 @@ def _agent_context(
     require_model = not inference_running
     config.validate_config(cfg, require_model=require_model)
 
-    resolved_agent_name = config.get_config_value(cfg, "agent.name", "opencode")
-
-    if resolved_agent_name not in config.VALID_AGENTS:
+    if agent_name not in config.VALID_AGENTS:
         utils.error(
-            f"Unsupported agent: {resolved_agent_name} "
+            f"Unsupported agent: {agent_name} "
             f"(supported: {', '.join(sorted(config.VALID_AGENTS))})",
             2,
         )
@@ -219,12 +256,14 @@ def _agent_context(
         config.get_config_value(cfg, "sandbox.disable", False)
     )
 
-    configured_agent_bin = config.get_config_value(cfg, "agent.path")
-    if resolved_agent_name == "pi" and configured_agent_bin is None:
-        agent_bin = str(_get_pi_core_dir() / "bin" / "pi")
-    else:
-        agent_bin = configured_agent_bin or resolved_agent_name
-    agent_path: str = utils.resolve_binary(agent_bin)
+    launcher_modules = {
+        "opencode": "arkai.agent_opencode",
+        "crush": "arkai.agent_crush",
+        "claude": "arkai.agent_claude",
+        "pi": "arkai.agent_pi",
+    }
+    module = __import__(launcher_modules[agent_name], fromlist=["get_agent_path"])
+    agent_path: str = module.get_agent_path(cfg)
 
     # Validate arapuca binary early, before starting any servers.
     if use_sandbox:
@@ -266,7 +305,7 @@ def _agent_context(
 
         ctx = AgentContext(
             cfg=cfg,
-            agent_name=resolved_agent_name,
+            agent_name=agent_name,
             agent_path=agent_path,
             use_mcp=use_mcp,
             use_sandbox=use_sandbox,
@@ -423,6 +462,7 @@ def _build_sandbox_cmd(
     sandbox_profile: str | None = None,
     cli_volumes: list | None = None,
     cli_environment: dict | None = None,
+    tty: bool = False,
 ) -> list:
     """Build the arapuca sandbox command prefix for an agent invocation.
 
@@ -510,415 +550,11 @@ def _build_sandbox_cmd(
     if timeout and int(timeout) > 0:
         cmd += ["--timeout", str(timeout)]
 
+    if tty:
+        cmd += ["--tty"]
+
     cmd += ["--"]
     return cmd
-
-
-def _prepare_opencode_tui_config(config_dir: str, theme: str | None) -> str | None:
-    """Copy the global opencode TUI config and apply an agent theme override.
-
-    Args:
-        config_dir: Directory from which opencode loads its temporary config.
-        theme: Optional theme configured as ``agent.theme``.
-
-    Returns:
-        Path to the prepared tui.json, or None when no TUI config is needed.
-    """
-    xdg_config_home = os.environ.get("XDG_CONFIG_HOME")
-    global_config_home = Path(xdg_config_home) if xdg_config_home else Path.home() / ".config"
-    global_tui = global_config_home / "opencode" / "tui.json"
-    tui_path = Path(config_dir) / "tui.json"
-
-    if global_tui.exists():
-        tui_path.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(global_tui, tui_path)
-    elif theme is not None:
-        tui_path.parent.mkdir(parents=True, exist_ok=True)
-        tui_path.write_text(
-            json.dumps(
-                {"$schema": "https://opencode.ai/tui.json", "theme": theme},
-                indent=2,
-            )
-        )
-    else:
-        return None
-
-    if theme is not None:
-        try:
-            tui_config = json.loads(tui_path.read_text())
-        except (OSError, json.JSONDecodeError) as error:
-            raise RuntimeError(f"Invalid opencode TUI configuration: {tui_path}") from error
-        if not isinstance(tui_config, dict):
-            raise RuntimeError(f"Invalid opencode TUI configuration: {tui_path}")
-        tui_config["theme"] = theme
-        tui_path.write_text(json.dumps(tui_config, indent=2))
-
-    return str(tui_path)
-
-
-def _start_agent_opencode(
-    agent_path: str,
-    cfg: dict,
-    wtmcp_port: int | None,
-    use_sandbox: bool,
-    workdir: str | None,
-    sandbox_profile: str | None = None,
-    cli_volumes: list | None = None,
-    cli_environment: dict | None = None,
-    prompt: str | None = None,
-    capture_stdout: bool = False,
-) -> str | None:
-    """Start opencode agent.
-
-    Args:
-        agent_path: Path to the opencode binary
-        cfg: Loaded configuration
-        wtmcp_port: wtmcp port if MCP is enabled, None otherwise
-        use_sandbox: Whether to wrap in arapuca sandbox
-        workdir: Working directory for sandbox, None to skip
-        sandbox_profile: Sandbox profile name override
-        cli_volumes: Additional volumes from CLI
-        cli_environment: Additional environment from CLI
-        prompt: If set, run non-interactively with this prompt
-        capture_stdout: If True, capture and return stdout instead of inheriting
-
-    Returns:
-        Captured stdout when capture_stdout is True, None otherwise
-    """
-    config_dir = os.path.expanduser("~/.local/state/arkai/sessions")
-    os.makedirs(config_dir, exist_ok=True)
-    config_file = ""
-    tui_file: str | None = None
-
-    try:
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            dir=config_dir,
-            prefix="opencode-",
-            suffix=".json",
-            delete=False,
-        ) as f:
-            config_file = f.name
-            inference_port = config.get_config_value(cfg, "inference.port", 8081)
-            inference_backend = config.get_config_value(cfg, "inference.backend", "llama-cpp")
-            model_name = _get_model_name(cfg)
-
-            config_data: dict = {
-                "$schema": "https://opencode.ai/config.json",
-                "provider": {
-                    "local-llm": {
-                        "name": f"Local LLM ({inference_backend})",
-                        "npm": "@ai-sdk/openai-compatible",
-                        "options": {"baseURL": f"http://127.0.0.1:{inference_port}/v1"},
-                        "models": {model_name: {"name": model_name}},
-                    },
-                },
-                "model": f"local-llm/{model_name}",
-            }
-            if wtmcp_port is not None:
-                config_data["mcp"] = {
-                    "wtmcp": {
-                        "type": "remote",
-                        "url": f"http://127.0.0.1:{wtmcp_port}/mcp",
-                        "oauth": False,
-                    }
-                }
-            json.dump(config_data, f, indent=2)
-
-        tui_file = _prepare_opencode_tui_config(
-            config_dir, config.get_config_value(cfg, "agent.theme")
-        )
-        if use_sandbox:
-            sandbox_prefix = _build_sandbox_cmd(
-                cfg, workdir, config_dir, wtmcp_port, sandbox_profile, cli_volumes, cli_environment
-            )
-            env_args = ["env", f"OPENCODE_CONFIG={config_file}"]
-            if tui_file is not None:
-                env_args.append(f"OPENCODE_TUI_CONFIG={tui_file}")
-            cmd = sandbox_prefix + env_args + [agent_path]
-            env = os.environ.copy()
-        else:
-            env = os.environ.copy()
-            env["OPENCODE_CONFIG"] = config_file
-            if tui_file is not None:
-                env["OPENCODE_TUI_CONFIG"] = tui_file
-            cmd = [agent_path]
-
-        if prompt is not None:
-            cmd.extend(["run", prompt])
-
-        proc = subprocess.Popen(
-            cmd,
-            stdin=sys.stdin,
-            stdout=subprocess.PIPE if capture_stdout else None,
-            stderr=None,
-            env=env,
-        )
-        if capture_stdout:
-            stdout_data, _ = proc.communicate()
-        else:
-            proc.wait()
-            stdout_data = None
-    except FileNotFoundError as e:
-        utils.error(str(e), 3)
-        sys.exit(3)
-    finally:
-        if config_file:
-            try:
-                os.remove(config_file)
-            except FileNotFoundError:
-                pass
-        if tui_file is not None:
-            try:
-                os.remove(tui_file)
-            except FileNotFoundError:
-                pass
-
-    if capture_stdout and stdout_data is not None:
-        return stdout_data.decode("utf-8", errors="replace")
-    return None
-
-
-def _start_agent_crush(
-    agent_path: str,
-    cfg: dict,
-    wtmcp_port: int | None,
-    use_sandbox: bool,
-    workdir: str | None,
-    sandbox_profile: str | None = None,
-    cli_volumes: list | None = None,
-    cli_environment: dict | None = None,
-    prompt: str | None = None,
-    capture_stdout: bool = False,
-) -> str | None:
-    """Start crush agent.
-
-    Args:
-        agent_path: Path to the crush binary
-        cfg: Loaded configuration
-        wtmcp_port: wtmcp port if MCP is enabled, None otherwise
-        use_sandbox: Whether to wrap in arapuca sandbox
-        workdir: Working directory for sandbox, None to skip
-        sandbox_profile: Sandbox profile name override
-        cli_volumes: Additional volumes from CLI
-        cli_environment: Additional environment from CLI
-        prompt: If set, run non-interactively with this prompt
-        capture_stdout: If True, capture and return stdout instead of inheriting
-
-    Returns:
-        Captured stdout when capture_stdout is True, None otherwise
-    """
-    config_dir = os.path.expanduser("~/.local/state/arkai/sessions")
-    os.makedirs(config_dir, exist_ok=True)
-
-    with tempfile.NamedTemporaryFile(
-        mode="w",
-        dir=config_dir,
-        prefix=".crush-",
-        suffix=".json",
-        delete=False,
-    ) as f:
-        config_file = f.name
-        inference_port = config.get_config_value(cfg, "inference.port", 8081)
-        model_name = _get_model_name(cfg)
-
-        config_data: dict = {
-            "providers": {
-                "local-llm": {
-                    "type": "llamacpp",
-                    "base_url": f"http://127.0.0.1:{inference_port}",
-                }
-            },
-            "models": {
-                "large": {"model": model_name, "provider": "local-llm"},
-                "small": {"model": model_name, "provider": "local-llm"},
-            },
-        }
-        if wtmcp_port is not None:
-            config_data["mcp"] = {
-                "wtmcp": {"type": "http", "url": f"http://127.0.0.1:{wtmcp_port}/mcp"}
-            }
-        json.dump(config_data, f, indent=2)
-
-    if use_sandbox:
-        sandbox_prefix = _build_sandbox_cmd(
-            cfg, workdir, config_dir, wtmcp_port, sandbox_profile, cli_volumes, cli_environment
-        )
-        cmd = sandbox_prefix + [
-            "env",
-            f"CRUSH_CONFIG={config_file}",
-            agent_path,
-        ]
-        env = os.environ.copy()
-    else:
-        env = os.environ.copy()
-        env["CRUSH_CONFIG"] = config_file
-        cmd = [agent_path]
-
-    if prompt is not None:
-        cmd.extend(["run", prompt])
-    else:
-        cmd.extend(["--cwd", config_dir])
-
-    try:
-        proc = subprocess.Popen(
-            cmd,
-            stdin=sys.stdin,
-            stdout=subprocess.PIPE if capture_stdout else None,
-            stderr=None,
-            env=env,
-        )
-        if capture_stdout:
-            stdout_data, _ = proc.communicate()
-        else:
-            proc.wait()
-            stdout_data = None
-    except FileNotFoundError as e:
-        utils.error(str(e), 3)
-        sys.exit(3)
-    finally:
-        try:
-            os.remove(config_file)
-        except FileNotFoundError:
-            pass
-
-    if capture_stdout and stdout_data is not None:
-        return stdout_data.decode("utf-8", errors="replace")
-    return None
-
-
-def _start_agent_claude(
-    agent_path: str,
-    cfg: dict,
-    wtmcp_port: int | None,
-    use_sandbox: bool,
-    workdir: str | None,
-    sandbox_profile: str | None = None,
-    cli_volumes: list | None = None,
-    cli_environment: dict | None = None,
-    prompt: str | None = None,
-    capture_stdout: bool = False,
-) -> str | None:
-    """Start claude agent.
-
-    Args:
-        agent_path: Path to the claude binary
-        cfg: Loaded configuration
-        wtmcp_port: wtmcp port if MCP is enabled, None otherwise
-        use_sandbox: Whether to wrap in arapuca sandbox
-        workdir: Working directory for sandbox, None to skip
-        sandbox_profile: Sandbox profile name override
-        cli_volumes: Additional volumes from CLI
-        cli_environment: Additional environment from CLI
-        prompt: If set, run non-interactively with this prompt
-        capture_stdout: If True, capture and return stdout instead of inheriting
-
-    Returns:
-        Captured stdout when capture_stdout is True, None otherwise
-    """
-    inference_port = config.get_config_value(cfg, "inference.port", 8081)
-    context_size = config.get_config_value(cfg, "inference.context_size", 65536)
-    model_name = _get_model_name(cfg)
-
-    # Vars inherited from a parent Claude Code session that must be cleared so
-    # Claude Code routes to the local inference server instead of Vertex AI.
-    _vertex_env_vars = [
-        "CLAUDE_CODE_USE_VERTEX",
-        "ANTHROPIC_VERTEX_PROJECT_ID",
-        "VERTEXAI_PROJECT",
-        "VERTEXAI_LOCATION",
-        "GOOGLE_CLOUD_LOCATION",
-        "ANTHROPIC_MODEL",
-    ]
-
-    anthropic_env = {
-        "ANTHROPIC_BASE_URL": f"http://127.0.0.1:{inference_port}",
-        "ANTHROPIC_AUTH_TOKEN": "local",
-        "ANTHROPIC_API_KEY": "local",
-        "CLAUDE_CODE_ATTRIBUTION_HEADER": "0",
-        "CLAUDE_CODE_MAX_CONTEXT_TOKENS": str(context_size),
-        "CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT": "1",
-    }
-
-    mcp_config: str | None = None
-    agent_args = [agent_path]
-
-    if prompt is not None:
-        agent_args.extend(["-p", prompt, "--model", model_name])
-    else:
-        agent_args.extend(["--model", model_name])
-
-    if wtmcp_port is not None:
-        config_dir = os.path.expanduser("~/.local/state/arkai/sessions")
-        os.makedirs(config_dir, exist_ok=True)
-
-        with tempfile.NamedTemporaryFile(
-            mode="w",
-            dir=config_dir,
-            prefix=".mcp-",
-            suffix=".json",
-            delete=False,
-        ) as f:
-            mcp_config = f.name
-            config_data = {
-                "mcpServers": {
-                    "wtmcp": {"type": "url", "url": f"http://127.0.0.1:{wtmcp_port}/mcp"}
-                }
-            }
-            json.dump(config_data, f, indent=2)
-
-        agent_args.extend(["--mcp-config", mcp_config])
-
-    if use_sandbox:
-        sandbox_config_dir = (
-            os.path.expanduser("~/.local/state/arkai/sessions") if mcp_config else None
-        )
-        sandbox_prefix = _build_sandbox_cmd(
-            cfg,
-            workdir,
-            sandbox_config_dir,
-            wtmcp_port,
-            sandbox_profile,
-            cli_volumes,
-            cli_environment,
-        )
-        unset_args = [arg for var in _vertex_env_vars if var in os.environ for arg in ("-u", var)]
-        env_pairs = [f"{k}={v}" for k, v in anthropic_env.items()]
-        cmd = sandbox_prefix + ["env"] + unset_args + env_pairs + agent_args
-        env = os.environ.copy()
-    else:
-        env = os.environ.copy()
-        for var in _vertex_env_vars:
-            env.pop(var, None)
-        env.update(anthropic_env)
-        cmd = agent_args
-
-    try:
-        proc = subprocess.Popen(
-            cmd,
-            stdin=sys.stdin,
-            stdout=subprocess.PIPE if capture_stdout else None,
-            stderr=None,
-            env=env,
-        )
-        if capture_stdout:
-            stdout_data, _ = proc.communicate()
-        else:
-            proc.wait()
-            stdout_data = None
-    except FileNotFoundError as e:
-        utils.error(str(e), 3)
-        sys.exit(3)
-    finally:
-        if mcp_config is not None:
-            try:
-                os.remove(mcp_config)
-            except FileNotFoundError:
-                pass
-
-    if capture_stdout and stdout_data is not None:
-        return stdout_data.decode("utf-8", errors="replace")
-    return None
 
 
 def _dispatch_agent(
@@ -936,199 +572,27 @@ def _dispatch_agent(
     Returns:
         Captured stdout when capture_stdout is True, None otherwise
     """
-    if ctx.agent_name == "opencode":
-        return _start_agent_opencode(
-            ctx.agent_path,
-            ctx.cfg,
-            ctx.wtmcp_port,
-            ctx.use_sandbox,
-            ctx.workdir,
-            ctx.sandbox_profile,
-            ctx.sandbox_volume,
-            ctx.sandbox_environment,
-            prompt,
-            capture_stdout,
-        )
-    elif ctx.agent_name == "crush":
-        return _start_agent_crush(
-            ctx.agent_path,
-            ctx.cfg,
-            ctx.wtmcp_port,
-            ctx.use_sandbox,
-            ctx.workdir,
-            ctx.sandbox_profile,
-            ctx.sandbox_volume,
-            ctx.sandbox_environment,
-            prompt,
-            capture_stdout,
-        )
-    elif ctx.agent_name == "claude":
-        return _start_agent_claude(
-            ctx.agent_path,
-            ctx.cfg,
-            ctx.wtmcp_port,
-            ctx.use_sandbox,
-            ctx.workdir,
-            ctx.sandbox_profile,
-            ctx.sandbox_volume,
-            ctx.sandbox_environment,
-            prompt,
-            capture_stdout,
-        )
-    elif ctx.agent_name == "pi":
-        return _start_agent_pi(
-            ctx.agent_path,
-            ctx.cfg,
-            ctx.wtmcp_port,
-            ctx.use_sandbox,
-            ctx.workdir,
-            ctx.sandbox_profile,
-            ctx.sandbox_volume,
-            ctx.sandbox_environment,
-            prompt,
-            capture_stdout,
-        )
-    return None
-
-
-def _get_pi_install_dir() -> Path:
-    """Return the root directory for arkai-managed Pi files."""
-    return Path(os.path.expanduser("~/.local/state/arkai/pi"))
-
-
-def _get_pi_core_dir() -> Path:
-    """Return the directory containing Pi's locally installed executable."""
-    return _get_pi_install_dir() / "core"
-
-
-def _get_pi_agent_dir() -> Path:
-    """Return the directory containing Pi's arkai-managed runtime data."""
-    return _get_pi_install_dir() / "agent"
-
-
-def _get_pi_runtime_volumes(agent_path: str) -> list[str]:
-    """Return read-only volumes needed by the Pi Node launcher in a sandbox.
-
-    npm places locally scoped executables in ``<prefix>/bin`` and their packages in
-    ``<prefix>/lib/node_modules``. Node also needs to traverse the complete
-    prefix while resolving package metadata, so mount the prefix as one
-    read-only tree rather than mounting only its child directories.
-    """
-    # Do not resolve symlinks: npm's pi executable points into the package,
-    # but its global Node prefix is derived from the symlink's bin directory.
-    bin_dir = Path(os.path.abspath(agent_path)).parent
-    prefix = bin_dir.parent
-    return [f"{prefix}:ro"] if prefix.exists() else []
-
-
-def _prepare_pi_agent_dir(cfg: dict, wtmcp_port: int | None) -> str:
-    """Configure Pi's persistent arkai-managed agent directory.
-
-    arapuca gives each sandbox run a new home directory. Keeping Pi's config
-    under arkai's state directory lets it retain its helper binaries while
-    always selecting the current local inference model.
-    """
-    agent_dir = _get_pi_agent_dir()
-    agent_dir.mkdir(parents=True, exist_ok=True)
-    inference_port = config.get_config_value(cfg, "inference.port", 8081)
-    model_name = _get_model_name(cfg)
-    context_size = config.get_config_value(cfg, "inference.context_size", 65536)
-    models = {
-        "providers": {
-            "local-llm": {
-                "baseUrl": f"http://127.0.0.1:{inference_port}/v1",
-                "api": "openai-completions",
-                "apiKey": "local",
-                "compat": {
-                    "supportsDeveloperRole": False,
-                    "supportsReasoningEffort": False,
-                },
-                "models": [
-                    {
-                        "id": model_name,
-                        "name": model_name,
-                        "reasoning": False,
-                        "contextWindow": context_size,
-                        "maxTokens": min(8192, context_size),
-                    }
-                ],
-            }
-        }
+    launcher_modules = {
+        "opencode": "arkai.agent_opencode",
+        "crush": "arkai.agent_crush",
+        "claude": "arkai.agent_claude",
+        "pi": "arkai.agent_pi",
     }
-    Path(agent_dir, "models.json").write_text(json.dumps(models, indent=2))
-    if wtmcp_port is not None:
-        Path(agent_dir, "mcp.json").write_text(
-            json.dumps(
-                {"mcpServers": {"wtmcp": {"url": f"http://127.0.0.1:{wtmcp_port}/mcp"}}},
-                indent=2,
-            )
+    module_name = launcher_modules.get(ctx.agent_name)
+    if module_name:
+        module = __import__(module_name, fromlist=["start"])
+        return module.start(
+            ctx.agent_path,
+            ctx.cfg,
+            ctx.wtmcp_port,
+            ctx.use_sandbox,
+            ctx.workdir,
+            ctx.sandbox_profile,
+            ctx.sandbox_volume,
+            ctx.sandbox_environment,
+            prompt,
+            capture_stdout,
         )
-    else:
-        Path(agent_dir, "mcp.json").unlink(missing_ok=True)
-    return str(agent_dir)
-
-
-def _start_agent_pi(
-    agent_path: str,
-    cfg: dict,
-    wtmcp_port: int | None,
-    use_sandbox: bool,
-    workdir: str | None,
-    sandbox_profile: str | None = None,
-    cli_volumes: list | None = None,
-    cli_environment: dict | None = None,
-    prompt: str | None = None,
-    capture_stdout: bool = False,
-) -> str | None:
-    """Start the pi.dev coding agent.
-
-    Pi extensions provide MCP support through the installed ``pi-mcp-adapter``
-    package. Pass its configuration explicitly only while wtmcp is available.
-    """
-    mcp_available = False
-    if wtmcp_port is not None:
-        from arkai import wtmcp
-
-        mcp_available = wtmcp.is_wtmcp_running(wtmcp_port)
-
-    agent_dir = _prepare_pi_agent_dir(cfg, wtmcp_port if mcp_available else None)
-    model_name = _get_model_name(cfg)
-    env = os.environ.copy()
-    env["PI_CODING_AGENT_DIR"] = agent_dir
-    if use_sandbox:
-        runtime_volumes = list(cli_volumes or [])
-        runtime_volumes.extend(_get_pi_runtime_volumes(agent_path))
-        sandbox_environment = dict(cli_environment or {})
-        sandbox_environment["PI_CODING_AGENT_DIR"] = agent_dir
-        cmd = _build_sandbox_cmd(
-            cfg,
-            workdir,
-            agent_dir,
-            None,
-            sandbox_profile,
-            runtime_volumes,
-            sandbox_environment,
-        ) + [agent_path]
-    else:
-        cmd = [agent_path]
-
-    cmd.extend(["--model", f"local-llm/{model_name}"])
-    if mcp_available:
-        cmd.extend(["--mcp-config", str(Path(agent_dir, "mcp.json"))])
-    if prompt is not None:
-        cmd.extend(["-p", prompt])
-
-    proc = subprocess.Popen(
-        cmd,
-        stdin=sys.stdin,
-        stdout=subprocess.PIPE if capture_stdout else None,
-        stderr=None,
-        env=env,
-    )
-    if capture_stdout:
-        stdout_data, _ = proc.communicate()
-        return stdout_data.decode("utf-8", errors="replace")
-    proc.wait()
     return None
 
 
@@ -1149,43 +613,20 @@ def cmd_agent_install(agent_name: str | None = None) -> None:
     Raises:
         ValueError: If the requested agent has no installer.
     """
+    installers = {"pi": "arkai.agent_pi"}
     if agent_name is None:
-        utils.info("Agents supported for installation: " + ", ".join(INSTALLABLE_AGENTS))
+        utils.info("Agents supported for installation: " + ", ".join(installers))
         return
-    if agent_name not in INSTALLABLE_AGENTS:
+
+    module_name = installers.get(agent_name)
+    if module_name is None:
         raise ValueError(
             f"Agent '{agent_name}' is not supported for installation. "
-            f"Supported agents: {', '.join(INSTALLABLE_AGENTS)}"
+            f"Supported agents: {', '.join(installers)}"
         )
-    if agent_name != "pi":  # pragma: no cover - guarded by INSTALLABLE_AGENTS
-        raise ValueError(f"No installer is defined for agent '{agent_name}'")
 
-    utils.warn("This will install:\n- pi.dev\n- pi-mcp-adapter\n- pi-web-access\n- pi-subagents")
-    try:
-        answer = input("Proceed with the installation? [y/N] ")
-    except EOFError:
-        answer = ""
-    if answer.strip().lower() not in {"y", "yes"}:
-        utils.info("Pi installation cancelled.")
-        return
-
-    npm_path = shutil.which("npm")
-    if npm_path is None:
-        raise RuntimeError("npm was not found. Install Node.js and npm, then retry.")
-    core_dir = _get_pi_core_dir()
-    agent_dir = _get_pi_agent_dir()
-    utils.info(f"Installing {PI_CORE_PACKAGE}...")
-    _run_install_command(
-        [npm_path, "install", "--prefix", str(core_dir), "-g", "--ignore-scripts", PI_CORE_PACKAGE]
-    )
-
-    pi_path = core_dir / "bin" / "pi"
-    install_env = os.environ.copy()
-    install_env["PI_CODING_AGENT_DIR"] = str(agent_dir)
-    for package in PI_PACKAGES:
-        utils.info(f"Installing {package}...")
-        _run_install_command([str(pi_path), "install", f"npm:{package}"], env=install_env)
-    utils.info(f"Pi installation complete: {core_dir}")
+    module = __import__(module_name, fromlist=["install"])
+    module.install()
 
 
 def cmd_agent(
@@ -1221,8 +662,9 @@ def cmd_agent(
         utils.error("agent start requires a TTY (interactive terminal)", 1)
         sys.exit(1)
 
+    selected_agent_name = _select_agent_name(agent_name)
     with _agent_context(
-        agent_name=agent_name,
+        agent_name=selected_agent_name,
         model=model,
         port=port,
         no_start_inference=no_start_inference,
@@ -1292,8 +734,9 @@ def cmd_agent_prompt(
         utils.error("Empty prompt", 1)
         sys.exit(1)
 
+    selected_agent_name = _select_agent_name(agent_name)
     with _agent_context(
-        agent_name=agent_name,
+        agent_name=selected_agent_name,
         model=model,
         port=port,
         no_start_inference=no_start_inference,
