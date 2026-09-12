@@ -66,6 +66,10 @@ class ModelProvider:
         """Resolve a downloaded model to a local path."""
         raise NotImplementedError
 
+    def remove(self, reference: ModelReference) -> Path:
+        """Remove a downloaded model and return its cache path."""
+        raise NotImplementedError
+
 
 class GitModelProvider(ModelProvider):
     """Provider for model repositories hosted by a Git-compatible service."""
@@ -146,6 +150,14 @@ class GitModelProvider(ModelProvider):
             {**os.environ, "GIT_TERMINAL_PROMPT": "0"},
             reference.identifier,
         )
+        return repository_dir
+
+    def remove(self, reference: ModelReference) -> Path:
+        """Remove a cloned repository from the provider cache."""
+        repository_dir = self._repository_dir(reference.identifier)
+        if not repository_dir.is_dir():
+            raise RuntimeError(f"Model not found: {reference.provider}:{reference.identifier}")
+        shutil.rmtree(repository_dir)
         return repository_dir
 
     def _materialize_lfs_files(
@@ -316,6 +328,15 @@ class OllamaProvider(ModelProvider):
             raise RuntimeError(f"Model not downloaded: {reference.provider}:{reference.identifier}")
         return model_path
 
+    def remove(self, reference: ModelReference) -> Path:
+        """Remove an Ollama model directory from the provider cache."""
+        name, tag = self._name_and_tag(reference.identifier)
+        model_dir = self.cache_dir / name / tag
+        if not model_dir.is_dir():
+            raise RuntimeError(f"Model not found: {reference.provider}:{reference.identifier}")
+        shutil.rmtree(model_dir)
+        return model_dir
+
 
 def _get_json(url: str, headers: dict[str, str] | None = None) -> dict:
     """Fetch and decode a JSON response."""
@@ -404,3 +425,9 @@ def resolve_model(value: str) -> Path:
     """Resolve an explicitly qualified model reference from provider caches."""
     reference = ModelReference.parse(value)
     return get_provider(reference).resolve(reference)
+
+
+def remove_model(value: str) -> Path:
+    """Remove a provider-qualified model from its local cache."""
+    reference = ModelReference.parse(value)
+    return get_provider(reference).remove(reference)

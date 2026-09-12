@@ -240,3 +240,21 @@ class TestCmdModelRemove:
 
         with pytest.raises(RuntimeError, match="Model not found"):
             model.cmd_model_remove("missing.gguf")
+
+    def test_remove_huggingface_model(self, capsys):
+        """Test removing a provider-cached model by its qualified reference."""
+        with patch.object(model.providers, "remove_model") as remove_model:
+            model.cmd_model_remove("hf:mlx-community/Qwen3-4B-4bit")
+
+        remove_model.assert_called_once_with("hf:mlx-community/Qwen3-4B-4bit")
+        assert "Removed hf:mlx-community/Qwen3-4B-4bit" in capsys.readouterr().out
+
+    def test_remove_unknown_provider_model_reports_error(self):
+        """Test provider removal preserves a clear missing-model error."""
+        with patch.object(
+            model.providers,
+            "remove_model",
+            side_effect=RuntimeError("Model not found: hf:org/missing"),
+        ):
+            with pytest.raises(RuntimeError, match="Model not found: hf:org/missing"):
+                model.cmd_model_remove("hf:org/missing")

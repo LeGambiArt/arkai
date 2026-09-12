@@ -109,11 +109,17 @@ def cmd_model_list() -> None:
 
 
 def cmd_model_remove(model_name: str) -> None:
-    """Remove a model file.
+    """Remove a local model file or provider-cached model.
 
     Args:
-        model_name: Name of model file (e.g., 'model.gguf')
+        model_name: Local model filename or provider reference
+            (e.g., 'model.gguf' or 'hf:org/model')
     """
+    if ":" in model_name:
+        providers.remove_model(model_name)
+        utils.info(f"Removed {model_name}")
+        return
+
     models_dir = get_models_dir()
     model_path = os.path.join(models_dir, model_name)
 
