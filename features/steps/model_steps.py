@@ -59,21 +59,21 @@ def step_run_arkai_model(context, cmd):
         importlib.reload(model)
 
         if cmd_name == "list":
-            # Mock the HuggingFace cached models function to return empty list
+            # Mock the Git-cloned model listing to keep tests isolated.
             # This ensures tests don't depend on actual system state
-            with patch.object(model, "_get_huggingface_cached_models", return_value=[]):
+            with patch.object(model.providers, "list_provider_models", return_value=[]):
                 model.cmd_model_list()
         elif cmd_name == "download":
             # TODO: actually not checking download, but mocking it.
-            # Mock the hf download by creating a dummy .gguf file
-            hf_repo = args[0]
+            # Mock the Git download by creating a dummy .gguf file.
+            model_ref = args[0]
             models_dir = model.get_models_dir()
             # Create a dummy .gguf file to simulate download
-            model_filename = hf_repo.split("/")[-1] + ".gguf"
+            model_filename = model_ref.split(":", 1)[-1].split("/")[-1] + ".gguf"
             model_path = os.path.join(models_dir, model_filename)
             # Add to existing_files set
             context.existing_files.add(model_path)
-            stdout_capture.write(f"Downloaded {hf_repo} to {models_dir}\n")
+            stdout_capture.write(f"Downloaded {model_ref} to {models_dir}\n")
         elif cmd_name == "remove":
             model.cmd_model_remove(args[0])
         else:
@@ -93,7 +93,7 @@ def step_run_arkai_model(context, cmd):
 
 @when('I run "arkai model list" with HuggingFace models')  # ty: ignore[call-non-callable]
 def step_run_arkai_model_with_hf(context):
-    """Run arkai model list with HuggingFace cached models."""
+    """Run arkai model list with Git-cloned HuggingFace models."""
     import sys
     from io import StringIO
 
@@ -114,14 +114,15 @@ def step_run_arkai_model_with_hf(context):
 
         importlib.reload(model)
 
-        # Mock HuggingFace cached models with realistic long repo names
+        # Mock cloned HuggingFace models with realistic long repo names.
         hf_models = [
             ("apple/DiffuCoder-7B-Base", "15.2G"),
             ("empero-ai/Qwen3.8-9B-Distill", "19.3G"),
             ("ggml-org/Qwen3.8-27B-GGUF", "19.6G"),
             ("unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF", "53.9G"),
         ]
-        with patch.object(model, "_get_huggingface_cached_models", return_value=hf_models):
+        provider_models = [("hf", repo_id, size) for repo_id, size in hf_models]
+        with patch.object(model.providers, "list_provider_models", return_value=provider_models):
             model.cmd_model_list()
     except SystemExit as e:
         context.exit_code = e.code
@@ -156,7 +157,7 @@ def step_check_file_not_exists(context, filename):
 
 @then("the output shows no models available")  # ty: ignore[call-non-callable]
 def step_check_no_models_output(context):
-    """Verify output indicates no models (either local or HF cache)."""
+    """Verify output indicates no local or cloned models."""
     output = context.stdout
     # Accept either "No models found" or HuggingFace models display (showing none available locally)
     assert "No models found" in output or "HuggingFace" in output, (

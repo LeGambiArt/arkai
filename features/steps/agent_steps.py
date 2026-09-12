@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 from behave import given, then, when
 
-from arkai import agent, inference, utils, wtmcp
+from arkai import agent, agent_opencode, inference, utils, wtmcp
 
 
 @when("I cancel the pi agent installation")  # ty: ignore[call-non-callable]
@@ -67,11 +67,8 @@ def _run_agent_in_tty(
     mock_proc.pid = 9999
     mock_proc.wait.return_value = 0
 
-    mock_tmp_file = MagicMock()
-    mock_tmp_file.name = "/tmp/mock-opencode-config.json"
-    mock_tmp_file.__enter__.return_value = mock_tmp_file
-    mock_tmp_file.__exit__.return_value = False
-    context.existing_files.add(mock_tmp_file.name)
+    config_dir = "/tmp/mock-opencode-sessions"
+    config_path = f"{config_dir}/opencode-config.json"
 
     popen_cmd: list = []
 
@@ -87,7 +84,12 @@ def _run_agent_in_tty(
         patch.object(wtmcp, "cmd_wtmcp_start") as mock_wtmcp_start,
         patch.object(utils, "resolve_binary", return_value="/usr/bin/fake-agent"),
         patch("subprocess.Popen", side_effect=capture_popen),
-        patch("tempfile.NamedTemporaryFile", return_value=mock_tmp_file),
+        patch.object(agent_opencode.os.path, "expanduser", return_value=config_dir),
+        patch.object(
+            agent_opencode.tempfile, "mkstemp", return_value=(999, config_path)
+        ) as mkstemp,
+        patch.object(agent_opencode.os, "close") as close,
+        patch.object(agent_opencode.Path, "write_text") as write_text,
     ):
         try:
             agent.cmd_agent(
@@ -102,6 +104,12 @@ def _run_agent_in_tty(
             context.wtmcp_start_called = mock_wtmcp_start.called
             # sandbox was used if the command starts with the arapuca prefix ("fake-agent run ...")
             context.sandbox_used = len(popen_cmd) >= 2 and popen_cmd[1] == "run"
+
+            mkstemp.assert_called_once_with(
+                prefix="opencode-", suffix=".json", dir=agent_opencode.Path(config_dir)
+            )
+            close.assert_called_once_with(999)
+            write_text.assert_called_once()
 
     sys.stdout = old_stdout
     sys.stderr = old_stderr

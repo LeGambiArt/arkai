@@ -8,7 +8,7 @@ import time
 
 import requests
 
-from arkai import config, utils
+from arkai import config, providers, utils
 
 
 def exec_cmd(args: dict | None = None) -> None:
@@ -165,7 +165,10 @@ def cmd_inference_start(
     model_path: str | None = None
     hf_model: str | None = None
     if model.startswith("hf:"):
-        hf_model = model[3:]
+        reference = providers.ModelReference.parse(model)
+        hf_model = reference.identifier
+    elif model.startswith("ollama:"):
+        model_path = str(providers.resolve_model(model))
     elif model:
         data_home = utils.get_data_home()
         model_path = os.path.join(data_home, "models", model)  # ty: ignore[no-matching-overload]

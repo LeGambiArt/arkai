@@ -4,7 +4,7 @@ import argparse
 import os
 from pathlib import Path
 
-from arkai import utils
+from arkai import providers, utils
 
 
 def exec_cmd(args: dict | None = None) -> None:
@@ -13,7 +13,7 @@ def exec_cmd(args: dict | None = None) -> None:
         case "list":
             cmd_model_list()
         case "download":
-            cmd_model_download(args.hf_repo)  # ty: ignore[unresolved-attribute]
+            cmd_model_download(args.model_ref)  # ty: ignore[unresolved-attribute]
         case "remove":
             cmd_model_remove(args.model_name)  # ty: ignore[unresolved-attribute]
         case "convert":
@@ -32,17 +32,18 @@ def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
     """
     model_parser = subparsers.add_parser("model", help="Manage models")
     model_subparsers = model_parser.add_subparsers(dest="model_cmd", required=True)
-    download_parser = model_subparsers.add_parser(
-        "download", help="Download model from HuggingFace"
+    download_parser = model_subparsers.add_parser("download", help="Download model from a provider")
+    download_parser.add_argument(
+        "model_ref",
+        help="Provider-qualified model (hf:owner/model or ollama:model:tag)",
     )
-    download_parser.add_argument("hf_repo", help="HuggingFace repo ID")
     model_subparsers.add_parser("list", help="List available models")
     remove_parser = model_subparsers.add_parser("remove", help="Remove model")
     remove_parser.add_argument("model_name", help="Model file name")
     convert_parser = model_subparsers.add_parser(
-        "convert", help="Convert HuggingFace model to GGUF format"
+        "convert", help="Convert a provider model to GGUF format"
     )
-    convert_parser.add_argument("model", help="HuggingFace model ID or path")
+    convert_parser.add_argument("model", help="Provider-qualified model ID or local path")
     convert_parser.add_argument(
         "-q", "--quantization", default="Q6_K", help="Quantization level (default: Q6_K)"
     )
@@ -61,99 +62,18 @@ def get_models_dir() -> str:
     return os.path.join(data_home, "models")
 
 
-def cmd_model_download(hf_repo: str) -> None:
-    """Download model from HuggingFace using hf CLI.
-
-    Downloads to HuggingFace cache. Use 'arkai model convert' to convert to GGUF format.
-
-    Args:
-        hf_repo: HuggingFace repo path (e.g., 'ibm-granite/granite-4.1-8b-instruct-GGUF')
-
-    Raises:
-        RuntimeError: If hf CLI is not found, network fails, or download fails
-    """
-    try:
-        code, _, stderr = utils.run_command(
-            ["hf", "download", hf_repo, "--repo-type", "model"],
-            capture=False,
-            timeout=None,
-        )
-    except RuntimeError as e:
-        if "Command not found" in str(e):
-            raise RuntimeError("hf command not found; install huggingface-hub CLI")
-        raise
-
-    if code != 0:
-        raise _handle_download_error(hf_repo, stderr)
-
-    utils.info(f"Downloaded {hf_repo} to HuggingFace cache")
-
-
-def _handle_download_error(hf_repo: str, stderr: str) -> RuntimeError:
-    """Convert download error output to user-friendly error message.
-
-    Args:
-        hf_repo: HuggingFace repo that failed to download
-        stderr: Error message from hf command
-
-    Returns:
-        RuntimeError with actionable error message
-    """
-    error_lower = stderr.lower()
-
-    if "network" in error_lower or "connection" in error_lower or "timeout" in error_lower:
-        return RuntimeError(
-            f"Network error downloading {hf_repo}.\n"
-            "Check your internet connection and try again.\n"
-            f"If the error persists, try: hf download {hf_repo} --repo-type model --force-download"
-        )
-
-    if "authentication" in error_lower or "401" in error_lower or "forbidden" in error_lower:
-        return RuntimeError(
-            f"Authentication error accessing {hf_repo}.\n"
-            "The model may require HuggingFace login:\n"
-            "  1. Visit https://huggingface.co/{repo}/tree/main\n"
-            "  2. Accept the model license (if required)\n"
-            "  3. Run 'huggingface-cli login' or set HF_TOKEN"
-        )
-
-    if "not found" in error_lower or "404" in error_lower:
-        return RuntimeError(
-            f"Model {hf_repo} not found on HuggingFace.\n"
-            "Check the repo ID is correct: https://huggingface.co/{hf_repo}\n"
-            "Common issues:\n"
-            "  - Typo in repo name (use owner/model-name format)\n"
-            "  - Private repo without access\n"
-            "  - Repo has been deleted"
-        )
-
-    if "disk" in error_lower or "space" in error_lower:
-        return RuntimeError(
-            f"Insufficient disk space to download {hf_repo}.\n"
-            "Free up space on your system or configure HF_HOME to a different location"
-        )
-
-    if "reconstruction" in error_lower or "cas" in error_lower:
-        return RuntimeError(
-            f"File integrity error downloading {hf_repo}.\n"
-            "The download was corrupted. Try again:\n"
-            f"  hf download {hf_repo} --repo-type model --force-download\n"
-            "If the error persists, the model may have upload issues on HuggingFace"
-        )
-
-    return RuntimeError(
-        f"Failed to download {hf_repo}\n"
-        f"Error: {stderr}\n"
-        "Try again with: hf download {hf_repo} --repo-type model --force-download"
-    )
+def cmd_model_download(model_ref: str) -> None:
+    """Download a provider-qualified model into the Arkai model cache."""
+    path = providers.download_model(model_ref)
+    utils.info(f"Downloaded {model_ref} to {path}")
 
 
 def cmd_model_list() -> None:
-    """List local GGUF models and HuggingFace cached models.
+    """List local GGUF files and models cached by every provider.
 
     Displays two categories:
     1. Local GGUF files in ~/.local/share/arkai/models/
-    2. HuggingFace cached models (found via 'hf cache ls')
+    2. Provider models downloaded into Arkai's model cache
     """
     models_dir = get_models_dir()
     gguf_files = []
@@ -162,11 +82,10 @@ def cmd_model_list() -> None:
     if os.path.exists(models_dir):
         gguf_files = sorted(Path(models_dir).glob("*.gguf"))
 
-    # Collect HuggingFace cached models
-    hf_models = _get_huggingface_cached_models()
+    provider_models = providers.list_provider_models()
 
     # If neither found, inform user
-    if not gguf_files and not hf_models:
+    if not gguf_files and not provider_models:
         utils.info("No models found")
         return
 
@@ -178,56 +97,15 @@ def cmd_model_list() -> None:
     else:
         utils.info("Local GGUF models: none")
 
-    # Display HuggingFace cached models
-    if hf_models:
+    if provider_models:
         if gguf_files:
             utils.info("")
-        utils.info("HuggingFace cached models:")
-        for repo_id, _ in hf_models:
-            utils.info(f"  {repo_id}")
+        utils.info("Provider models:")
+        for provider, identifier, _ in provider_models:
+            utils.info(f"  {provider}:{identifier}")
     else:
-        if not gguf_files:
-            # Already printed "No models found" above
-            pass
-        else:
-            utils.info("\nHuggingFace cached models: none")
-
-
-def _get_huggingface_cached_models() -> list:
-    """Get list of HuggingFace cached models.
-
-    Returns:
-        List of tuples (repo_id, size_string) for each cached model.
-        Returns empty list if 'hf' command unavailable or no models cached.
-    """
-    import json
-
-    try:
-        code, stdout, stderr = utils.run_command(["hf", "cache", "ls", "--json"])
-    except RuntimeError:
-        # hf command not available
-        return []
-
-    if code != 0:
-        # hf cache ls failed
-        return []
-
-    models = []
-    try:
-        data = json.loads(stdout)
-        # JSON format: [{"repo_id": "...", "size": "...", "repo_type": "model", ...}, ...]
-        for cache in data:
-            if isinstance(cache, dict):
-                repo_id = cache.get("repo_id")
-                size = cache.get("size", "")
-                repo_type = cache.get("repo_type", "")
-                if repo_id and repo_type == "model":
-                    models.append((repo_id, size))
-    except (json.JSONDecodeError, TypeError):
-        # If JSON parsing fails, return empty list
-        return []
-
-    return models
+        if gguf_files:
+            utils.info("\nProvider models: none")
 
 
 def cmd_model_remove(model_name: str) -> None:
@@ -247,15 +125,19 @@ def cmd_model_remove(model_name: str) -> None:
 
 
 def cmd_model_convert(model: str, quantization: str = "Q6_K", output: str | None = None) -> None:
-    """Convert HuggingFace model to GGUF format.
+    """Convert a provider model to GGUF format when conversion is required.
 
     Args:
-        model: HuggingFace model ID (e.g., 'apple/DiffuCoder-7B'),
-               model name from cache (e.g., 'DiffuCoder-7B'), or path
+        model: Provider model ID (e.g., 'hf:apple/DiffuCoder-7B') or path
         quantization: Quantization level (Q4_K_M, Q5_K_M, Q6_K, etc.)
         output: Optional output file path (defaults to
                 ~/.local/share/arkai/models/MODEL-QUANTIZATION.gguf)
     """
+    if model.startswith("ollama:"):
+        raise RuntimeError(
+            "Ollama models are already downloaded as GGUF and do not need conversion"
+        )
+
     # Find arkai-convert script using importlib.resources for packaging
     convert_script: str | None = None
     try:
