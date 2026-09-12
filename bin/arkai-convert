@@ -46,20 +46,11 @@ ensure_venv() {
     fi
 }
 
-find_hf_snapshot() {
-    local cache_dir="$1"
-    local snapshot_dir
-    snapshot_dir=$(ls -1td "$cache_dir"/snapshots/*/ 2>/dev/null | head -1)
-    if [ -z "$snapshot_dir" ]; then
-        echo "Error: no snapshots found in $cache_dir" >&2
-        exit 1
-    fi
-    echo "$snapshot_dir"
-}
-
 resolve_model() {
     local model="$1"
-    local hf_cache="${HF_HOME:-${XDG_CACHE_HOME:-$HOME/.cache}/huggingface}/hub"
+    local provider
+    local identifier
+    local model_cache="$SHARE_DIR/models/providers"
 
     # If model is a path, use it directly
     if [[ "$model" == /* ]] || [[ "$model" == ./* ]]; then
@@ -71,44 +62,40 @@ resolve_model() {
         return
     fi
 
-    # If model contains '/', it's a HF model ID
-    if echo "$model" | grep -q '/'; then
-        local cache_key
-        cache_key=$(echo "$model" | sed 's|/|--|g')
-        local cache_dir="$hf_cache/models--$cache_key"
-        if [ -d "$cache_dir/snapshots" ]; then
-            echo "Found '$model' in HF cache" >&2
-            find_hf_snapshot "$cache_dir"
-        else
-            echo "Model '$model' not found in Hugging cache." >&2
+    if ! echo "$model" | grep -q ':'; then
+        echo "Error: model must be a provider-qualified reference or local path" >&2
+        exit 1
+    fi
+
+    provider="${model%%:*}"
+    identifier="${model#*:}"
+    case "$provider" in
+        hf)
+            local repository_dir="$model_cache/huggingface/$identifier"
+            if [ ! -d "$repository_dir/.git" ]; then
+                echo "Model '$model' not found in Arkai model cache" >&2
+                exit 1
+            fi
+            echo "$repository_dir"
+            ;;
+        ollama)
+            local name="${identifier%:*}"
+            local tag="${identifier##*:}"
+            if [ "$name" = "$identifier" ]; then
+                tag="latest"
+            fi
+            local model_path="$model_cache/ollama/$name/$tag/model.gguf"
+            if [ ! -f "$model_path" ]; then
+                echo "Model '$model' not found in Arkai model cache" >&2
+                exit 1
+            fi
+            echo "$model_path"
+            ;;
+        *)
+            echo "Error: unsupported model provider '$provider'" >&2
             exit 1
-        fi
-        return
-    fi
-
-    # Otherwise, search for model in HF cache by name
-    if [ ! -d "$hf_cache" ]; then
-        echo "Error: '$model' is not a path or HF model ID, and no HF cache found" >&2
-        exit 1
-    fi
-
-    local matches=()
-    for dir in "$hf_cache"/models--*--"$model"; do
-        [ -d "$dir/snapshots" ] && matches+=("$dir")
-    done
-
-    if [ ${#matches[@]} -eq 0 ]; then
-        echo "Error: no cached model matching '$model' found" >&2
-        exit 1
-    fi
-
-    if [ ${#matches[@]} -gt 1 ]; then
-        echo "Error: multiple models match '$model'" >&2
-        exit 1
-    fi
-
-    echo "Resolved '$model' from HF cache" >&2
-    find_hf_snapshot "${matches[0]}"
+            ;;
+    esac
 }
 
 usage() {
@@ -118,8 +105,7 @@ arkai-convert -- Convert HuggingFace models to GGUF format
 Usage: arkai-convert [options] MODEL
 
 MODEL can be:
-  - A HuggingFace model ID (e.g. apple/DiffuCoder-7B-Base)
-  - A model name from the local HF cache (e.g. DiffuCoder-7B-Base)
+  - A provider-qualified model ID (e.g. hf:apple/DiffuCoder-7B-Base)
   - A local directory containing the model weights
 
 Output defaults to ~/.local/share/arkai/models/MODEL_NAME-QUANTIZATION.gguf.

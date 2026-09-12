@@ -429,8 +429,10 @@ def _get_model_name(cfg: dict) -> str:
     """
     model_file = config.get_config_value(cfg, "inference.model")
 
-    if model_file and model_file.startswith("hf:"):
-        return model_file[3:].split("/")[-1].replace("-GGUF", "").replace("-gguf", "")
+    if model_file and model_file.startswith(("hf:", "ollama:")):
+        model_reference = model_file.split(":", 1)[1]
+        model_name = model_reference.rsplit(":", 1)[0].split("/")[-1]
+        return model_name.replace("-GGUF", "").replace("-gguf", "")
     elif model_file:
         return os.path.splitext(os.path.basename(model_file))[0]
     return "local-model"

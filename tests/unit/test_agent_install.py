@@ -72,6 +72,7 @@ def test_pi_default_binary_is_arkai_local(tmp_path: Path, monkeypatch) -> None:
         patch.object(agent.config, "load_config", return_value=cfg),
         patch.object(agent.config, "validate_config", return_value=True),
         patch.object(agent.inference, "is_inference_running", return_value=True),
+        patch.object(agent.inference, "get_inference_model", return_value="test"),
         patch.object(
             agent.utils, "resolve_binary", return_value=str(core_dir / "bin" / "pi")
         ) as resolve,

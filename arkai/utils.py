@@ -257,7 +257,13 @@ def warn(msg: str) -> None:
 def info(msg: str) -> None:
     """Print info message to stdout."""
     if _message_level.value >= MessageLevel.INFO.value:
-        print(msg)
+        print(msg, flush=True)
+
+
+def progress(msg: str) -> None:
+    """Replace the current terminal line with an immediate progress update."""
+    if _message_level.value >= MessageLevel.INFO.value:
+        print(f"\r\033[K{msg}", end="", flush=True)
 
 
 VALID_VOLUME_FLAGS = {"ro", ""}

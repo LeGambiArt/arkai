@@ -7,7 +7,7 @@ Feature: Model Management
 
   Scenario: Download a model from HuggingFace
     Given a clean models directory
-    When I run "arkai model download ibm-granite/granite-4.1-8b-instruct-GGUF"
+    When I run "arkai model download hf:ibm-granite/granite-4.1-8b-instruct-GGUF"
     Then the exit code is 0
     And a .gguf file exists in the models directory
     And the output contains "Downloaded"
@@ -32,12 +32,12 @@ Feature: Model Management
     And the output contains "model1.gguf"
     And the output contains "model2.gguf"
 
-  Scenario: List HuggingFace cached models with long names
+  Scenario: List Git-cloned HuggingFace models with long names
     Given a clean models directory
     When I run "arkai model list" with HuggingFace models
     Then the exit code is 0
     And the output contains "unsloth/Qwen3-Coder-30B-A3B-Instruct-GGUF"
-    And the output contains "HuggingFace cached models"
+    And the output contains "Provider models"
 
   Scenario: Convert command requires model argument
     When I run "arkai model convert" without model argument

@@ -36,7 +36,7 @@ When you run `arkai agent start`, it starts `llama-server` (loading your GGUF mo
 ## Requirements
 
 
-** Commom development and CLI tools **
+**Common development and CLI tools**
 
 - `Python`
 - `pip`
@@ -46,7 +46,7 @@ When you run `arkai agent start`, it starts `llama-server` (loading your GGUF mo
 
 **External tools:**
 
-- `hf` (HuggingFace CLI) — for model download and listing
+- `git` — for downloading and updating Hugging Face model repositories
 - `llama.cpp` (`llama-server` and `llama-quantize`)
 - `wtmcp` — for MCP tool integration with agents *(optional)*
 - `arapuca` — for sandboxed agent execution *(optional)*
@@ -82,14 +82,14 @@ When you run `arkai agent start`, it starts `llama-server` (loading your GGUF mo
    ```
 
 > On Linux, `arapuca` is available as a Fedora package.
-  On macOS, `hf`, `llama.cpp`, and `arapuca` are available through Homebrew.
+  On macOS, `llama.cpp` and `arapuca` are available through Homebrew.
 
 ## Quick Start
 
-Download a GGUF model:
+Download a model repository:
 
 ```
-arkai model download ibm-granite/granite-4.1-8b-GGUF
+arkai model download hf:ibm-granite/granite-4.1-8b-GGUF
 ```
 
 Start agent:
@@ -130,35 +130,43 @@ Models are stored as GGUF files in `~/.local/share/arkai/models/`. The
 ### Download from HuggingFace
 
 ```bash
-arkai model download <hf-repo>
+arkai model download <provider>:<model-reference>
 ```
 
-Downloads the repository to the HuggingFace local cache. Requires the `hf` CLI.
-The downloaded files are not yet in a format usable by llama-server — use
-`arkai model convert` next.
+Downloads the model into Arkai's local provider cache. Every download must use
+an explicit provider, such as `hf:owner/model` or `ollama:model:tag`. Some
+repositories contain files that llama.cpp can use directly; others must be
+converted to GGUF before they can be loaded locally.
+Large model repositories may require the repository's configured Git large-file
+support (`git lfs`) to materialize the weight files.
 
 ```bash
-arkai model download ibm-granite/granite-4.1-8b-instruct-GGUF
+arkai model download hf:ibm-granite/granite-4.1-8b-instruct-GGUF
+arkai model download ollama:llama3.2:latest
 ```
+
+After downloading model, use the same provider-qualified reference for inference,
+for example `arkai agent start -m ollama:llama3.2:latest`.
 
 ### Convert to GGUF
 
 ```bash
-arkai model convert <hf-repo-or-name> [-q QUANTIZATION] [-o OUTPUT]
+arkai model convert <provider>:<model-reference> [-q QUANTIZATION] [-o OUTPUT]
 ```
 
-Converts a cached HuggingFace model to GGUF format and places it in the
-models directory. This is the step that makes a model usable by llama-server.
+Converts a cached provider model to GGUF format and places it in the models
+directory. Use this only when the downloaded repository is not already supported
+directly by llama.cpp.
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `-q/--quantization` | `Q6_K` | Quantization level |
 | `-o/--output` | `~/.local/share/arkai/models/MODEL-QUANTIZATION.gguf` | Output path |
 
-Common quantization levels: `Q4_K_M` (smaller, faster), `Q5_K_M`, `Q6_K` (default, good balance).
+Common quantization levels: `Q4_K_M` (smaller, faster), `Q5_K_M`, `Q6_K` (near original inference quality).
 
 ```bash
-arkai model convert ibm-granite/granite-4.1-8b-instruct-GGUF -q Q6_K
+arkai model convert hf:ibm-granite/granite-4.1-8b-instruct-GGUF -q Q6_K
 ```
 
 ### List models
@@ -167,8 +175,7 @@ arkai model convert ibm-granite/granite-4.1-8b-instruct-GGUF -q Q6_K
 arkai model list
 ```
 
-Shows two categories: local GGUF files in the models directory, and
-HuggingFace-cached models (requires `hf` CLI).
+Shows locally converted and provider models in Arkai's model cache.
 
 ### Remove a model
 
