@@ -68,11 +68,7 @@ def is_vectordb_running() -> bool:
     if pid is None:
         return False
 
-    try:
-        code, _, _ = utils.run_command(["kill", "-0", str(pid)])
-        return code == 0
-    except RuntimeError:
-        return False
+    return utils.is_process_running(pid)
 
 
 def get_vectordb_port() -> int | None:

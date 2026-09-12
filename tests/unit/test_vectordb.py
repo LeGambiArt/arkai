@@ -30,14 +30,14 @@ class TestVectordbStatus:
     def test_is_vectordb_running_process_exists(self, mock_utils):
         """Test vectordb running when process exists."""
         mock_utils.read_pid.return_value = 12345
-        mock_utils.run_command.return_value = (0, "", "")
+        mock_utils.is_process_running.return_value = True
         assert vectordb.is_vectordb_running()
 
     @patch("arkai.vectordb.utils")
     def test_is_vectordb_running_process_gone(self, mock_utils):
         """Test vectordb not running when process gone."""
         mock_utils.read_pid.return_value = 12345
-        mock_utils.run_command.return_value = (1, "", "")
+        mock_utils.is_process_running.return_value = False
         assert not vectordb.is_vectordb_running()
 
     @patch("os.path.exists")

@@ -69,12 +69,7 @@ def is_inference_running(port: int | None = None) -> bool:
     if pid is None:
         return False
 
-    # Check if process still exists
-    try:
-        code, _, _ = utils.run_command(["kill", "-0", str(pid)])
-        return code == 0
-    except RuntimeError:
-        return False
+    return utils.is_process_running(pid)
 
 
 def get_inference_model(port: int | None = None) -> str:

@@ -275,11 +275,7 @@ def _is_process_running(pid: int | None) -> bool:
     """Return whether a PID identifies a currently running process."""
     if pid is None:
         return False
-    try:
-        code, _, _ = utils.run_command(["kill", "-0", str(pid)])
-        return code == 0
-    except RuntimeError:
-        return False
+    return utils.is_process_running(pid)
 
 
 def is_wtmcp_running(port: int | None = None) -> bool:

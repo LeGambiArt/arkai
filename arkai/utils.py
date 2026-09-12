@@ -199,6 +199,15 @@ def kill_process(pid: int) -> bool:
         return False
 
 
+def is_process_running(pid: int) -> bool:
+    """Return whether a process exists for the given PID."""
+    try:
+        os.kill(pid, 0)
+        return True
+    except (ProcessLookupError, OSError):
+        return False
+
+
 def wait_for_process_stop(pid: int, timeout_secs: float = 10.0) -> bool:
     """Wait for a process to stop after SIGTERM, escalating to SIGKILL if needed.
 
@@ -216,11 +225,7 @@ def wait_for_process_stop(pid: int, timeout_secs: float = 10.0) -> bool:
     polls = max(1, int(timeout_secs / poll_interval))
 
     for _ in range(polls):
-        try:
-            code, _, _ = run_command(["kill", "-0", str(pid)])
-            if code != 0:
-                return True
-        except RuntimeError:
+        if not is_process_running(pid):
             return True
         time.sleep(poll_interval)
 
@@ -231,11 +236,7 @@ def wait_for_process_stop(pid: int, timeout_secs: float = 10.0) -> bool:
         return True
 
     for _ in range(4):
-        try:
-            code, _, _ = run_command(["kill", "-0", str(pid)])
-            if code != 0:
-                return True
-        except RuntimeError:
+        if not is_process_running(pid):
             return True
         time.sleep(0.5)
 

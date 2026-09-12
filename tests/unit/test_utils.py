@@ -1,3 +1,4 @@
+import signal
 import subprocess
 
 import pytest
@@ -105,6 +106,23 @@ class TestPIDManagement:
         monkeypatch.setattr("os.kill", lambda pid, sig: (_ for _ in ()).throw(ProcessLookupError()))
         result = utils.kill_process(9999)
         assert result is False
+
+    def test_is_process_running(self, monkeypatch):
+        """Process existence checks use os.kill with signal zero."""
+        kill = monkeypatch.setattr
+        calls = []
+
+        def fake_kill(pid, sig):
+            calls.append((pid, sig))
+
+        kill("os.kill", fake_kill)
+        assert utils.is_process_running(9999) is True
+        assert calls == [(9999, 0)]
+
+    def test_is_process_running_when_process_is_gone(self, monkeypatch):
+        """Missing processes are reported as not running."""
+        monkeypatch.setattr("os.kill", lambda pid, sig: (_ for _ in ()).throw(ProcessLookupError()))
+        assert utils.is_process_running(9999) is False
 
 
 class TestErrorHandling:
@@ -234,7 +252,7 @@ class TestWaitForProcessStop:
 
     def test_returns_true_when_process_already_gone(self, monkeypatch):
         """Process is gone before first poll; no SIGKILL needed."""
-        monkeypatch.setattr("arkai.utils.run_command", lambda cmd, **kw: (1, "", "no such process"))
+        monkeypatch.setattr("os.kill", lambda pid, sig: (_ for _ in ()).throw(ProcessLookupError()))
         monkeypatch.setattr("time.sleep", lambda _: None)
         assert utils.wait_for_process_stop(9999) is True
 
@@ -242,11 +260,12 @@ class TestWaitForProcessStop:
         """Process disappears on the second poll."""
         call_count = {"n": 0}
 
-        def fake_run(cmd, **kw):
+        def fake_kill(pid, sig):
             call_count["n"] += 1
-            return (0, "", "") if call_count["n"] < 2 else (1, "", "")
+            if call_count["n"] >= 2:
+                raise ProcessLookupError
 
-        monkeypatch.setattr("arkai.utils.run_command", fake_run)
+        monkeypatch.setattr("os.kill", fake_kill)
         monkeypatch.setattr("time.sleep", lambda _: None)
         assert utils.wait_for_process_stop(9999) is True
 
@@ -258,41 +277,31 @@ class TestWaitForProcessStop:
 
         def fake_kill(pid, sig):
             kill_calls.append(sig)
-            sigkill_sent["sent"] = True
+            if sig == signal.SIGKILL:
+                sigkill_sent["sent"] = True
+            elif sigkill_sent["sent"]:
+                raise ProcessLookupError
 
-        def fake_run(cmd, **kw):
-            # Report dead only after SIGKILL has been sent
-            return (1, "", "") if sigkill_sent["sent"] else (0, "", "")
-
-        monkeypatch.setattr("arkai.utils.run_command", fake_run)
         monkeypatch.setattr("os.kill", fake_kill)
         monkeypatch.setattr("time.sleep", lambda _: None)
-        import signal as _signal
 
         assert utils.wait_for_process_stop(9999, timeout_secs=1.0) is True
-        assert _signal.SIGKILL in kill_calls
+        assert signal.SIGKILL in kill_calls
 
     def test_returns_false_when_process_survives_sigkill(self, monkeypatch):
         """Process is unkillable; function returns False and does NOT remove files."""
-        monkeypatch.setattr("arkai.utils.run_command", lambda cmd, **kw: (0, "", ""))
         monkeypatch.setattr("os.kill", lambda pid, sig: None)
         monkeypatch.setattr("time.sleep", lambda _: None)
         assert utils.wait_for_process_stop(9999, timeout_secs=0.5) is False
 
     def test_returns_true_when_kill_raises_process_lookup_error(self, monkeypatch):
         """SIGKILL raises ProcessLookupError meaning process is already gone."""
+
         # All polls return alive so it tries SIGKILL
-        call_count = {"n": 0}
-
-        def fake_run(cmd, **kw):
-            call_count["n"] += 1
-            # Always alive during polls; the SIGKILL path handles termination
-            return (0, "", "")
-
         def fake_kill(pid, sig):
-            raise ProcessLookupError
+            if sig == signal.SIGKILL:
+                raise ProcessLookupError
 
-        monkeypatch.setattr("arkai.utils.run_command", fake_run)
         monkeypatch.setattr("os.kill", fake_kill)
         monkeypatch.setattr("time.sleep", lambda _: None)
         assert utils.wait_for_process_stop(9999, timeout_secs=0.5) is True
