@@ -6,6 +6,8 @@ import signal
 import subprocess
 import time
 
+import requests
+
 from arkai import config, utils
 
 
@@ -73,6 +75,38 @@ def is_inference_running(port: int | None = None) -> bool:
         return code == 0
     except RuntimeError:
         return False
+
+
+def get_inference_model(port: int | None = None) -> str:
+    """Return the model ID reported by the running inference server.
+
+    Args:
+        port: Inference server port. Defaults to 8081.
+
+    Returns:
+        The model ID from the server's OpenAI-compatible model listing.
+
+    Raises:
+        RuntimeError: If the server cannot be queried or returns an invalid response.
+    """
+    server_port = port or 8081
+    url = f"http://127.0.0.1:{server_port}/v1/models"
+    try:
+        response = requests.get(url, timeout=5)
+        response.raise_for_status()
+        model_id = response.json()["data"][0]["id"]
+    except requests.RequestException as error:
+        raise RuntimeError(
+            f"Unable to determine the running inference model on port {server_port}: {error}"
+        ) from error
+    except (KeyError, IndexError, TypeError, ValueError) as error:
+        raise RuntimeError(
+            f"Inference server returned an invalid model list on port {server_port}"
+        ) from error
+
+    if not isinstance(model_id, str) or not model_id:
+        raise RuntimeError(f"Inference server returned an invalid model ID on port {server_port}")
+    return model_id
 
 
 def cmd_inference_start(

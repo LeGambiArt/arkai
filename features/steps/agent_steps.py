@@ -82,6 +82,7 @@ def _run_agent_in_tty(
     with (
         patch.object(sys.stdin, "isatty", return_value=True),
         patch.object(inference, "is_inference_running", return_value=True),
+        patch.object(inference, "get_inference_model", return_value="test.gguf"),
         patch.object(wtmcp, "is_wtmcp_running", return_value=False),
         patch.object(wtmcp, "cmd_wtmcp_start") as mock_wtmcp_start,
         patch.object(utils, "resolve_binary", return_value="/usr/bin/fake-agent"),

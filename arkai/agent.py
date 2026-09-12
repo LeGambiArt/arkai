@@ -256,6 +256,10 @@ def _agent_context(
                     inference.cmd_inference_start(model=model, port=port)  # may raise RuntimeError
                 engine_started = True
 
+        inference_port = config.get_config_value(cfg, "inference.port", 8081)
+        active_model = inference.get_inference_model(inference_port)
+        cfg.setdefault("inference", {})["model"] = active_model
+
         if use_mcp:
             # may raise RuntimeError
             wtmcp_port, wtmcp_started = _start_wtmcp_server(cfg)
@@ -389,7 +393,7 @@ def _get_model_name(cfg: dict) -> str:
     if model_file and model_file.startswith("hf:"):
         return model_file[3:].split("/")[-1].replace("-GGUF", "").replace("-gguf", "")
     elif model_file:
-        return os.path.basename(model_file).split(".")[0].split("-Q")[0]
+        return os.path.splitext(os.path.basename(model_file))[0]
     return "local-model"
 
 
