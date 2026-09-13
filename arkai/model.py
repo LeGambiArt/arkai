@@ -141,7 +141,8 @@ def cmd_model_convert(model: str, quantization: str = "Q6_K", output: str | None
     """
     if model.startswith("ollama:"):
         raise RuntimeError(
-            "Ollama models are already downloaded as GGUF and do not need conversion"
+            "Ollama models are already downloaded as GGUF or native MLX artifacts "
+            "and do not need conversion"
         )
 
     # Find arkai-convert script using importlib.resources for packaging

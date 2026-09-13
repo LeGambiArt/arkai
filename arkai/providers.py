@@ -288,6 +288,9 @@ class OllamaProvider(ModelProvider):
         if config.get("digest"):
             self._download_blob(registry_path, config["digest"], model_dir, "configuration")
 
+        if self._is_mlx_manifest(manifest):
+            return self._download_mlx_model(registry_path, manifest, model_dir)
+
         model_blob = self._find_model_layer(manifest)
         blob_path = self._download_blob(
             registry_path, model_blob["digest"], model_dir, "model weights"
@@ -296,6 +299,38 @@ class OllamaProvider(ModelProvider):
         shutil.copyfile(blob_path, model_path)
         utils.info(f"Ollama model artifact ready: {model_path}")
         return model_path
+
+    @staticmethod
+    def _is_mlx_manifest(manifest: dict) -> bool:
+        """Return whether an Ollama manifest contains MLX tensor layers."""
+        return any(
+            layer.get("mediaType") == "application/vnd.ollama.image.tensor"
+            for layer in manifest.get("layers", [])
+        )
+
+    def _download_mlx_model(self, registry_path: str, manifest: dict, model_dir: Path) -> Path:
+        """Download named MLX tensors and metadata into an MLX model directory."""
+        layer_count = 0
+        for layer in manifest.get("layers", []):
+            digest = layer.get("digest")
+            if not isinstance(digest, str):
+                raise RuntimeError("Ollama MLX manifest contains a layer without a digest")
+            blob_path = self._download_blob(registry_path, digest, model_dir, "MLX layer")
+            name = layer.get("name")
+            if name is None:
+                continue
+            layer_name = Path(name)
+            if layer_name.is_absolute() or ".." in layer_name.parts:
+                raise RuntimeError(f"Ollama MLX layer has an invalid name: {name}")
+            layer_path = model_dir / layer_name
+            layer_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(blob_path, layer_path)
+            layer_count += 1
+
+        if not layer_count:
+            raise RuntimeError("Ollama MLX manifest does not contain named model layers")
+        utils.info(f"Ollama MLX model artifact ready: {model_dir}")
+        return model_dir
 
     def _find_model_layer(self, manifest: dict) -> dict:
         """Find the model weight layer in an Ollama manifest."""
@@ -346,19 +381,51 @@ class OllamaProvider(ModelProvider):
         if not self.cache_dir.is_dir():
             return []
         result = []
-        for model_path in self.cache_dir.rglob("model.gguf"):
-            cache_parts = model_path.parent.relative_to(self.cache_dir).parts
+        model_dirs = {model_path.parent for model_path in self.cache_dir.rglob("model.gguf")}
+        model_dirs.update(
+            model_path.parent
+            for model_path in self.cache_dir.rglob("manifest.json")
+            if self._manifest_is_mlx(model_path)
+        )
+        for model_dir in model_dirs:
+            cache_parts = model_dir.relative_to(self.cache_dir).parts
             identifier = f"{'/'.join(cache_parts[:-1])}:{cache_parts[-1]}"
-            result.append((identifier, _format_size(model_path.stat().st_size)))
+            model_path = model_dir / "model.gguf"
+            if model_path.exists():
+                size = model_path.stat().st_size
+            else:
+                size = sum(
+                    path.stat().st_size
+                    for path in model_dir.rglob("*")
+                    if path.is_file() and "blobs" not in path.parts
+                )
+            result.append((identifier, _format_size(size)))
         return sorted(result)
 
+    @staticmethod
+    def _manifest_is_mlx(manifest_path: Path) -> bool:
+        """Return whether a cached manifest describes an MLX model."""
+        try:
+            return OllamaProvider._is_mlx_manifest(json.loads(manifest_path.read_text()))
+        except (OSError, json.JSONDecodeError):
+            return False
+
     def resolve(self, reference: ModelReference) -> Path:
-        """Resolve a downloaded Ollama model to its GGUF artifact."""
+        """Resolve a downloaded Ollama model to its GGUF file or MLX directory."""
         name, tag = self._name_and_tag(reference.identifier)
-        model_path = self.cache_dir / name / tag / "model.gguf"
-        if not model_path.exists():
+        model_dir = self.cache_dir / name / tag
+        model_path = model_dir / "model.gguf"
+        if model_path.exists():
+            return model_path
+        if (model_dir / "manifest.json").exists() and self._manifest_is_mlx(
+            model_dir / "manifest.json"
+        ):
+            return model_dir
+        if not model_dir.exists():
             raise RuntimeError(f"Model not downloaded: {reference.provider}:{reference.identifier}")
-        return model_path
+        raise RuntimeError(
+            f"Downloaded Ollama model is incomplete: {reference.provider}:{reference.identifier}"
+        )
 
     def remove(self, reference: ModelReference) -> Path:
         """Remove an Ollama model directory from the provider cache."""

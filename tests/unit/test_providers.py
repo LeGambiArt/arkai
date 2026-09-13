@@ -218,3 +218,42 @@ def test_ollama_provider_downloads_and_verifies_model_layer(tmp_path, monkeypatc
     assert "Resolving Ollama manifest for llama3" in messages
     assert any(message.startswith("Downloading Ollama model weights") for message in messages)
     assert any(message.startswith("Verified Ollama model weights") for message in messages)
+
+
+def test_ollama_provider_downloads_mlx_layers(tmp_path, monkeypatch):
+    """The Ollama provider materializes MLX tensors and metadata by layer name."""
+    monkeypatch.setattr(utils, "get_data_home", lambda: str(tmp_path))
+    config = b'{"model_type":"test"}'
+    tensor = b"tensor data"
+    manifest = {
+        "layers": [
+            {
+                "mediaType": "application/vnd.ollama.image.json",
+                "digest": digest(config),
+                "name": "config.json",
+            },
+            {
+                "mediaType": "application/vnd.ollama.image.tensor",
+                "digest": digest(tensor),
+                "name": "model.layers.0.weight",
+            },
+        ]
+    }
+
+    def get(url, **kwargs):
+        if url.endswith("/manifests/26b-mlx"):
+            return FakeResponse(payload=manifest)
+        if url.endswith(digest(config)):
+            return FakeResponse(content=config)
+        if url.endswith(digest(tensor)):
+            return FakeResponse(content=tensor)
+        raise AssertionError(url)
+
+    with patch.object(providers.requests, "get", side_effect=get):
+        result = providers.download_model("ollama:gemma4:26b-mlx")
+
+    assert result.is_dir()
+    assert (result / "config.json").read_bytes() == config
+    assert (result / "model.layers.0.weight").read_bytes() == tensor
+    assert providers.resolve_model("ollama:gemma4:26b-mlx") == result
+    assert providers.PROVIDERS["ollama"].list_models()[0][0] == "gemma4:26b-mlx"
