@@ -122,6 +122,9 @@ def build_launch_spec(
         cmd = [agent_path]
 
     cmd.extend(["--model", f"local-llm/{model_id}"])
+    theme = config.get_config_value(cfg, "agent.theme")
+    if theme is not None:
+        cmd.extend(["--use-theme", theme])
     if mcp_available:
         cmd.extend(["--mcp-config", str(Path(agent_dir, "mcp.json"))])
     if prompt is not None:

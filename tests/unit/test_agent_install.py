@@ -182,6 +182,25 @@ def test_pi_passes_mcp_config_when_wtmcp_is_running(tmp_path: Path, monkeypatch)
     }
 
 
+def test_pi_passes_configured_theme_to_cli(tmp_path: Path, monkeypatch) -> None:
+    """Pi receives the configured theme through its theme CLI option."""
+    agent_dir = tmp_path / "pi-agent"
+    monkeypatch.setattr(agent_pi, "get_agent_dir", lambda: agent_dir)
+    cfg = {"agent": {"theme": "dracula"}, "inference": {"model": "test.gguf"}}
+
+    with patch.object(agent.subprocess, "Popen") as popen:
+        agent_pi.start("/bin/pi", cfg, None, False, None)
+
+    command = popen.call_args.args[0]
+    assert command == [
+        "/bin/pi",
+        "--model",
+        "local-llm/test",
+        "--use-theme",
+        "dracula",
+    ]
+
+
 def test_pi_interactive_sandbox_requests_tty(tmp_path: Path, monkeypatch) -> None:
     """Interactive Pi sessions allocate a terminal inside the sandbox."""
     agent_dir = tmp_path / "pi-agent"
