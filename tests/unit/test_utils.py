@@ -306,6 +306,25 @@ class TestWaitForProcessStop:
         monkeypatch.setattr("time.sleep", lambda _: None)
         assert utils.wait_for_process_stop(9999, timeout_secs=0.5) is True
 
+    def test_returns_true_when_child_is_reaped_after_sigkill(self, monkeypatch):
+        """A terminated child is stopped even while macOS still reports its zombie PID."""
+        sigkill_sent = {"sent": False}
+
+        def fake_kill(pid, sig):
+            if sig == signal.SIGKILL:
+                sigkill_sent["sent"] = True
+
+        def fake_waitpid(pid, options):
+            if sigkill_sent["sent"]:
+                return (pid, 9)
+            return (0, 0)
+
+        monkeypatch.setattr("os.kill", fake_kill)
+        monkeypatch.setattr("os.waitpid", fake_waitpid)
+        monkeypatch.setattr("time.sleep", lambda _: None)
+
+        assert utils.wait_for_process_stop(9999, timeout_secs=0.5) is True
+
 
 class TestMessageLevel:
     """Test message level functionality."""

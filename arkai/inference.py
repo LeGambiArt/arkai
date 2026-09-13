@@ -21,6 +21,7 @@ def exec_cmd(args: dict | None = None) -> None:
                 args.gpu_layers,  # ty: ignore[unresolved-attribute]
                 args.context,  # ty: ignore[unresolved-attribute]
                 args.port,  # ty: ignore[unresolved-attribute]
+                backend=args.backend,  # ty: ignore[unresolved-attribute]
             )
         case "stop":
             cmd_inference_stop()
@@ -41,6 +42,7 @@ def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
     start_parser.add_argument("--gpu-layers", type=int, help="Override GPU layers")
     start_parser.add_argument("--context", type=int, help="Override context size")
     start_parser.add_argument("--port", type=int, help="Override port from config")
+    start_parser.add_argument("--backend", help="Override inference backend from config")
     inference_subparsers.add_parser("stop", help="Stop inference server")
     inference_subparsers.add_parser("status", help="Show inference server status")
 
@@ -120,6 +122,7 @@ def cmd_inference_start(
     gpu_layers: int | None = None,
     context_size: int | None = None,
     port: int | None = None,
+    backend: str | None = None,
 ) -> None:
     """Start inference server (llama-server).
 
@@ -128,6 +131,7 @@ def cmd_inference_start(
         gpu_layers: Override GPU layers from config
         context_size: Override context size from config
         port: Override port from config
+        backend: Override inference backend from config
 
     Raises:
         RuntimeError: If no model specified and none available in config
@@ -147,6 +151,8 @@ def cmd_inference_start(
         cfg["inference"]["context_size"] = context_size
     if port is not None:
         cfg["inference"]["port"] = port
+    if backend is not None:
+        cfg["inference"]["backend"] = backend
 
     if not config.validate_config(cfg, require_model=True):
         raise RuntimeError("Invalid configuration")
@@ -168,15 +174,19 @@ def cmd_inference_start(
     # Build the backend-specific server command. The manager owns lifecycle and
     # readiness handling; the backend only translates common settings to CLI flags.
     model = config.get_config_value(cfg, "inference.model")
-    utils.info(f"Starting inference server on port {port}...")
-    backend = get_backend(config.get_config_value(cfg, "inference.backend", "llama-cpp"))
-    cmd = backend.build_command(
-        config.get_config_value(cfg, "inference.path", "llama-server"),
+    configured_path = cfg.get("inference", {}).get("path")
+    selected_backend = get_backend(config.get_config_value(cfg, "inference.backend", "llama-cpp"))
+    selected_backend.check_environment()
+    default_path = "mlx_lm.server" if selected_backend.name == "mlx" else "llama-server"
+    cmd = selected_backend.build_command(
+        configured_path if configured_path is not None else default_path,
         model,
         port,
         config.get_config_value(cfg, "inference.gpu_layers", -1),
         config.get_config_value(cfg, "inference.context_size", 65536),
+        path_is_configured=configured_path is not None,
     )
+    utils.info(f"Starting inference server on port {port}...")
 
     gpu_layers_val = config.get_config_value(cfg, "inference.gpu_layers", -1)
     context_size_val = config.get_config_value(cfg, "inference.context_size", 65536)
@@ -185,7 +195,7 @@ def cmd_inference_start(
     signal.signal(signal.SIGINT, signal.SIG_IGN)
 
     try:
-        # Start in background
+        # Start in background without forwarding server logs to the agent terminal.
         proc = subprocess.Popen(
             cmd,
             stdout=subprocess.DEVNULL,
@@ -201,7 +211,7 @@ def cmd_inference_start(
 
     # Save engine state (config used at startup)
     state = {
-        "backend": backend.name,
+        "backend": selected_backend.name,
         "model": model,
         "gpu_layers": gpu_layers_val,
         "context_size": context_size_val,

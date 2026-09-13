@@ -8,6 +8,9 @@ class InferenceBackend(Protocol):
 
     name: str
 
+    def check_environment(self) -> None:
+        """Validate that dependencies required by the backend are available."""
+
     def build_command(
         self,
         path: str,
@@ -15,6 +18,7 @@ class InferenceBackend(Protocol):
         port: int,
         gpu_layers: int,
         context_size: int,
+        path_is_configured: bool = False,
     ) -> list[str]:
         """Build the command used to start the inference server."""
 
@@ -53,6 +57,8 @@ def _load_builtin_backends() -> None:
         return
 
     from arkai.inference_llama_cpp import LlamaCppBackend
+    from arkai.inference_mlx import MlxBackend
 
     register_backend(LlamaCppBackend())
+    register_backend(MlxBackend())
     _BUILTINS_LOADED = True

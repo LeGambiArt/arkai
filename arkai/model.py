@@ -176,7 +176,7 @@ def cmd_model_convert(model: str, quantization: str = "Q6_K", output: str | None
         raise RuntimeError(f"Conversion script not found: {convert_script}")
 
     if code != 0:
-        error_msg = stderr if stderr else stdout
+        error_msg = stderr or stdout or f"conversion script exited with status {code}"
         raise RuntimeError(f"Conversion failed:\n{error_msg}")
 
     # Extract output path from stdout (last line)

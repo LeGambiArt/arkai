@@ -187,7 +187,16 @@ class GitModelProvider(ModelProvider):
             error_text = install_stderr or "Git LFS initialization failed."
             raise RuntimeError(f"Failed to initialize Git LFS for {identifier}: {error_text}")
 
-        utils.info(f"Downloading Git-LFS files for hf:{identifier}")
+        expected_size = _lfs_pointer_size(repository_dir)
+        if expected_size:
+            utils.info(
+                f"Downloading Git-LFS files for hf:{identifier} "
+                f"(expected total: {_format_size(expected_size)}; this may take several minutes)"
+            )
+        else:
+            utils.info(
+                f"Downloading Git-LFS files for hf:{identifier} (this may take several minutes)"
+            )
         code, _, stderr = utils.run_command(
             [git_path, "-C", str(repository_dir), "lfs", "pull"],
             capture=False,
@@ -212,6 +221,29 @@ def _contains_lfs_pointer(repository_dir: Path) -> bool:
         except OSError:
             continue
     return False
+
+
+def _lfs_pointer_size(repository_dir: Path) -> int:
+    """Return the total expected size declared by Git-LFS pointer files."""
+    pointer_header = b"version https://git-lfs.github.com/spec/v1\n"
+    total_size = 0
+    for path in repository_dir.rglob("*"):
+        if path.is_dir() or ".git" in path.parts:
+            continue
+        try:
+            with path.open("rb") as model_file:
+                if model_file.read(len(pointer_header)) != pointer_header:
+                    continue
+                for line in model_file:
+                    if line.startswith(b"size "):
+                        try:
+                            total_size += int(line.split()[1])
+                        except (IndexError, ValueError):
+                            pass
+                        break
+        except OSError:
+            continue
+    return total_size
 
 
 class OllamaProvider(ModelProvider):

@@ -206,6 +206,14 @@ class TestCmdModelConvert:
             with pytest.raises(RuntimeError, match="Conversion failed"):
                 model.cmd_model_convert("test-model")
 
+    def test_convert_command_failure_without_output_reports_exit_code(self):
+        """Test conversion failures remain useful when the child inherits its output."""
+        with patch.object(utils, "run_command") as mock_run:
+            mock_run.return_value = (1, None, None)
+
+            with pytest.raises(RuntimeError, match="status 1"):
+                model.cmd_model_convert("test-model")
+
     def test_convert_script_not_found(self):
         """Test when the conversion script cannot be started."""
         with patch.object(utils, "run_command") as mock_run:

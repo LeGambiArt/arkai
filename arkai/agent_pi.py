@@ -43,11 +43,12 @@ def get_runtime_volumes(agent_path: str) -> list[str]:
 
 def _prepare_agent_dir(cfg: dict, wtmcp_port: int | None) -> str:
     """Write Pi's model and optional MCP configuration files."""
-    from arkai.agent import _get_model_name
+    from arkai.agent import _get_agent_model_id, _get_model_name
 
     agent_dir = get_agent_dir()
     agent_dir.mkdir(parents=True, exist_ok=True)
     inference_port = config.get_config_value(cfg, "inference.port", 8081)
+    model_id = _get_agent_model_id(cfg)
     model_name = _get_model_name(cfg)
     context_size = config.get_config_value(cfg, "inference.context_size", 65536)
     models = {
@@ -59,7 +60,7 @@ def _prepare_agent_dir(cfg: dict, wtmcp_port: int | None) -> str:
                 "compat": {"supportsDeveloperRole": False, "supportsReasoningEffort": False},
                 "models": [
                     {
-                        "id": model_name,
+                        "id": model_id,
                         "name": model_name,
                         "reasoning": False,
                         "contextWindow": context_size,
@@ -95,11 +96,11 @@ def build_launch_spec(
 ) -> AgentLaunchSpec:
     """Create Pi configuration and return its process launch specification."""
     from arkai import wtmcp
-    from arkai.agent import _build_sandbox_cmd, _get_model_name
+    from arkai.agent import _build_sandbox_cmd, _get_agent_model_id
 
     mcp_available = wtmcp_port is not None and wtmcp.is_wtmcp_running(wtmcp_port)
     agent_dir = _prepare_agent_dir(cfg, wtmcp_port if mcp_available else None)
-    model_name = _get_model_name(cfg)
+    model_id = _get_agent_model_id(cfg)
     env = os.environ.copy()
     env["PI_CODING_AGENT_DIR"] = agent_dir
     if use_sandbox:
@@ -119,7 +120,7 @@ def build_launch_spec(
     else:
         cmd = [agent_path]
 
-    cmd.extend(["--model", f"local-llm/{model_name}"])
+    cmd.extend(["--model", f"local-llm/{model_id}"])
     if mcp_available:
         cmd.extend(["--mcp-config", str(Path(agent_dir, "mcp.json"))])
     if prompt is not None:

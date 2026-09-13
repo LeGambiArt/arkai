@@ -65,11 +65,12 @@ def build_launch_spec(
     prompt: str | None = None,
 ) -> AgentLaunchSpec:
     """Create OpenCode configuration and return its process launch specification."""
-    from arkai.agent import _build_sandbox_cmd, _get_model_name
+    from arkai.agent import _build_sandbox_cmd, _get_agent_model_id, _get_model_name
 
     config_dir = _get_config_dir()
     inference_port = config.get_config_value(cfg, "inference.port", 8081)
     inference_backend = config.get_config_value(cfg, "inference.backend", "llama-cpp")
+    model_id = _get_agent_model_id(cfg)
     model_name = _get_model_name(cfg)
     config_data: dict = {
         "$schema": "https://opencode.ai/config.json",
@@ -78,10 +79,10 @@ def build_launch_spec(
                 "name": f"Local LLM ({inference_backend})",
                 "npm": "@ai-sdk/openai-compatible",
                 "options": {"baseURL": f"http://127.0.0.1:{inference_port}/v1"},
-                "models": {model_name: {"name": model_name}},
+                "models": {model_id: {"name": model_name}},
             }
         },
-        "model": f"local-llm/{model_name}",
+        "model": f"local-llm/{model_id}",
     }
     if wtmcp_port is not None:
         config_data["mcp"] = {

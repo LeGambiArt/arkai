@@ -59,3 +59,15 @@ def test_health_check_returns_false_for_request_failure() -> None:
         side_effect=inference.requests.ConnectionError("connection refused"),
     ):
         assert inference._is_inference_server_healthy(9090) is False
+
+
+def test_inference_cli_registers_backend_override() -> None:
+    """The inference start command accepts a backend override."""
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    inference.ingest_cli_options(subparsers)
+
+    args = parser.parse_args(["inference", "start", "--backend", "mlx"])
+    assert args.backend == "mlx"

@@ -7,6 +7,8 @@ set -euo pipefail
 QUANT_TYPE=""
 OUTFILE=""
 SHARE_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/arkai"
+TOKENIZER_CONFIG=""
+TOKENIZER_CONFIG_BACKUP=""
 
 ensure_llama_cpp() {
     LLAMA_CPP_DIR="$SHARE_DIR/llama.cpp"
@@ -98,6 +100,44 @@ resolve_model() {
     esac
 }
 
+restore_tokenizer_config() {
+    if [ -n "$TOKENIZER_CONFIG_BACKUP" ] && [ -f "$TOKENIZER_CONFIG_BACKUP" ]; then
+        cp "$TOKENIZER_CONFIG_BACKUP" "$TOKENIZER_CONFIG"
+        rm -f "$TOKENIZER_CONFIG_BACKUP"
+    fi
+}
+
+normalize_tokenizer_config() {
+    local model_dir="$1"
+    TOKENIZER_CONFIG="$model_dir/tokenizer_config.json"
+    if [ ! -f "$TOKENIZER_CONFIG" ]; then
+        return
+    fi
+
+    TOKENIZER_CONFIG_BACKUP=$(mktemp)
+    cp "$TOKENIZER_CONFIG" "$TOKENIZER_CONFIG_BACKUP"
+    trap restore_tokenizer_config EXIT
+
+    "$VENV_DIR/bin/python3" - "$TOKENIZER_CONFIG" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+with open(path) as config_file:
+    config = json.load(config_file)
+
+extra_tokens = config.get("extra_special_tokens")
+if isinstance(extra_tokens, list):
+    config["extra_special_tokens"] = {
+        f"extra_special_token_{index}": token
+        for index, token in enumerate(extra_tokens)
+    }
+    with open(path, "w") as config_file:
+        json.dump(config, config_file, indent=2)
+        config_file.write("\n")
+PY
+}
+
 usage() {
     cat <<'HELP'
 arkai-convert -- Convert HuggingFace models to GGUF format
@@ -149,6 +189,7 @@ main() {
     ensure_venv
 
     model=$(resolve_model "$model")
+    normalize_tokenizer_config "$model"
 
     if [ -z "$OUTFILE" ]; then
         mkdir -p "$SHARE_DIR/models"

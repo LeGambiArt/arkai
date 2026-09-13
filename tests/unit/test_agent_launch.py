@@ -30,6 +30,24 @@ def test_opencode_builds_configuration_without_starting_process(
     config_path.unlink()
 
 
+def test_opencode_uses_mlx_default_model_alias(tmp_path: Path, monkeypatch) -> None:
+    """OpenCode sends MLX-LM's mapped default model ID instead of a HF short name."""
+    sessions = tmp_path / "sessions"
+    monkeypatch.setattr(agent_opencode.os.path, "expanduser", lambda _: str(sessions))
+    cfg = {"inference": {"backend": "mlx", "model": "hf:mlx-community/Qwen3-4B-4bit"}}
+
+    spec = agent_opencode.build_launch_spec("/agent", cfg, None, False, None)
+
+    config_path = Path(spec.environment["OPENCODE_CONFIG"])
+    config_data = json.loads(config_path.read_text())
+    assert config_data["model"] == "local-llm/default_model"
+    assert "default_model" in config_data["provider"]["local-llm"]["models"]
+    assert config_data["provider"]["local-llm"]["models"]["default_model"]["name"] == (
+        "Qwen3-4B-4bit"
+    )
+    config_path.unlink()
+
+
 def test_run_launch_spec_owns_popen_and_cleanup(tmp_path: Path) -> None:
     """The shared runner starts the process and removes module-created files."""
     temporary = tmp_path / "agent.json"

@@ -22,6 +22,9 @@ rag = [
     "markdown>=3.4",
     "sentence-transformers>=2.2.0",
 ]
+mlx = [
+    "mlx-lm>=0.20.0",
+]
 dev = [
     "pytest>=7.0",
     "behave>=1.2.6",
