@@ -116,6 +116,7 @@ def build_launch_spec(
             sandbox_profile,
             runtime_volumes,
             sandbox_environment,
+            tty=prompt is None,
         ) + [agent_path]
     else:
         cmd = [agent_path]
