@@ -44,3 +44,16 @@ Feature: Inference Engine Management
     When I run "arkai inference stop"
     Then the exit code is 0
     And the inference PID file does not exist
+
+  Scenario: MLX backend is accepted by configuration validation
+    Given a valid .arkai.yaml file with inference backend "mlx"
+    When I run "arkai config validate"
+    Then the exit code is 0
+
+  Scenario: MLX inference fails with an actionable missing dependency error
+    Given a valid .arkai.yaml file with inference backend "mlx"
+    And MLX-LM is not importable
+    When I run "arkai inference start"
+    Then the exit code is 1
+    And the error contains "MLX-LM is not installed in the active Python environment"
+    And the error contains "pip install -e '.[mlx]'"

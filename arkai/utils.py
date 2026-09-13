@@ -208,6 +208,17 @@ def is_process_running(pid: int) -> bool:
         return False
 
 
+def _reap_child_process(pid: int) -> bool:
+    """Reap a stopped child process and report whether it was reaped."""
+    try:
+        waited_pid, _ = os.waitpid(pid, os.WNOHANG)
+        return waited_pid == pid
+    except (ChildProcessError, OSError):
+        # The process may have been started by another process, so it is not
+        # necessarily waitable by this process.
+        return False
+
+
 def wait_for_process_stop(pid: int, timeout_secs: float = 10.0) -> bool:
     """Wait for a process to stop after SIGTERM, escalating to SIGKILL if needed.
 
@@ -225,6 +236,8 @@ def wait_for_process_stop(pid: int, timeout_secs: float = 10.0) -> bool:
     polls = max(1, int(timeout_secs / poll_interval))
 
     for _ in range(polls):
+        if _reap_child_process(pid):
+            return True
         if not is_process_running(pid):
             return True
         time.sleep(poll_interval)
@@ -236,6 +249,8 @@ def wait_for_process_stop(pid: int, timeout_secs: float = 10.0) -> bool:
         return True
 
     for _ in range(4):
+        if _reap_child_process(pid):
+            return True
         if not is_process_running(pid):
             return True
         time.sleep(0.5)
@@ -318,11 +333,13 @@ def validate_environment(environment: object) -> str | None:
     return None
 
 
-def resolve_binary(binary_path: str) -> str:
+def resolve_binary(binary_path: str, search_path: bool = True) -> str:
     """Resolve binary path: expand tilde, return absolute path.
 
     If path is absolute or relative with directory separators, use as-is.
-    If path is simple name, try to find in PATH.
+    If path is a simple name and ``search_path`` is true, try to find it in PATH.
+    When ``search_path`` is false, an explicitly configured simple name is
+    returned unchanged for the process launcher to resolve.
     Error if not found.
 
     Args:
@@ -350,6 +367,9 @@ def resolve_binary(binary_path: str) -> str:
         if os.path.exists(abs_path) and os.access(abs_path, os.X_OK):
             return abs_path
         raise RuntimeError(f"Binary not found or not executable: {abs_path}")
+
+    if not search_path:
+        return expanded
 
     # Simple name: search in PATH
     found = shutil.which(expanded)

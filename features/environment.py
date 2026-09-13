@@ -85,6 +85,7 @@ def _clean_patches(context):
         "port_in_use_patch",
         "port_in_use_patch_utils",
         "port_in_use_patch_engine",
+        "mlx_import_patch",
         "is_running_patch",
         "wtmcp_running_patch",
         "vectordb_running_patch",

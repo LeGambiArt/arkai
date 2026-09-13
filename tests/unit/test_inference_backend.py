@@ -7,6 +7,7 @@ import pytest
 
 from arkai.inference_backend import get_backend, get_backend_names, register_backend
 from arkai.inference_llama_cpp import LlamaCppBackend
+from arkai.inference_mlx import MlxBackend
 
 
 def test_llama_cpp_backend_builds_command_for_local_model(tmp_path: Path) -> None:
@@ -60,6 +61,40 @@ def test_backend_registry_contains_llama_cpp() -> None:
     assert get_backend("llama-cpp").name == "llama-cpp"
 
 
+def test_mlx_backend_builds_command_for_huggingface_model() -> None:
+    """The MLX-LM backend passes the cached Hugging Face model path to its server."""
+    with patch("arkai.inference_mlx.utils.resolve_binary", return_value="/bin/mlx_lm.server"):
+        with patch(
+            "arkai.inference_mlx.providers.resolve_model",
+            return_value="/models/mlx-community/model",
+        ):
+            command = MlxBackend().build_command(
+                "mlx_lm.server", "hf:mlx-community/model", 9090, 12, 4096
+            )
+
+    assert command == [
+        "/bin/mlx_lm.server",
+        "--model",
+        "/models/mlx-community/model",
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "9090",
+    ]
+
+
+def test_mlx_backend_rejects_ollama_model() -> None:
+    """Ollama GGUF artifacts are not MLX-LM models."""
+    with pytest.raises(RuntimeError, match="requires a Hugging Face MLX model"):
+        MlxBackend().build_command("mlx_lm.server", "ollama:model:latest", 8081, -1, 4096)
+
+
+def test_backend_registry_contains_mlx() -> None:
+    """The optional MLX-LM backend is available without importing MLX itself."""
+    assert "mlx" in get_backend_names()
+    assert get_backend("mlx").name == "mlx"
+
+
 def test_backend_registry_rejects_unknown_backend() -> None:
     """Unknown backend names include available alternatives in the error."""
     with pytest.raises(RuntimeError, match="not supported.*llama-cpp"):
@@ -72,8 +107,17 @@ def test_custom_backend_can_be_registered() -> None:
     class FakeBackend:
         name = "fake"
 
+        def check_environment(self) -> None:
+            """Provide the backend environment check required by the protocol."""
+
         def build_command(
-            self, path: str, model: str, port: int, gpu_layers: int, context_size: int
+            self,
+            path: str,
+            model: str,
+            port: int,
+            gpu_layers: int,
+            context_size: int,
+            path_is_configured: bool = False,
         ) -> list[str]:
             return [path, model, str(port), str(gpu_layers), str(context_size)]
 

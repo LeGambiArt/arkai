@@ -10,6 +10,9 @@ class LlamaCppBackend:
 
     name = "llama-cpp"
 
+    def check_environment(self) -> None:
+        """Validate llama.cpp backend dependencies at process launch time."""
+
     def build_command(
         self,
         path: str,
@@ -17,6 +20,7 @@ class LlamaCppBackend:
         port: int,
         gpu_layers: int,
         context_size: int,
+        path_is_configured: bool = False,
     ) -> list[str]:
         """Build a llama-server command from common inference settings."""
         command = ["--port", str(port), "--host", "127.0.0.1"]

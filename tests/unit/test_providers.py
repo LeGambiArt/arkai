@@ -50,7 +50,7 @@ def test_model_reference_rejects_unknown_provider():
         providers.ModelReference.parse("unknown:model")
 
 
-def test_huggingface_download_materializes_lfs_files(tmp_path, monkeypatch):
+def test_huggingface_download_materializes_lfs_files(tmp_path, monkeypatch, capsys):
     """Hugging Face repositories have their Git-LFS model files downloaded."""
     monkeypatch.setattr(utils, "get_data_home", lambda: str(tmp_path))
     commands = []
@@ -79,6 +79,34 @@ def test_huggingface_download_materializes_lfs_files(tmp_path, monkeypatch):
     assert commands[1][0:2] == ["/usr/bin/git", "-C"]
     repository_path = tmp_path / "models" / "providers" / "huggingface" / "org" / "model"
     assert commands[1][2] == str(repository_path)
+    output = capsys.readouterr().out
+    assert "Downloading Git-LFS files for hf:org/model" in output
+    assert "expected total: 4.0B" in output
+
+
+def test_huggingface_lfs_download_reports_expected_size(tmp_path):
+    """Git-LFS downloads report the total size declared by pointer files."""
+    repository_dir = tmp_path / "repository"
+    repository_dir.mkdir()
+    (repository_dir / "first.bin").write_bytes(
+        b"version https://git-lfs.github.com/spec/v1\noid sha256:first\nsize 1024\n"
+    )
+    (repository_dir / "second.bin").write_bytes(
+        b"version https://git-lfs.github.com/spec/v1\noid sha256:second\nsize 2048\n"
+    )
+
+    assert providers._lfs_pointer_size(repository_dir) == 3072
+
+
+def test_huggingface_lfs_download_reports_without_size_when_unavailable(tmp_path):
+    """Git-LFS status remains useful when pointer sizes are unavailable."""
+    repository_dir = tmp_path / "repository"
+    repository_dir.mkdir()
+    (repository_dir / "model.bin").write_bytes(
+        b"version https://git-lfs.github.com/spec/v1\noid sha256:model\n"
+    )
+
+    assert providers._lfs_pointer_size(repository_dir) == 0
 
 
 def test_huggingface_lfs_install_failure_is_reported(tmp_path, monkeypatch):

@@ -33,11 +33,11 @@ def build_launch_spec(
     prompt: str | None = None,
 ) -> AgentLaunchSpec:
     """Create Claude configuration and return its process launch specification."""
-    from arkai.agent import _build_sandbox_cmd, _get_model_name
+    from arkai.agent import _build_sandbox_cmd, _get_agent_model_id
 
     inference_port = config.get_config_value(cfg, "inference.port", 8081)
     context_size = config.get_config_value(cfg, "inference.context_size", 65536)
-    model_name = _get_model_name(cfg)
+    model_name = _get_agent_model_id(cfg)
     vertex_env_vars = [
         "CLAUDE_CODE_USE_VERTEX",
         "ANTHROPIC_VERTEX_PROJECT_ID",

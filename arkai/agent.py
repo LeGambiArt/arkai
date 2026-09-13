@@ -33,6 +33,7 @@ def exec_cmd(args: dict | None = None) -> None:
                 args.volumes,  # ty: ignore[unresolved-attribute]
                 agent_env,
                 args.port,  # ty: ignore[unresolved-attribute]
+                args.backend,  # ty: ignore[unresolved-attribute]
             )
         case "prompt":
             cmd_agent_prompt(
@@ -48,6 +49,7 @@ def exec_cmd(args: dict | None = None) -> None:
                 agent_env,
                 args.output,  # ty: ignore[unresolved-attribute]
                 args.port,  # ty: ignore[unresolved-attribute]
+                args.backend,  # ty: ignore[unresolved-attribute]
             )
         case "install":
             cmd_agent_install(args.agent_name)  # ty: ignore[unresolved-attribute]
@@ -108,10 +110,12 @@ def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
     agent_subparsers = agent_parser.add_subparsers(dest="agent_cmd", required=True)
     agent_start_parser = agent_subparsers.add_parser("start", help="Start interactive agent")
     _add_agent_common_args(agent_start_parser)
+    agent_start_parser.add_argument("--backend", help="Override inference backend from config")
     agent_prompt_parser = agent_subparsers.add_parser(
         "prompt", help="Run agent with a prompt non-interactively"
     )
     _add_agent_common_args(agent_prompt_parser)
+    agent_prompt_parser.add_argument("--backend", help="Override inference backend from config")
     agent_prompt_parser.add_argument(
         "-o", "--output", metavar="FILE", help="Write agent output to file instead of stdout"
     )
@@ -202,6 +206,7 @@ def _agent_context(
     sandbox_profile: str | None = None,
     sandbox_volume: list | None = None,
     sandbox_environment: dict | None = None,
+    backend: str | None = None,
 ) -> Iterator[AgentContext]:
     """Set up and tear down agent infrastructure.
 
@@ -220,6 +225,7 @@ def _agent_context(
         sandbox_profile: Use specific sandbox profile for this run
         sandbox_volume: List of volumes to mount in the sandbox
         sandbox_environment: Dict of environment variables to set in the sandbox
+        backend: Override inference backend from config
 
     Yields:
         AgentContext with all infrastructure ready
@@ -234,6 +240,8 @@ def _agent_context(
         cfg["inference"]["model"] = model
     if port is not None:
         cfg["inference"]["port"] = port
+    if backend is not None:
+        cfg["inference"]["backend"] = backend
 
     inference_running = (
         inference.is_inference_running(port)
@@ -290,14 +298,21 @@ def _agent_context(
                 raise RuntimeError("Inference engine is not running.")
             else:
                 if port is None:
-                    inference.cmd_inference_start(model=model)  # may raise RuntimeError
+                    if backend is None:
+                        inference.cmd_inference_start(model=model)  # may raise RuntimeError
+                    else:
+                        inference.cmd_inference_start(model=model, backend=backend)
                 else:
-                    inference.cmd_inference_start(model=model, port=port)  # may raise RuntimeError
+                    if backend is None:
+                        inference.cmd_inference_start(model=model, port=port)
+                    else:
+                        inference.cmd_inference_start(model=model, port=port, backend=backend)
                 engine_started = True
 
         inference_port = config.get_config_value(cfg, "inference.port", 8081)
         active_model = inference.get_inference_model(inference_port)
         cfg.setdefault("inference", {})["model"] = active_model
+        _sync_running_inference_backend(cfg, port)
 
         if use_mcp:
             # may raise RuntimeError
@@ -436,6 +451,27 @@ def _get_model_name(cfg: dict) -> str:
     elif model_file:
         return os.path.splitext(os.path.basename(model_file))[0]
     return "local-model"
+
+
+def _get_agent_model_id(cfg: dict) -> str:
+    """Return the model ID agent clients should send to the inference server."""
+    inference_backend = config.get_config_value(cfg, "inference.backend", "llama-cpp")
+    if inference_backend == "mlx":
+        return "default_model"
+    return _get_model_name(cfg)
+
+
+def _sync_running_inference_backend(cfg: dict, port: int | None = None) -> None:
+    """Use the backend recorded by the running inference instance when available."""
+    state_path = inference.get_inference_state_path(port)
+    try:
+        state = utils.load_yaml(state_path)
+    except FileNotFoundError:
+        return
+
+    backend = state.get("backend")
+    if isinstance(backend, str) and backend:
+        cfg.setdefault("inference", {})["backend"] = backend
 
 
 def _start_wtmcp_server(cfg: dict) -> tuple[int, bool]:
@@ -642,6 +678,7 @@ def cmd_agent(
     sandbox_volume: list | None = None,
     sandbox_environment: dict | None = None,
     port: int | None = None,
+    backend: str | None = None,
 ) -> None:
     """Start interactive agent session (requires TTY).
 
@@ -649,6 +686,7 @@ def cmd_agent(
         agent_name: Override agent from config
         model: Override model from config
         port: Use a separate inference server on this port
+        backend: Override inference backend from config
         no_start_inference: Do not start inference engine
         no_mcp: Skip wtmcp initialization regardless of config
         no_sandbox: Skip arapuca sandbox regardless of config
@@ -676,6 +714,7 @@ def cmd_agent(
         sandbox_profile=sandbox_profile,
         sandbox_volume=sandbox_volume,
         sandbox_environment=sandbox_environment,
+        backend=backend,
     ) as ctx:
         _dispatch_agent(ctx)
 
@@ -693,6 +732,7 @@ def cmd_agent_prompt(
     sandbox_environment: dict | None = None,
     output_file: str | None = None,
     port: int | None = None,
+    backend: str | None = None,
 ) -> None:
     """Run agent non-interactively with a prompt.
 
@@ -705,6 +745,7 @@ def cmd_agent_prompt(
         agent_name: Override agent from config
         model: Override model from config
         port: Use a separate inference server on this port
+        backend: Override inference backend from config
         no_start_inference: Do not start inference engine
         no_mcp: Skip wtmcp initialization regardless of config
         no_sandbox: Skip arapuca sandbox regardless of config
@@ -748,6 +789,7 @@ def cmd_agent_prompt(
         sandbox_profile=sandbox_profile,
         sandbox_volume=sandbox_volume,
         sandbox_environment=sandbox_environment,
+        backend=backend,
     ) as ctx:
         result = _dispatch_agent(ctx, prompt, capture_stdout=True)
 

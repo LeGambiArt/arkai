@@ -19,6 +19,16 @@ def step_port_in_use(context, port):
     context.port_in_use_patch.start()
 
 
+@given("MLX-LM is not importable")  # ty: ignore[call-non-callable]
+def step_mlx_lm_not_importable(context):
+    """Make the MLX-LM package import fail for the startup preflight."""
+    context.mlx_import_patch = patch(
+        "arkai.inference_mlx.importlib.import_module",
+        side_effect=ModuleNotFoundError("No module named 'mlx_lm'"),
+    )
+    context.mlx_import_patch.start()
+
+
 @given("the inference server is not running")  # ty: ignore[call-non-callable]
 def step_server_not_running(context):
     """Mock the inference server as not running."""

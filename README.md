@@ -7,7 +7,7 @@ maximum log output and prints a full exception traceback when a command fails:
 arkai --debug inference start
 ```
 
-arkai is a CLI for running AI agents with local models on your own hardware. It orchestrates three services — a llama.cpp inference server, an MCP plugin server (wtmcp), and optionally an arapuca sandbox — so you can launch a fully configured agent session with a single command. Configuration is layered: user-level defaults, per-project overrides, and CLI flags.
+arkai is a CLI for running AI agents with local models on your own hardware. It orchestrates three services — an OpenAI-compatible inference server (llama.cpp or optional MLX-LM), an MCP plugin server (wtmcp), and optionally an arapuca sandbox — so you can launch a fully configured agent session with a single command. Configuration is layered: user-level defaults, per-project overrides, and CLI flags.
 
 ## How It Works
 
@@ -48,6 +48,7 @@ When you run `arkai agent start`, it starts `llama-server` (loading your GGUF mo
 
 - `git` — for downloading and updating Hugging Face model repositories
 - `llama.cpp` (`llama-server` and `llama-quantize`)
+- `mlx-lm` (`pip install -e '.[mlx]'`, optional; Apple Silicon)
 - `wtmcp` — for MCP tool integration with agents *(optional)*
 - `arapuca` — for sandboxed agent execution *(optional)*
 - Agent binary: `opencode`, `crush`, `claude`, or `pi` — at least one required
@@ -217,6 +218,27 @@ ROCm (AMD), or falls back to CPU. Setting `gpu_layers: -1` in config offloads
 all layers to GPU.
 
 The inference server exposes an OpenAI-compatible API at `http://127.0.0.1:<port>/v1`.
+
+### MLX-LM backend
+
+Install the optional backend and select an MLX model from Hugging Face:
+
+```bash
+pip install -e '.[mlx]'
+arkai model download hf:mlx-community/Llama-3.2-3B-Instruct-4bit
+arkai inference start --model hf:mlx-community/Llama-3.2-3B-Instruct-4bit
+```
+
+```yaml
+inference:
+  backend: mlx
+  model: hf:mlx-community/Llama-3.2-3B-Instruct-4bit
+  port: 8081
+```
+
+Arkai resolves `hf:` models from its local provider cache before starting
+MLX-LM, so the server does not download an already cached model. `gpu_layers`
+and `context_size` are llama.cpp-specific settings and are not passed to MLX-LM.
 
 ### Status
 
@@ -423,8 +445,8 @@ arkai config validate --file PATH  # validate a specific file
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `inference.model` | string | — | Local model filename, or `hf:<repo>` for a HuggingFace model |
-| `inference.backend` | string | `llama-cpp` | Registered OpenAI-compatible inference backend |
-| `inference.path` | string | `llama-server` | Path to inference backend binary |
+| `inference.backend` | string | `llama-cpp` | `llama-cpp` or optional `mlx` |
+| `inference.path` | string | backend-dependent | Path to `llama-server` or `mlx_lm.server` |
 | `inference.port` | int | `8081` | Port for inference server (1024–65535) |
 | `inference.gpu_layers` | int | `-1` | GPU layers to offload (`-1` = all) |
 | `inference.context_size` | int | `65536` | Context window size in tokens |
