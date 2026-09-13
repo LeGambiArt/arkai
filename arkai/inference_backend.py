@@ -2,6 +2,8 @@
 
 from typing import Protocol
 
+SamplingSettings = dict[str, float | int]
+
 
 class InferenceBackend(Protocol):
     """Command builder for an OpenAI-compatible inference server."""
@@ -19,6 +21,7 @@ class InferenceBackend(Protocol):
         gpu_layers: int,
         context_size: int,
         path_is_configured: bool = False,
+        sampling: SamplingSettings | None = None,
     ) -> list[str]:
         """Build the command used to start the inference server."""
 

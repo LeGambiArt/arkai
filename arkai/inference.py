@@ -142,7 +142,7 @@ def cmd_inference_start(
     # the default PID/state paths, even when the config changes the port.
     instance_port = port
 
-    # Apply CLI overrides before validation so they can satisfy required fields
+    # Apply CLI overrides before validation so they can satisfy required fields.
     if model:
         cfg["inference"]["model"] = model
     if gpu_layers is not None:
@@ -173,7 +173,7 @@ def cmd_inference_start(
 
     # Build the backend-specific server command. The manager owns lifecycle and
     # readiness handling; the backend only translates common settings to CLI flags.
-    model = config.get_config_value(cfg, "inference.model")
+    model, sampling = config.resolve_model(cfg)
     configured_path = cfg.get("inference", {}).get("path")
     selected_backend = get_backend(config.get_config_value(cfg, "inference.backend", "llama-cpp"))
     selected_backend.check_environment()
@@ -185,6 +185,7 @@ def cmd_inference_start(
         config.get_config_value(cfg, "inference.gpu_layers", -1),
         config.get_config_value(cfg, "inference.context_size", 65536),
         path_is_configured=configured_path is not None,
+        sampling=sampling,
     )
     utils.info(f"Starting inference server on port {port}...")
 

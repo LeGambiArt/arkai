@@ -50,6 +50,15 @@ DEFAULTS = {
 }
 
 VALID_AGENTS = {"opencode", "crush", "claude", "pi"}
+MODEL_SETTINGS = {
+    "temperature",
+    "top_p",
+    "top_k",
+    "min_p",
+    "presence_penalty",
+    "frequency_penalty",
+    "repetition_penalty",
+}
 
 
 def parse_context_size(value: int | str) -> int | None:
@@ -158,6 +167,28 @@ def validate_config(config: dict, require_model: bool = True) -> bool:
         valid = False
 
     model = get_config_value(config, "inference.model")
+    inference = config.get("inference", {})
+    if not isinstance(inference, dict):
+        inference = {}
+    if not _validate_sampling_settings("inference", inference):
+        valid = False
+
+    profiles = get_config_value(config, "inference.profiles", {})
+    if profiles and not isinstance(profiles, dict):
+        utils.error("inference.profiles must be a mapping of names to model settings")
+        valid = False
+    elif isinstance(profiles, dict):
+        for model_name, model_settings in profiles.items():
+            if not isinstance(model_settings, dict) or not model_settings.get("model"):
+                utils.error(f"inference.profiles.{model_name}.model is required")
+                valid = False
+            elif not _validate_sampling_settings(
+                f"inference.profiles.{model_name}", model_settings
+            ):
+                valid = False
+
+    if isinstance(profiles, dict) and profiles and not model:
+        model = next(iter(profiles))
 
     if not model:
         if require_model:
@@ -261,6 +292,40 @@ def validate_config(config: dict, require_model: bool = True) -> bool:
                     valid = False
 
     return valid
+
+
+def _validate_sampling_settings(path: str, settings: dict) -> bool:
+    """Validate sampling settings at a configuration path."""
+    valid = True
+    for setting in settings:
+        if setting in MODEL_SETTINGS and not isinstance(settings[setting], (int, float)):
+            utils.error(f"{path}.{setting} must be numeric")
+            valid = False
+    return valid
+
+
+def resolve_model(config: dict) -> tuple[str, dict[str, float | int]]:
+    """Resolve the selected model reference and its backend sampling settings."""
+    selected = get_config_value(config, "inference.model")
+    inference = config.get("inference", {})
+    defaults = (
+        {key: inference[key] for key in MODEL_SETTINGS if key in inference}
+        if isinstance(inference, dict)
+        else {}
+    )
+    profiles = get_config_value(config, "inference.profiles", {})
+    if isinstance(profiles, dict) and profiles:
+        if selected is None:
+            selected = next(iter(profiles))
+        settings = profiles.get(selected)
+        if isinstance(settings, dict):
+            model = settings.get("model")
+            if model:
+                defaults.update({key: settings[key] for key in MODEL_SETTINGS if key in settings})
+                return model, defaults
+    if not selected:
+        raise RuntimeError("inference.model is required to start inference server")
+    return selected, defaults
 
 
 def get_config_value(config: dict, key: str, default: Any = None) -> Any:

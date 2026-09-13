@@ -35,6 +35,45 @@ def test_llama_cpp_backend_builds_command_for_local_model(tmp_path: Path) -> Non
     ]
 
 
+def test_llama_cpp_backend_passes_sampling_settings(tmp_path: Path) -> None:
+    """The llama.cpp backend translates model sampling settings to flags."""
+    model = tmp_path / "models" / "model.gguf"
+    model.parent.mkdir()
+    model.touch()
+    sampling = {
+        "temperature": 0.7,
+        "top_p": 0.9,
+        "top_k": 40,
+        "min_p": 0.05,
+        "presence_penalty": 0.1,
+        "frequency_penalty": 0.2,
+        "repetition_penalty": 1.1,
+    }
+
+    with patch("arkai.inference_llama_cpp.utils.resolve_binary", return_value="/bin/llama"):
+        with patch("arkai.inference_llama_cpp.utils.get_data_home", return_value=str(tmp_path)):
+            command = LlamaCppBackend().build_command(
+                "llama-server", "model.gguf", 9090, 12, 4096, sampling=sampling
+            )
+
+    assert command[-14:] == [
+        "--temp",
+        "0.7",
+        "--top-p",
+        "0.9",
+        "--top-k",
+        "40",
+        "--min-p",
+        "0.05",
+        "--presence-penalty",
+        "0.1",
+        "--frequency-penalty",
+        "0.2",
+        "--repeat-penalty",
+        "1.1",
+    ]
+
+
 def test_llama_cpp_backend_builds_command_for_huggingface_model() -> None:
     """The llama.cpp backend preserves Hugging Face model references."""
     with patch("arkai.inference_llama_cpp.utils.resolve_binary", return_value="/bin/llama"):
@@ -83,6 +122,22 @@ def test_mlx_backend_builds_command_for_huggingface_model() -> None:
     ]
 
 
+def test_mlx_backend_passes_sampling_settings() -> None:
+    """The MLX-LM backend translates model sampling settings to flags."""
+    with patch("arkai.inference_mlx.utils.resolve_binary", return_value="/bin/mlx_lm.server"):
+        with patch("arkai.inference_mlx.providers.resolve_model", return_value="/models/model"):
+            command = MlxBackend().build_command(
+                "mlx_lm.server",
+                "hf:org/model",
+                9090,
+                -1,
+                4096,
+                sampling={"temperature": 0.8, "repetition_penalty": 1.05},
+            )
+
+    assert command[-4:] == ["--temp", "0.8", "--repetition-penalty", "1.05"]
+
+
 def test_mlx_backend_rejects_ollama_model() -> None:
     """Ollama GGUF artifacts are not MLX-LM models."""
     with pytest.raises(RuntimeError, match="requires a Hugging Face MLX model"):
@@ -118,6 +173,7 @@ def test_custom_backend_can_be_registered() -> None:
             gpu_layers: int,
             context_size: int,
             path_is_configured: bool = False,
+            sampling: dict[str, float | int] | None = None,
         ) -> list[str]:
             return [path, model, str(port), str(gpu_layers), str(context_size)]
 

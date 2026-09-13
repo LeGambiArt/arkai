@@ -127,6 +127,27 @@ arkai agent start \
 
 Models are stored as GGUF files in `~/.local/share/arkai/models/`. The
 `inference.model` config key refers to the filename within that directory.
+Named model profiles can be kept in the same configuration file. Set
+`inference.model` to the profile name; its `model` value is started and its
+sampling values are passed to the selected backend:
+
+```yaml
+inference:
+  model: balanced
+  profiles:
+    fast:
+      model: hf:mlx-community/Llama-3.2-3B-Instruct-4bit
+      temperature: 0.2
+      top_k: 40
+    balanced:
+      model: granite-4.1-8b-instruct-Q6_K.gguf
+      temperature: 0.7
+      top_p: 0.9
+      min_p: 0.05
+      presence_penalty: 0.0
+      frequency_penalty: 0.0
+      repetition_penalty: 1.1
+```
 
 ### Download from HuggingFace
 
@@ -445,12 +466,22 @@ arkai config validate --file PATH  # validate a specific file
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `inference.model` | string | — | Local model filename, or `hf:<repo>` for a HuggingFace model |
+| `inference.profiles` | mapping | — | Named model profiles; each profile has `model` and optional sampling settings |
 | `inference.backend` | string | `llama-cpp` | `llama-cpp` or optional `mlx` |
 | `inference.path` | string | backend-dependent | Path to `llama-server` or `mlx_lm.server` |
 | `inference.port` | int | `8081` | Port for inference server (1024–65535) |
 | `inference.gpu_layers` | int | `-1` | GPU layers to offload (`-1` = all) |
 | `inference.context_size` | int | `65536` | Context window size in tokens |
 | `inference.startup_timeout` | int | `600` | Maximum seconds to wait for the server to become ready |
+
+The sampling settings can also be placed directly under `inference` to provide
+defaults for the selected model: `temperature`, `top_p`, `top_k`, `min_p`,
+`presence_penalty`, `frequency_penalty`, and `repetition_penalty`. Profile values
+override these defaults.
+
+Model sampling settings are `temperature`, `top_p`, `top_k`, `min_p`,
+`presence_penalty`, `frequency_penalty`, and `repetition_penalty`. They are
+translated to the corresponding `llama-server` or `mlx_lm.server` CLI options.
 
 Inference backends are registered command builders. The manager supplies the
 common model, port, GPU-layer, and context settings, then handles the process

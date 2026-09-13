@@ -3,6 +3,7 @@
 import os
 
 from arkai import providers, utils
+from arkai.inference_backend import SamplingSettings
 
 
 class LlamaCppBackend:
@@ -21,6 +22,7 @@ class LlamaCppBackend:
         gpu_layers: int,
         context_size: int,
         path_is_configured: bool = False,
+        sampling: SamplingSettings | None = None,
     ) -> list[str]:
         """Build a llama-server command from common inference settings."""
         command = ["--port", str(port), "--host", "127.0.0.1"]
@@ -47,4 +49,16 @@ class LlamaCppBackend:
                 str(context_size),
             ]
         )
+        option_names = {
+            "temperature": "--temp",
+            "top_p": "--top-p",
+            "top_k": "--top-k",
+            "min_p": "--min-p",
+            "presence_penalty": "--presence-penalty",
+            "frequency_penalty": "--frequency-penalty",
+            "repetition_penalty": "--repeat-penalty",
+        }
+        for setting, option in option_names.items():
+            if sampling and setting in sampling:
+                command.extend([option, str(sampling[setting])])
         return command

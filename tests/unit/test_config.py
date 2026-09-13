@@ -44,6 +44,61 @@ class TestConfigLoading:
 
 
 class TestConfigValidation:
+    def test_validate_profiles_and_resolve_selected_settings(self):
+        cfg = {
+            "agent": {"name": "opencode"},
+            "inference": {
+                "model": "creative",
+                "profiles": {
+                    "precise": {"model": "precise.gguf", "temperature": 0.2},
+                    "creative": {"model": "creative.gguf", "top_p": 0.95},
+                },
+            },
+        }
+
+        assert config.validate_config(cfg) is True
+        assert config.resolve_model(cfg) == ("creative.gguf", {"top_p": 0.95})
+
+    def test_inference_sampling_defaults_apply_to_direct_model(self):
+        cfg = {
+            "agent": {"name": "opencode"},
+            "inference": {"model": "model.gguf", "temperature": 0.4, "top_k": 20},
+        }
+
+        assert config.resolve_model(cfg) == (
+            "model.gguf",
+            {"temperature": 0.4, "top_k": 20},
+        )
+
+    def test_profile_sampling_overrides_inference_defaults(self):
+        cfg = {
+            "agent": {"name": "opencode"},
+            "inference": {
+                "model": "creative",
+                "temperature": 0.4,
+                "top_p": 0.8,
+                "profiles": {"creative": {"model": "creative.gguf", "temperature": 0.9}},
+            },
+        }
+
+        assert config.resolve_model(cfg) == (
+            "creative.gguf",
+            {"temperature": 0.9, "top_p": 0.8},
+        )
+
+    def test_validate_inference_sampling_defaults(self):
+        cfg = {
+            "agent": {"name": "opencode"},
+            "inference": {"model": "model.gguf", "temperature": "invalid"},
+        }
+
+        assert config.validate_config(cfg) is False
+
+    def test_validate_model_requires_model_reference(self):
+        cfg = {"agent": {"name": "opencode"}, "inference": {"profiles": {"broken": {}}}}
+
+        assert config.validate_config(cfg) is False
+
     def test_validate_missing_agent_name(self):
         cfg = {"agent": {}, "inference": {"port": 8081, "model": "test.gguf"}}
         # Missing agent.name issues a warning but validation passes (uses default)

@@ -57,3 +57,8 @@ Feature: Inference Engine Management
     Then the exit code is 1
     And the error contains "MLX-LM is not installed in the active Python environment"
     And the error contains "pip install -e '.[mlx]'"
+
+  Scenario: Validate inference profiles
+    Given a valid .arkai.yaml file with inference profiles
+    When I run "arkai config validate"
+    Then the exit code is 0

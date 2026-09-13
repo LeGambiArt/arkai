@@ -60,6 +60,23 @@ def step_valid_config_with_backend(context, backend):
     }
 
 
+@given("a valid .arkai.yaml file with inference profiles")  # ty: ignore[call-non-callable]
+def step_valid_config_with_multiple_models(context):
+    """Create a config containing named model profiles and sampling settings."""
+    context.config_file = ".arkai.yaml"
+    context.config_data = {
+        "agent": {"name": "opencode"},
+        "inference": {
+            "backend": "llama-cpp",
+            "model": "balanced",
+            "profiles": {
+                "fast": {"model": "fast.gguf", "temperature": 0.2},
+                "balanced": {"model": "balanced.gguf", "top_p": 0.9},
+            },
+        },
+    }
+
+
 @when('I run "arkai config {cmd}"')  # ty: ignore[call-non-callable]
 def step_run_config(context, cmd):
     parts = cmd.split()

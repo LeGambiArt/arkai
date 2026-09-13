@@ -3,6 +3,7 @@
 import importlib
 
 from arkai import providers, utils
+from arkai.inference_backend import SamplingSettings
 
 
 class MlxBackend:
@@ -22,6 +23,7 @@ class MlxBackend:
         gpu_layers: int,
         context_size: int,
         path_is_configured: bool = False,
+        sampling: SamplingSettings | None = None,
     ) -> list[str]:
         """Build an ``mlx_lm.server`` command from common inference settings.
 
@@ -34,7 +36,7 @@ class MlxBackend:
             raise RuntimeError("MLX-LM requires a Hugging Face MLX model, not an Ollama model")
 
         server_path = utils.resolve_binary(path, search_path=not path_is_configured)
-        return [
+        command = [
             server_path,
             "--model",
             model,
@@ -43,6 +45,19 @@ class MlxBackend:
             "--port",
             str(port),
         ]
+        option_names = {
+            "temperature": "--temp",
+            "top_p": "--top-p",
+            "top_k": "--top-k",
+            "min_p": "--min-p",
+            "presence_penalty": "--presence-penalty",
+            "frequency_penalty": "--frequency-penalty",
+            "repetition_penalty": "--repetition-penalty",
+        }
+        for setting, option in option_names.items():
+            if sampling and setting in sampling:
+                command.extend([option, str(sampling[setting])])
+        return command
 
     @staticmethod
     def _check_mlx_lm_installed() -> None:
