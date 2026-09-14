@@ -1,0 +1,106 @@
+# Example arkai configuration file
+# Copy this to ${HOME}/.config/arkai/arkai.yaml and customize for a default
+# setting for all your projects.
+# Copy this to .arkai.yaml and customize for your project. If you have a
+# user scoped configuration, you can only override the settings you want.
+# CLI options will override any of these settings, if available.
+
+agent:
+  name: opencode
+
+inference:
+  backend: llama-cpp
+  # Use a local model path, or prefix a HuggingFace model with hf:
+  model: "/path/to/model.gguf"
+  # model: "hf:mistralai/Mistral-7B-Instruct-v0.1"
+  port: 8081
+  gpu_layers: -1  # -1 = all layers
+  context_size: 65536
+  # Sampling defaults apply to the selected model unless a profile overrides them.
+  # temperature: 0.7
+  # top_p: 0.9
+  # top_k: 40
+  # min_p: 0.05
+  # presence_penalty: 0.0
+  # frequency_penalty: 0.0
+  # repetition_penalty: 1.1
+  # Select one named profile instead of setting a single inference.model.
+  # model: balanced
+  # profiles:
+  #   fast:
+  #     model: hf:mlx-community/Llama-3.2-3B-Instruct-4bit
+  #     temperature: 0.2
+  #     top_k: 40
+  #   balanced:
+  #     model: "/path/to/another-model.gguf"
+  #     temperature: 0.7
+  #     top_p: 0.9
+  #     top_k: 40
+  #     min_p: 0.05
+  #     presence_penalty: 0.0
+  #     frequency_penalty: 0.0
+  #     repetition_penalty: 1.1
+
+wtmcp:
+  port: 8080
+  path: wtmcp
+
+# Sandbox configuration - choose your engine
+sandbox:
+  enabled: true
+
+  # Engine selection: "arapuca" or "openshell"
+  engine: arapuca
+
+  # Arapuca path (when engine: arapuca)
+  path: arapuca
+
+  # OpenShell gateway config (when engine: openshell)
+  openshell:
+    gateway:
+      host: localhost
+      port: 8084
+
+  # Common sandbox settings
+  memory_mb: 2048
+  cpus: 2
+  pids: 256
+  timeout: 0  # 0 = no timeout
+
+  # Sandbox profiles for different use cases
+  profiles:
+    default:
+      name: default
+      memory_mb: 2048
+      cpus: 2
+      timeout: 0
+
+    strict:
+      name: strict
+      memory_mb: 1024
+      cpus: 1
+      timeout: 300
+
+    development:
+      name: development
+      memory_mb: 4096
+      cpus: 4
+      timeout: 0
+      # Additional volumes and environment for development
+      volume:
+        - "/data:rw"
+      environment:
+        DEBUG: "1"
+        LOG_LEVEL: "debug"
+
+vectordb:
+  vendor: chromadb
+  port: 8082
+  path: chroma
+  database_dir: ~/.local/share/arkai/vectordb
+
+rag:
+  chunk_size: 512
+  chunk_overlap: 50
+  embedding_model: null
+  max_search_results: 10
