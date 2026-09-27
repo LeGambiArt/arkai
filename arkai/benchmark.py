@@ -206,6 +206,7 @@ def exec_cmd(args: argparse.Namespace) -> None:
         context_size=context_size,
         backend=backend,
         no_inference=args.no_inference,
+        explicit_port=args.port is not None,
     )
 
     # Run benchmark
@@ -343,6 +344,7 @@ class BenchmarkConfig:
     context_size: int = 65536
     backend: str = "llama-cpp"
     no_inference: bool = False
+    explicit_port: bool = False
 
 
 class BenchmarkRunner:
@@ -357,10 +359,29 @@ class BenchmarkRunner:
         self.config = bench_config
         self.started_server = False
 
+    def _instance_port(self) -> int | None:
+        """Return the bookkeeping port for this benchmark instance."""
+        return self.config.port if self.config.explicit_port else None
+
+    def _running_server_matches_request(self) -> bool:
+        """Return whether the running server was started for this benchmark."""
+        try:
+            state = utils.load_yaml(inference.get_inference_state_path(self._instance_port()))
+        except (FileNotFoundError, TypeError):
+            return True
+
+        return (
+            state.get("model") == self.config.model and state.get("backend") == self.config.backend
+        )
+
     def _ensure_server_running(self) -> None:
         """Check if inference server is running, start if needed."""
-        if inference.is_inference_running():
-            return
+        instance_port = self._instance_port()
+        if inference.is_inference_running(instance_port):
+            if self._running_server_matches_request():
+                return
+            utils.info("Inference server model or backend differs; restarting it")
+            inference.cmd_inference_stop(instance_port)
 
         if self.config.no_inference:
             raise RuntimeError("Inference server not running (required with -I/--no-inference)")
@@ -371,7 +392,7 @@ class BenchmarkRunner:
             backend=self.config.backend,
             gpu_layers=self.config.gpu_layers,
             context_size=self.config.context_size,
-            port=self.config.port,
+            port=instance_port,
         )
         self.started_server = True
 
@@ -379,7 +400,7 @@ class BenchmarkRunner:
         """Stop inference server if we started it."""
         if self.started_server:
             utils.info("Stopping inference server...")
-            inference.cmd_inference_stop()
+            inference.cmd_inference_stop(self._instance_port())
             self.started_server = False
 
     def _send_completion_request(self, prompt: str) -> tuple[dict, float, float, float]:
@@ -565,6 +586,8 @@ class BenchmarkRunner:
         """
         try:
             self._ensure_server_running()
+            running_model = inference.get_inference_model(self.config.port)
+            utils.info(f"Model being evaluated: {running_model}")
 
             prompts = self._load_prompts()
             prompt_results = []
@@ -587,7 +610,7 @@ class BenchmarkRunner:
                 prompt_results.append(result)
 
             return BenchmarkResult(
-                model=self.config.model,
+                model=running_model,
                 backend=self.config.backend,
                 gpu_layers=self.config.gpu_layers,
                 context_size=self.config.context_size,

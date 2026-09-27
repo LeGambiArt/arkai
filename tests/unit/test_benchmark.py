@@ -2,6 +2,7 @@
 
 import argparse
 import json
+from unittest.mock import patch
 
 import pytest
 
@@ -151,8 +152,101 @@ class TestBenchmarkRunner:
             runner._ensure_server_running()
 
         start.assert_called_once_with(
-            model="model", backend="mlx", gpu_layers=-1, context_size=65536, port=8081
+            model="model", backend="mlx", gpu_layers=-1, context_size=65536, port=None
         )
+
+    def test_existing_server_is_not_stopped_by_benchmark(self):
+        """A benchmark does not take ownership of an already matching server."""
+        runner = benchmark.BenchmarkRunner(
+            benchmark.BenchmarkConfig(
+                model="model",
+                port=8081,
+                iterations=1,
+                warmup=False,
+                token_limit=1,
+                temperature=0.0,
+                seed=42,
+                prompts=[],
+                backend="mlx",
+            )
+        )
+
+        with (
+            patch.object(benchmark.inference, "is_inference_running", return_value=True),
+            patch.object(
+                benchmark.utils, "load_yaml", return_value={"model": "model", "backend": "mlx"}
+            ),
+            patch.object(benchmark.inference, "cmd_inference_stop") as stop,
+        ):
+            runner._ensure_server_running()
+            runner._cleanup_server()
+
+        stop.assert_not_called()
+
+    def test_restarts_server_for_different_model(self):
+        """A running server with another startup model is not benchmarked silently."""
+        runner = benchmark.BenchmarkRunner(
+            benchmark.BenchmarkConfig(
+                model="requested.gguf",
+                port=8081,
+                iterations=1,
+                warmup=False,
+                token_limit=1,
+                temperature=0.0,
+                seed=42,
+                prompts=[],
+            )
+        )
+
+        with (
+            patch.object(benchmark.inference, "is_inference_running", return_value=True),
+            patch.object(
+                benchmark.utils,
+                "load_yaml",
+                return_value={"model": "stale.gguf", "backend": "llama-cpp"},
+            ),
+            patch.object(benchmark.inference, "cmd_inference_stop") as stop,
+            patch.object(benchmark.inference, "cmd_inference_start") as start,
+        ):
+            runner._ensure_server_running()
+
+        stop.assert_called_once_with(None)
+        start.assert_called_once_with(
+            model="requested.gguf",
+            backend="llama-cpp",
+            gpu_layers=-1,
+            context_size=65536,
+            port=None,
+        )
+
+    def test_explicit_port_is_used_for_start_and_cleanup(self):
+        """An explicitly selected port uses the same instance for start and stop."""
+        runner = benchmark.BenchmarkRunner(
+            benchmark.BenchmarkConfig(
+                model="model",
+                port=9090,
+                iterations=1,
+                warmup=False,
+                token_limit=1,
+                temperature=0.0,
+                seed=42,
+                prompts=[],
+                explicit_port=True,
+            )
+        )
+
+        with (
+            patch.object(benchmark.inference, "is_inference_running", return_value=False),
+            patch.object(benchmark.inference, "cmd_inference_start") as start,
+            patch.object(benchmark.inference, "cmd_inference_stop") as stop,
+        ):
+            runner._ensure_server_running()
+            runner._cleanup_server()
+
+        start.assert_called_once_with(
+            model="model", backend="llama-cpp", gpu_layers=-1, context_size=65536, port=9090
+        )
+        stop.assert_called_once_with(9090)
 
 
 class TestBenchmarkCli:
