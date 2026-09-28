@@ -103,6 +103,7 @@ def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
         "--model",
         help="Override model from config (use hf:<model_id> for HuggingFace models)",
     )
+    benchmark_parser.add_argument("-b", "--backend", help="Override inference backend from config")
     benchmark_parser.add_argument(
         "--prompts",
         default="code-review:all",
@@ -174,6 +175,7 @@ def exec_cmd(args: argparse.Namespace) -> None:
         raise RuntimeError("Model not specified")
 
     # Resolve other settings from config with CLI overrides
+    backend = args.backend or config_module.get_config_value(cfg, "inference.backend", "llama-cpp")
     port = args.port or config_module.get_config_value(cfg, "inference.port", 8081)
     gpu_layers = (
         args.gpu_layers
@@ -202,6 +204,7 @@ def exec_cmd(args: argparse.Namespace) -> None:
         custom_prompt_file=args.prompt_file,
         gpu_layers=gpu_layers,
         context_size=context_size,
+        backend=backend,
         no_inference=args.no_inference,
     )
 
@@ -365,6 +368,7 @@ class BenchmarkRunner:
         utils.info("Starting inference server for benchmark...")
         inference.cmd_inference_start(
             model=self.config.model,
+            backend=self.config.backend,
             gpu_layers=self.config.gpu_layers,
             context_size=self.config.context_size,
             port=self.config.port,

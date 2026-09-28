@@ -110,12 +110,16 @@ def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
     agent_subparsers = agent_parser.add_subparsers(dest="agent_cmd", required=True)
     agent_start_parser = agent_subparsers.add_parser("start", help="Start interactive agent")
     _add_agent_common_args(agent_start_parser)
-    agent_start_parser.add_argument("--backend", help="Override inference backend from config")
+    agent_start_parser.add_argument(
+        "-b", "--backend", help="Override inference backend from config"
+    )
     agent_prompt_parser = agent_subparsers.add_parser(
         "prompt", help="Run agent with a prompt non-interactively"
     )
     _add_agent_common_args(agent_prompt_parser)
-    agent_prompt_parser.add_argument("--backend", help="Override inference backend from config")
+    agent_prompt_parser.add_argument(
+        "-b", "--backend", help="Override inference backend from config"
+    )
     agent_prompt_parser.add_argument(
         "-o", "--output", metavar="FILE", help="Write agent output to file instead of stdout"
     )

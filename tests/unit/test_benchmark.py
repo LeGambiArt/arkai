@@ -1,5 +1,6 @@
 """Unit tests for benchmark module."""
 
+import argparse
 import json
 
 import pytest
@@ -82,6 +83,90 @@ class TestMetricsComputation:
         # TTFT equals prefill time
         result = runner._compute_ttft(50.5)
         assert result == 50.5
+
+
+class TestBenchmarkRunner:
+    """Test benchmark execution and server interaction."""
+
+    def test_reports_running_server_model(self, capsys):
+        """Test that the benchmark reports the model served by inference."""
+        runner = benchmark.BenchmarkRunner(
+            benchmark.BenchmarkConfig(
+                model="configured.gguf",
+                port=9090,
+                iterations=1,
+                warmup=False,
+                token_limit=128,
+                temperature=0.0,
+                seed=42,
+                prompts=["ai:short"],
+            )
+        )
+        metric = benchmark.MetricResult(mean=1.0, stddev=0.0)
+
+        with (
+            patch.object(runner, "_ensure_server_running"),
+            patch.object(runner, "_load_prompts", return_value={"test": "prompt"}),
+            patch.object(
+                runner,
+                "_run_benchmark_iterations",
+                return_value={
+                    "prefill_throughput": metric,
+                    "generation_throughput": metric,
+                    "ttft_ms": metric,
+                },
+            ),
+            patch.object(runner, "_estimate_peak_rss", return_value=1.0),
+            patch.object(runner, "_cleanup_server"),
+            patch.object(
+                benchmark.inference, "get_inference_model", return_value="/models/running.gguf"
+            ) as get_model,
+        ):
+            result = runner.run()
+
+        get_model.assert_called_once_with(9090)
+        assert result.model == "/models/running.gguf"
+        assert "Model being evaluated: /models/running.gguf" in capsys.readouterr().out
+
+    def test_starts_server_with_selected_backend(self):
+        """The benchmark starts the configured backend rather than assuming llama.cpp."""
+        runner = benchmark.BenchmarkRunner(
+            benchmark.BenchmarkConfig(
+                model="model",
+                port=8081,
+                iterations=1,
+                warmup=False,
+                token_limit=1,
+                temperature=0.0,
+                seed=42,
+                prompts=[],
+                backend="mlx",
+            )
+        )
+
+        with (
+            patch.object(benchmark.inference, "is_inference_running", return_value=False),
+            patch.object(benchmark.inference, "cmd_inference_start") as start,
+        ):
+            runner._ensure_server_running()
+
+        start.assert_called_once_with(
+            model="model", backend="mlx", gpu_layers=-1, context_size=65536, port=8081
+        )
+
+
+class TestBenchmarkCli:
+    """Test benchmark command-line options."""
+
+    def test_backend_option_is_available(self):
+        """The benchmark command exposes an inference backend override."""
+        parser = argparse.ArgumentParser()
+        subparsers = parser.add_subparsers(dest="command")
+        benchmark.ingest_cli_options(subparsers)
+
+        args = parser.parse_args(["benchmark", "-b", "mlx"])
+
+        assert args.backend == "mlx"
 
 
 class TestStatisticsComputation:
