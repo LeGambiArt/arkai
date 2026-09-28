@@ -586,7 +586,11 @@ class BenchmarkRunner:
         """
         try:
             self._ensure_server_running()
-            running_model = inference.get_inference_model(self.config.port)
+            # Keep the displayed model consistent with `arkai status`, which uses
+            # the configured model recorded in the inference state file.
+            inference.get_inference_model(self.config.port)
+            state = utils.load_yaml(inference.get_inference_state_path(self._instance_port()))
+            running_model = state.get("model", "unknown")
             utils.info(f"Model being evaluated: {running_model}")
 
             prompts = self._load_prompts()

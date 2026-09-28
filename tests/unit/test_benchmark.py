@@ -122,12 +122,17 @@ class TestBenchmarkRunner:
             patch.object(
                 benchmark.inference, "get_inference_model", return_value="/models/running.gguf"
             ) as get_model,
+            patch.object(
+                benchmark.utils,
+                "load_yaml",
+                return_value={"model": "hf:org/model", "backend": "llama-cpp"},
+            ),
         ):
             result = runner.run()
 
         get_model.assert_called_once_with(9090)
-        assert result.model == "/models/running.gguf"
-        assert "Model being evaluated: /models/running.gguf" in capsys.readouterr().out
+        assert result.model == "hf:org/model"
+        assert "Model being evaluated: hf:org/model" in capsys.readouterr().out
 
     def test_starts_server_with_selected_backend(self):
         """The benchmark starts the configured backend rather than assuming llama.cpp."""
