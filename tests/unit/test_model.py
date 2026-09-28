@@ -1,6 +1,7 @@
 """Unit tests for model management."""
 
 import os
+from pathlib import Path
 from unittest.mock import patch
 
 import pytest
@@ -174,6 +175,13 @@ class TestCmdModelDownload:
 
 class TestCmdModelConvert:
     """Test model conversion command delegation."""
+
+    def test_convert_script_uses_f16_intermediate_for_quantization(self):
+        """Test automatic quantized output does not duplicate its quantization suffix."""
+        script = (Path(__file__).parents[2] / "bin" / "arkai-convert").read_text()
+
+        assert 'OUTFILE="$SHARE_DIR/models/${model_name}-F16.gguf"' in script
+        assert 'OUTFILE="$SHARE_DIR/models/${model_name}-${QUANT_TYPE}.gguf"' not in script
 
     def test_convert_successful(self):
         """Test successful model conversion."""

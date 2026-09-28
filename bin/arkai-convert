@@ -193,11 +193,8 @@ main() {
 
     if [ -z "$OUTFILE" ]; then
         mkdir -p "$SHARE_DIR/models"
-        if [ -n "$QUANT_TYPE" ]; then
-            OUTFILE="$SHARE_DIR/models/${model_name}-${QUANT_TYPE}.gguf"
-        else
-            OUTFILE="$SHARE_DIR/models/${model_name}-F16.gguf"
-        fi
+        # Keep the conversion intermediate separate from the quantized output.
+        OUTFILE="$SHARE_DIR/models/${model_name}-F16.gguf"
     fi
 
     echo "Converting $model to GGUF..." >&2
