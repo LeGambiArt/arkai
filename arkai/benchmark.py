@@ -412,7 +412,7 @@ class BenchmarkRunner:
         url = f"http://127.0.0.1:{self.config.port}/v1/completions"
         payload = {
             "prompt": prompt,
-            "n_predict": self.config.token_limit,
+            "max_tokens": self.config.token_limit,
             "temperature": self.config.temperature,
             "seed": self.config.seed,
         }
@@ -424,10 +424,15 @@ class BenchmarkRunner:
         response.raise_for_status()
         data = response.json()
 
-        # Extract timing data from response
-        timings = data.get("timings", {})
-        prefill_time_ms = timings.get("prompt_ms", 0)
-        generation_time_ms = timings.get("predicted_ms", 0)
+        # llama.cpp exposes phase timings, but MLX-LM only exposes token counts.
+        # Use the client-observed request duration when phase timings are absent.
+        timings = data.get("timings")
+        if isinstance(timings, dict) and "prompt_ms" in timings and "predicted_ms" in timings:
+            prefill_time_ms = timings["prompt_ms"]
+            generation_time_ms = timings["predicted_ms"]
+        else:
+            prefill_time_ms = total_time
+            generation_time_ms = total_time
 
         return data, prefill_time_ms, generation_time_ms, total_time
 

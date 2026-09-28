@@ -89,6 +89,53 @@ class TestMetricsComputation:
 class TestBenchmarkRunner:
     """Test benchmark execution and server interaction."""
 
+    def test_mlx_compatible_completion_response_uses_request_timing(self):
+        """MLX responses without server timings still produce non-zero metrics."""
+        runner = benchmark.BenchmarkRunner(
+            benchmark.BenchmarkConfig(
+                model="model",
+                port=8081,
+                iterations=1,
+                warmup=False,
+                token_limit=128,
+                temperature=0.0,
+                seed=42,
+                prompts=[],
+                backend="mlx",
+            )
+        )
+        response = type(
+            "Response",
+            (),
+            {
+                "json": lambda self: {"usage": {"prompt_tokens": 10, "completion_tokens": 20}},
+                "raise_for_status": lambda self: None,
+            },
+        )()
+
+        with (
+            patch.object(benchmark.requests, "post", return_value=response) as post,
+            patch.object(benchmark.time, "time", side_effect=[100.0, 101.0]),
+        ):
+            data, prefill_ms, generation_ms, total_ms = runner._send_completion_request(
+                "test prompt"
+            )
+
+        assert data["usage"]["completion_tokens"] == 20
+        assert total_ms == 1000.0
+        assert prefill_ms == total_ms
+        assert generation_ms == total_ms
+        post.assert_called_once_with(
+            "http://127.0.0.1:8081/v1/completions",
+            json={
+                "prompt": "test prompt",
+                "max_tokens": 128,
+                "temperature": 0.0,
+                "seed": 42,
+            },
+            timeout=300,
+        )
+
     def test_reports_running_server_model(self, capsys):
         """Test that the benchmark reports the model served by inference."""
         runner = benchmark.BenchmarkRunner(
