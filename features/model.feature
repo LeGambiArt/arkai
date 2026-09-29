@@ -12,6 +12,13 @@ Feature: Model Management
     And a .gguf file exists in the models directory
     And the output contains "Downloaded"
 
+  Scenario: Download one HuggingFace quantization
+    Given a clean models directory
+    When I run "arkai model download hf:unsloth/Qwen-3.8-27B-GGUF:UD-Q4_K_M"
+    Then the exit code is 0
+    And a .gguf file exists in the models directory
+    And the output contains "Downloaded"
+
   Scenario: Remove a model
     Given a model file "test-model.gguf" in the models directory
     When I run "arkai model remove test-model.gguf"

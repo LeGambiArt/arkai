@@ -35,7 +35,7 @@ def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
     download_parser = model_subparsers.add_parser("download", help="Download model from a provider")
     download_parser.add_argument(
         "model_ref",
-        help="Provider-qualified model (hf:owner/model or ollama:model:tag)",
+        help=("Provider-qualified model (hf:owner/model[:quantization] or ollama:model:tag)"),
     )
     model_subparsers.add_parser("list", help="List available models")
     remove_parser = model_subparsers.add_parser("remove", help="Remove model")

@@ -167,6 +167,13 @@ arkai model download hf:ibm-granite/granite-4.1-8b-instruct-GGUF
 arkai model download ollama:llama3.2:latest
 ```
 
+For Hugging Face GGUF repositories containing multiple quantizations, append the
+quantization name to download only matching files (including all shards):
+
+```bash
+arkai model download hf:unsloth/Qwen-3.8-27B-GGUF:UD-Q4_K_M
+```
+
 After downloading model, use the same provider-qualified reference for inference,
 for example `arkai agent start -m ollama:llama3.2:latest`.
 

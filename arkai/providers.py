@@ -8,6 +8,7 @@ import os
 import shutil
 import time
 from dataclasses import dataclass
+from fnmatch import fnmatch
 from pathlib import Path
 
 import requests
@@ -21,6 +22,7 @@ class ModelReference:
 
     provider: str
     identifier: str
+    quantization: str | None = None
 
     @classmethod
     def parse(cls, value: str) -> ModelReference:
@@ -38,7 +40,14 @@ class ModelReference:
             )
         if not identifier:
             raise ValueError(f"Model identifier is missing after provider '{provider}:'")
-        return cls(provider, identifier)
+        quantization = None
+        if provider == "hf" and ":" in identifier:
+            identifier, quantization = identifier.rsplit(":", 1)
+            if not quantization:
+                raise ValueError("Quantization is missing after the model identifier")
+        if not identifier:
+            raise ValueError(f"Model identifier is missing after provider '{provider}:'")
+        return cls(provider, identifier, quantization)
 
 
 class ModelProvider:
@@ -99,6 +108,8 @@ class GitModelProvider(ModelProvider):
         repository_url = f"https://{self.host}/{remote_identifier}.git"
         git_env = os.environ.copy()
         git_env["GIT_TERMINAL_PROMPT"] = "0"
+        if reference.quantization:
+            git_env["GIT_LFS_SKIP_SMUDGE"] = "1"
 
         try:
             if (repository_dir / ".git").exists():
@@ -121,7 +132,13 @@ class GitModelProvider(ModelProvider):
                 shutil.rmtree(repository_dir, ignore_errors=True)
             error_text = stderr or "Git returned a non-zero exit status without an error message."
             raise RuntimeError(f"Failed to download {reference.identifier} with Git:\n{error_text}")
-        self._materialize_lfs_files(repository_dir, git_path, git_env, reference.identifier)
+        self._materialize_lfs_files(
+            repository_dir,
+            git_path,
+            git_env,
+            reference.identifier,
+            reference.quantization,
+        )
         utils.info(f"Git transfer complete: {reference.provider}:{reference.identifier}")
         return repository_dir
 
@@ -149,6 +166,7 @@ class GitModelProvider(ModelProvider):
             git_path,
             {**os.environ, "GIT_TERMINAL_PROMPT": "0"},
             reference.identifier,
+            reference.quantization,
         )
         return repository_dir
 
@@ -166,9 +184,10 @@ class GitModelProvider(ModelProvider):
         git_path: str,
         git_env: dict[str, str],
         identifier: str,
+        quantization: str | None = None,
     ) -> None:
         """Download Git-LFS objects when a repository contains pointer files."""
-        if not _contains_lfs_pointer(repository_dir):
+        if not _contains_lfs_pointer(repository_dir, quantization):
             return
 
         if shutil.which("git-lfs") is None:
@@ -187,7 +206,7 @@ class GitModelProvider(ModelProvider):
             error_text = install_stderr or "Git LFS initialization failed."
             raise RuntimeError(f"Failed to initialize Git LFS for {identifier}: {error_text}")
 
-        expected_size = _lfs_pointer_size(repository_dir)
+        expected_size = _lfs_pointer_size(repository_dir, quantization)
         if expected_size:
             utils.info(
                 f"Downloading Git-LFS files for hf:{identifier} "
@@ -197,22 +216,29 @@ class GitModelProvider(ModelProvider):
             utils.info(
                 f"Downloading Git-LFS files for hf:{identifier} (this may take several minutes)"
             )
+        pull_command = [git_path, "-C", str(repository_dir), "lfs", "pull"]
+        if quantization:
+            pull_command.extend(["--include", f"*{quantization}*"])
         code, _, stderr = utils.run_command(
-            [git_path, "-C", str(repository_dir), "lfs", "pull"],
+            pull_command,
             capture=False,
             timeout=None,
             env=git_env,
         )
-        if code != 0 or _contains_lfs_pointer(repository_dir):
+        if code != 0 or _contains_lfs_pointer(repository_dir, quantization):
             error_text = stderr or "Git LFS did not materialize all model files."
             raise RuntimeError(f"Failed to download Git-LFS files for {identifier}: {error_text}")
 
 
-def _contains_lfs_pointer(repository_dir: Path) -> bool:
+def _contains_lfs_pointer(repository_dir: Path, quantization: str | None = None) -> bool:
     """Return whether a checked-out repository contains a Git-LFS pointer file."""
     pointer_header = b"version https://git-lfs.github.com/spec/v1\n"
     for path in repository_dir.rglob("*"):
         if path.is_dir() or ".git" in path.parts:
+            continue
+        if quantization and not fnmatch(
+            path.relative_to(repository_dir).as_posix(), f"*{quantization}*"
+        ):
             continue
         try:
             with path.open("rb") as model_file:
@@ -223,12 +249,16 @@ def _contains_lfs_pointer(repository_dir: Path) -> bool:
     return False
 
 
-def _lfs_pointer_size(repository_dir: Path) -> int:
+def _lfs_pointer_size(repository_dir: Path, quantization: str | None = None) -> int:
     """Return the total expected size declared by Git-LFS pointer files."""
     pointer_header = b"version https://git-lfs.github.com/spec/v1\n"
     total_size = 0
     for path in repository_dir.rglob("*"):
         if path.is_dir() or ".git" in path.parts:
+            continue
+        if quantization and not fnmatch(
+            path.relative_to(repository_dir).as_posix(), f"*{quantization}*"
+        ):
             continue
         try:
             with path.open("rb") as model_file:

@@ -50,6 +50,66 @@ def test_model_reference_rejects_unknown_provider():
         providers.ModelReference.parse("unknown:model")
 
 
+def test_huggingface_model_reference_parses_quantization():
+    """Hugging Face references may select a quantization suffix."""
+    reference = providers.ModelReference.parse("hf:org/model-GGUF:UD-Q4_K_M")
+
+    assert reference.identifier == "org/model-GGUF"
+    assert reference.quantization == "UD-Q4_K_M"
+
+
+def test_huggingface_download_pulls_only_requested_quantization(tmp_path, monkeypatch):
+    """A quantized download requests only matching Git-LFS files."""
+    monkeypatch.setattr(utils, "get_data_home", lambda: str(tmp_path))
+    commands = []
+    repository_dir = tmp_path / "models" / "providers" / "huggingface" / "org" / "model-GGUF"
+
+    def run_command(command, **kwargs):
+        commands.append((command, kwargs))
+        if "clone" in command:
+            (repository_dir / ".git").mkdir(parents=True)
+            (repository_dir / "model-UD-Q4_K_M.gguf").write_bytes(
+                b"version https://git-lfs.github.com/spec/v1\noid sha256:test\nsize 4\n"
+            )
+            (repository_dir / "model-Q8_0.gguf").write_bytes(
+                b"version https://git-lfs.github.com/spec/v1\noid sha256:other\nsize 4\n"
+            )
+        elif "pull" in command:
+            (repository_dir / "model-UD-Q4_K_M.gguf").write_bytes(b"real")
+        return 0, "", ""
+
+    with (
+        patch.object(providers.shutil, "which", side_effect=lambda name: f"/usr/bin/{name}"),
+        patch.object(providers.utils, "run_command", side_effect=run_command),
+    ):
+        providers.download_model("hf:org/model-GGUF:UD-Q4_K_M")
+
+    clone_command, clone_kwargs = commands[0]
+    assert clone_command[0:3] == ["/usr/bin/git", "clone", "--depth"]
+    assert clone_kwargs["env"]["GIT_LFS_SKIP_SMUDGE"] == "1"
+    assert commands[2][0][-4:] == ["lfs", "pull", "--include", "*UD-Q4_K_M*"]
+
+
+def test_huggingface_quantized_download_reports_only_selected_lfs_size(tmp_path):
+    """A quantized download excludes other quantizations from its size estimate."""
+    repository_dir = tmp_path / "repository"
+    repository_dir.mkdir()
+    (repository_dir / "model-Q4_K_M.gguf").write_bytes(
+        b"version https://git-lfs.github.com/spec/v1\noid sha256:q4\nsize 30\n"
+    )
+    (repository_dir / "model-Q8_0.gguf").write_bytes(
+        b"version https://git-lfs.github.com/spec/v1\noid sha256:q8\nsize 219\n"
+    )
+
+    assert providers._lfs_pointer_size(repository_dir, "Q4_K_M") == 30
+
+
+def test_huggingface_reference_rejects_empty_quantization():
+    """A quantization selector must contain a value."""
+    with pytest.raises(ValueError, match="Quantization is missing"):
+        providers.ModelReference.parse("hf:org/model-GGUF:")
+
+
 def test_huggingface_download_materializes_lfs_files(tmp_path, monkeypatch, capsys):
     """Hugging Face repositories have their Git-LFS model files downloaded."""
     monkeypatch.setattr(utils, "get_data_home", lambda: str(tmp_path))
@@ -152,6 +212,34 @@ def test_huggingface_resolve_repairs_existing_lfs_cache(tmp_path, monkeypatch):
 
     assert result == repository_dir
     assert (repository_dir / "model.safetensors").read_bytes() == b"real"
+
+
+def test_huggingface_resolve_preserves_quantization_filter(tmp_path, monkeypatch):
+    """Resolving a quantized cache does not pull unrelated LFS files."""
+    monkeypatch.setattr(utils, "get_data_home", lambda: str(tmp_path))
+    repository_dir = tmp_path / "models" / "providers" / "huggingface" / "org" / "model-GGUF"
+    (repository_dir / ".git").mkdir(parents=True)
+    (repository_dir / "model-Q4_K_M.gguf").write_bytes(
+        b"version https://git-lfs.github.com/spec/v1\noid sha256:q4\nsize 4\n"
+    )
+    (repository_dir / "model-Q8_0.gguf").write_bytes(
+        b"version https://git-lfs.github.com/spec/v1\noid sha256:q8\nsize 4\n"
+    )
+    commands = []
+
+    def run_command(command, **kwargs):
+        commands.append(command)
+        if "pull" in command:
+            (repository_dir / "model-Q4_K_M.gguf").write_bytes(b"real")
+        return 0, "", ""
+
+    with (
+        patch.object(providers.shutil, "which", side_effect=lambda name: f"/usr/bin/{name}"),
+        patch.object(providers.utils, "run_command", side_effect=run_command),
+    ):
+        providers.resolve_model("hf:org/model-GGUF:Q4_K_M")
+
+    assert commands[1][-4:] == ["lfs", "pull", "--include", "*Q4_K_M*"]
 
 
 def test_huggingface_lfs_requires_git_lfs(tmp_path, monkeypatch):
