@@ -2,6 +2,7 @@
 
 import argparse
 import os
+import shlex
 import signal
 import subprocess
 import time
@@ -62,6 +63,13 @@ def get_inference_state_path(port: int | None = None) -> str:
     """Return path to an inference server state file."""
     pid_dir = utils.get_pid_dir()
     filename = "inference.state" if port is None else f"inference-{port}.state"
+    return os.path.join(pid_dir, filename)
+
+
+def get_inference_log_path(port: int | None = None) -> str:
+    """Return the file containing stdout and stderr from an inference server."""
+    pid_dir = utils.get_pid_dir()
+    filename = "inference.log" if port is None else f"inference-{port}.log"
     return os.path.join(pid_dir, filename)
 
 
@@ -188,6 +196,8 @@ def cmd_inference_start(
         sampling=sampling,
     )
     utils.info(f"Starting inference server on port {port}...")
+    log_path = get_inference_log_path(instance_port)
+    utils.info(f"Inference server logs: {log_path}")
 
     gpu_layers_val = config.get_config_value(cfg, "inference.gpu_layers", -1)
     context_size_val = config.get_config_value(cfg, "inference.context_size", 65536)
@@ -196,12 +206,12 @@ def cmd_inference_start(
     signal.signal(signal.SIGINT, signal.SIG_IGN)
 
     try:
-        # Start in background without forwarding server logs to the agent terminal.
-        proc = subprocess.Popen(
-            cmd,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-        )
+        # Keep backend diagnostics available after the CLI detaches from the server.
+        os.makedirs(os.path.dirname(log_path), exist_ok=True)
+        with open(log_path, "w") as log_file:
+            log_file.write(f"Command: {shlex.join(cmd)}\n\n")
+            log_file.flush()
+            proc = subprocess.Popen(cmd, stdout=log_file, stderr=subprocess.STDOUT)
 
         # Write PID and state
         pid_path = get_inference_pid_path(instance_port)
@@ -217,6 +227,7 @@ def cmd_inference_start(
         "gpu_layers": gpu_layers_val,
         "context_size": context_size_val,
         "port": port,
+        "log": log_path,
     }
     utils.save_yaml(get_inference_state_path(instance_port), state)
 
@@ -227,7 +238,8 @@ def cmd_inference_start(
     for _ in range(startup_timeout):
         if proc.poll() is not None:
             startup_error = (
-                f"Inference server exited before becoming ready (code {proc.returncode})"
+                f"Inference server exited before becoming ready (code {proc.returncode}). "
+                "See the server log for details"
             )
             break
         if _is_inference_server_healthy(port):
@@ -245,7 +257,7 @@ def cmd_inference_start(
     state_path = get_inference_state_path(instance_port)
     if os.path.exists(state_path):
         os.remove(state_path)
-    raise RuntimeError(startup_error)
+    raise RuntimeError(f"{startup_error}. See server log: {log_path}")
 
 
 def cmd_inference_stop(port: int | None = None) -> None:
@@ -302,6 +314,7 @@ def cmd_inference_status() -> None:
             utils.info(f"GPU layers: {state.get('gpu_layers')}")
             utils.info(f"Context: {state.get('context_size')}")
             utils.info(f"Port: {port}")
+            utils.info(f"Log: {state.get('log', get_inference_log_path())}")
 
             gpu_type = utils.detect_gpu()
             utils.info(f"GPU: {gpu_type}")
