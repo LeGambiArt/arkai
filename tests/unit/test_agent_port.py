@@ -29,6 +29,30 @@ def test_agent_start_passes_explicit_port_to_inference() -> None:
     start.assert_called_once_with(model="other.gguf", port=9090)
 
 
+def test_agent_start_passes_quantized_model_to_inference() -> None:
+    """Agent startup preserves the provider and quantization model reference."""
+    model = "hf:empero-ai/Qwen3.8-35B-A3B-Distill-GGUF:Q4_K_M"
+    cfg = {
+        "agent": {"name": "opencode", "path": "/agent", "mcp": False},
+        "inference": {"model": model},
+        "sandbox": {"disable": True},
+    }
+
+    with (
+        patch.object(agent.config, "load_config", return_value=cfg),
+        patch.object(agent.config, "validate_config", return_value=True),
+        patch.object(agent.inference, "is_inference_running", return_value=False),
+        patch.object(agent.inference, "cmd_inference_start") as start,
+        patch.object(agent.inference, "get_inference_model", return_value="active.gguf"),
+        patch.object(agent.inference, "cmd_inference_stop"),
+        patch.object(agent.utils, "resolve_binary", return_value="/agent"),
+    ):
+        with agent._agent_context("opencode", model=model):
+            pass
+
+    start.assert_called_once_with(model=model)
+
+
 def test_inference_paths_are_unique_for_explicit_ports() -> None:
     """Explicit inference ports must not share PID or state files."""
     assert inference.get_inference_pid_path() != inference.get_inference_pid_path(9090)

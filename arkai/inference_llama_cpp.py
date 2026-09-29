@@ -1,6 +1,7 @@
 """llama.cpp inference backend."""
 
 import os
+from pathlib import Path
 
 from arkai import providers, utils
 from arkai.inference_backend import SamplingSettings
@@ -28,7 +29,14 @@ class LlamaCppBackend:
         command = ["--port", str(port), "--host", "127.0.0.1"]
         if model.startswith("hf:"):
             reference = providers.ModelReference.parse(model)
-            command.extend(["-hf", reference.identifier])
+            cached_model = self._cached_model_path(reference)
+            if cached_model is not None:
+                command.extend(["--model", str(cached_model)])
+            else:
+                repository = reference.identifier
+                if reference.quantization:
+                    repository = f"{repository}:{reference.quantization}"
+                command.extend(["-hf", repository])
         elif model.startswith("ollama:"):
             command.extend(["--model", str(providers.resolve_model(model))])
         else:
@@ -62,3 +70,20 @@ class LlamaCppBackend:
             if sampling and setting in sampling:
                 command.extend([option, str(sampling[setting])])
         return command
+
+    @staticmethod
+    def _cached_model_path(reference: providers.ModelReference) -> Path | None:
+        """Return a cached GGUF matching a reference, if Arkai has one."""
+        try:
+            repository = providers.get_provider(reference).resolve(reference)
+        except RuntimeError:
+            return None
+
+        if not reference.quantization:
+            return None
+        candidates = sorted(
+            path
+            for path in repository.glob(f"*{reference.quantization}*.gguf")
+            if path.is_file() and path.stat().st_size > 1024
+        )
+        return candidates[0] if candidates else None

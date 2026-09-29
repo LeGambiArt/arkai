@@ -76,7 +76,13 @@ def test_llama_cpp_backend_passes_sampling_settings(tmp_path: Path) -> None:
 
 def test_llama_cpp_backend_builds_command_for_huggingface_model() -> None:
     """The llama.cpp backend preserves Hugging Face model references."""
-    with patch("arkai.inference_llama_cpp.utils.resolve_binary", return_value="/bin/llama"):
+    with (
+        patch("arkai.inference_llama_cpp.utils.resolve_binary", return_value="/bin/llama"),
+        patch(
+            "arkai.inference_llama_cpp.providers.get_provider",
+            side_effect=RuntimeError("not cached"),
+        ),
+    ):
         command = LlamaCppBackend().build_command("llama-server", "hf:org/model", 8081, -1, 65536)
 
     assert command == [
@@ -92,6 +98,43 @@ def test_llama_cpp_backend_builds_command_for_huggingface_model() -> None:
         "--ctx-size",
         "65536",
     ]
+
+
+def test_llama_cpp_backend_passes_huggingface_quantization() -> None:
+    """The llama.cpp backend preserves a selected Hugging Face quantization."""
+    with (
+        patch("arkai.inference_llama_cpp.utils.resolve_binary", return_value="/bin/llama"),
+        patch(
+            "arkai.inference_llama_cpp.providers.get_provider",
+            side_effect=RuntimeError("not cached"),
+        ),
+    ):
+        command = LlamaCppBackend().build_command(
+            "llama-server",
+            "hf:empero-ai/Qwen3.8-35B-A3B-Distill-GGUF:Q4_K_M",
+            8081,
+            -1,
+            65536,
+        )
+
+    assert command[5:7] == ["-hf", "empero-ai/Qwen3.8-35B-A3B-Distill-GGUF:Q4_K_M"]
+
+
+def test_llama_cpp_backend_uses_cached_huggingface_quantization(tmp_path: Path) -> None:
+    """A cached quantized model is passed directly instead of downloaded again."""
+    model = tmp_path / "Qwen-Q4_K_M.gguf"
+    model.write_bytes(b"model" * 2048)
+
+    with (
+        patch("arkai.inference_llama_cpp.providers.get_provider") as get_provider,
+        patch("arkai.inference_llama_cpp.utils.resolve_binary", return_value="/bin/llama"),
+    ):
+        get_provider.return_value.resolve.return_value = tmp_path
+        command = LlamaCppBackend().build_command(
+            "llama-server", "hf:org/model:Q4_K_M", 8081, -1, 65536
+        )
+
+    assert command[5:7] == ["--model", str(model)]
 
 
 def test_backend_registry_contains_llama_cpp() -> None:
