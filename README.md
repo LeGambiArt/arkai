@@ -268,6 +268,95 @@ Arkai resolves `hf:` models from its local provider cache before starting
 MLX-LM, so the server does not download an already cached model. `gpu_layers`
 and `context_size` are llama.cpp-specific settings and are not passed to MLX-LM.
 
+### Splash inference server
+
+Install Splash separately, then start it with a supported Hugging Face model:
+
+```bash
+arkai inference start --backend splash --model hf:incoai/Qwen3.8-27B-Splash
+```
+
+Alternatively, set `inference.backend: splash` and `inference.model` in your
+configuration; `--backend` is only an override. `inference.path` can point to a
+custom Splash executable. The
+startup timeout includes downloading and loading; increase
+`inference.startup_timeout` for a cold start if necessary. GPU-layer settings
+are not passed to Splash, and configured server sampling defaults are rejected.
+
+### Managing Splash models
+
+Splash installations use native metadata and links to Hugging Face Hub snapshots,
+not the Git-based provider cache. Arkai uses the verified **Splash 1.1.0** installer
+to download the target, required draft, tokenizer, and applicable vision sources.
+The installer runs in Splash's bundled Python; it does not start inference.
+
+```bash
+arkai model download --backend splash hf:incoai/Qwen3.8-27B-Splash
+arkai model list
+arkai model list --backend splash
+arkai model resolve --backend splash hf:incoai/Qwen3.8-27B-Splash
+arkai model remove --backend splash hf:incoai/Qwen3.8-27B-Splash
+arkai model prune --backend splash --dry-run
+```
+
+Download, resolve, remove, and prune use the configured inference backend when
+`--backend` is omitted. Unfiltered `model list` always includes local GGUF files,
+provider-cached models, and installed Splash models, regardless of the configured
+backend. It does not download or repair files. Inventory shows installation IDs,
+source revisions/dependencies, complete/incomplete state, and shared source sizes.
+Use `--id ID` for resolution or removal when multiple native installations match.
+
+Arkai automatically sets both cache locations for downloads and serving:
+
+| Variable | Default directory |
+| --- | --- |
+| `HF_HUB_CACHE` | `~/.local/share/arkai/models/splash/hub` |
+| `SPLASH_WEIGHT_CACHE` | `~/.local/share/arkai/models/splash/weights` |
+
+The lightweight selection links and metadata remain in Splash's native directory,
+normally `~/Library/Application Support/Splash/models`. Existing downloads are not
+moved automatically; their recorded paths remain valid. Git downloads are not
+automatically shared with Hub downloads. Optional `inference.splash.hub_cache` and
+`weight_cache` override the bulk cache locations. Download and serve operations
+use identical paths and source-selection settings:
+
+```yaml
+inference:
+  backend: splash
+  model: hf:unsloth/Qwen3.8-27B-GGUF:UD-Q4_K_M
+  startup_timeout: 1800
+  splash:
+    max_memory: 28G
+    kv_format: int8
+    # revision: <commit>
+    # language_only: true
+    # draft_model: owner/compatible-draft
+    # hub_cache: /custom/hub
+    # weight_cache: /custom/weights
+```
+
+Revision, language-only, and draft overrides apply to upstream models, not legacy
+packed `incoai/*-Splash` packages. Downloading sources does not prepare Metal
+weights; the first serve may need additional time and disk space. Splash models
+are used directly, without Arkai GGUF conversion.
+
+Removal unlinks only the selected installation and its pins, preserving shared
+source files. Stop all Splash servers and provisioning operations before removal
+or pruning; native locks also protect externally started processes. Pruning
+collects only unreferenced data in the default Arkai-owned caches and never prunes
+custom/external caches. Native installation pins and unknown Hub references are
+retained; a legacy package's unused `main` cache reference does not prevent
+collection after uninstall. Prepared entries are retained while any native model
+remains installed because they may be shared by content. After all selections are
+removed, pruning can collect recognized prepared entries with removed sources.
+Unknown metadata and cache entries are never deleted.
+
+For a nonstandard package layout, set `inference.splash.installation_root` to the
+directory containing `release.json` and `install/models.py`; `python_path` may
+override its bundled Python executable. Unknown installer versions fail clearly
+instead of attempting unsafe filesystem operations. Agent and benchmark behavior
+is unchanged by this model-management integration.
+
 ### Status
 
 ```bash
@@ -474,8 +563,8 @@ arkai config validate --file PATH  # validate a specific file
 |-----|------|---------|-------------|
 | `inference.model` | string | — | Local model filename, or `hf:<repo>` for a HuggingFace model |
 | `inference.profiles` | mapping | — | Named model profiles; each profile has `model` and optional sampling settings |
-| `inference.backend` | string | `llama-cpp` | `llama-cpp` or optional `mlx` |
-| `inference.path` | string | backend-dependent | Path to `llama-server` or `mlx_lm.server` |
+| `inference.backend` | string | `llama-cpp` | `llama-cpp`, optional `mlx`, or `splash` |
+| `inference.path` | string | backend-dependent | Path to `llama-server`, `mlx_lm.server`, or `splash` |
 | `inference.port` | int | `8081` | Port for inference server (1024–65535) |
 | `inference.gpu_layers` | int | `-1` | GPU layers to offload (`-1` = all) |
 | `inference.context_size` | int | `65536` | Context window size in tokens |

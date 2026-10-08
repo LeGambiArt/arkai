@@ -172,6 +172,14 @@ def validate_config(config: dict, require_model: bool = True) -> bool:
         inference = {}
     if not _validate_sampling_settings("inference", inference):
         valid = False
+    if "splash" in inference:
+        from arkai.model_splash import splash_options
+
+        try:
+            splash_options(config)
+        except ValueError as error:
+            utils.error(str(error))
+            valid = False
 
     profiles = get_config_value(config, "inference.profiles", {})
     if profiles and not isinstance(profiles, dict):

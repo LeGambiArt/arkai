@@ -4,23 +4,29 @@ import argparse
 import os
 from pathlib import Path
 
-from arkai import providers, utils
+from arkai import config, model_splash, providers, utils
+from arkai.inference_backend import get_backend_names
+from arkai.model_store import ModelEntry
 
 
-def exec_cmd(args: dict | None = None) -> None:
+def exec_cmd(args: argparse.Namespace) -> None:
     """Select 'model' command to execute."""
-    match args.model_cmd:  # ty: ignore[unresolved-attribute]
+    match args.model_cmd:
         case "list":
-            cmd_model_list()
+            cmd_model_list(args.backend)
         case "download":
-            cmd_model_download(args.model_ref)  # ty: ignore[unresolved-attribute]
+            cmd_model_download(args.model_ref, args.backend)
         case "remove":
-            cmd_model_remove(args.model_name)  # ty: ignore[unresolved-attribute]
+            cmd_model_remove(args.model_name, args.backend, args.installation_id)
+        case "resolve":
+            cmd_model_resolve(args.model_ref, args.backend, args.installation_id)
+        case "prune":
+            cmd_model_prune(args.dry_run, args.backend)
         case "convert":
             cmd_model_convert(
-                args.model,  # ty: ignore[unresolved-attribute]
-                args.quantization,  # ty: ignore[unresolved-attribute]
-                args.output,  # ty: ignore[unresolved-attribute]
+                args.model,
+                args.quantization,
+                args.output,
             )
 
 
@@ -37,9 +43,30 @@ def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
         "model_ref",
         help=("Provider-qualified model (hf:owner/model[:quantization] or ollama:model:tag)"),
     )
-    model_subparsers.add_parser("list", help="List available models")
+    list_parser = model_subparsers.add_parser("list", help="List available models")
     remove_parser = model_subparsers.add_parser("remove", help="Remove model")
     remove_parser.add_argument("model_name", help="Model file name")
+    resolve_parser = model_subparsers.add_parser(
+        "resolve", help="Show the path of an installed model"
+    )
+    resolve_parser.add_argument("model_ref", help="Provider reference or local model filename")
+    for store_parser in (download_parser, list_parser, remove_parser, resolve_parser):
+        store_parser.add_argument(
+            "--backend",
+            choices=sorted(get_backend_names()),
+            help="Override configured backend for model storage; list defaults to all stores",
+        )
+    for selection_parser in (remove_parser, resolve_parser):
+        selection_parser.add_argument(
+            "--id", dest="installation_id", help="Splash installation ID shown by list"
+        )
+    prune_parser = model_subparsers.add_parser(
+        "prune", help="Collect unreferenced Arkai-owned Splash cache data"
+    )
+    prune_parser.add_argument("--backend", choices=["splash"], help="Override configured backend")
+    prune_parser.add_argument(
+        "--dry-run", action="store_true", help="Preview eligible paths without deleting them"
+    )
     convert_parser = model_subparsers.add_parser(
         "convert", help="Convert a provider model to GGUF format"
     )
@@ -62,19 +89,33 @@ def get_models_dir() -> str:
     return os.path.join(data_home, "models")
 
 
-def cmd_model_download(model_ref: str) -> None:
+def cmd_model_download(model_ref: str, backend: str | None = None) -> None:
     """Download a provider-qualified model into the Arkai model cache."""
-    path = providers.download_model(model_ref)
+    cfg = config.load_config()
+    selected = backend or config.get_config_value(cfg, "inference.backend", "llama-cpp")
+    if selected == "splash":
+        path = model_splash.SplashModelStore(cfg).download(model_ref)
+    else:
+        path = providers.download_model(model_ref)
     utils.info(f"Downloaded {model_ref} to {path}")
 
 
-def cmd_model_list() -> None:
-    """List local GGUF files and models cached by every provider.
-
-    Displays two categories:
-    1. Local GGUF files in ~/.local/share/arkai/models/
-    2. Provider models downloaded into Arkai's model cache
-    """
+def cmd_model_list(backend: str | None = None) -> None:
+    """List local/provider caches and native Splash installations without requiring startup."""
+    splash_models = []
+    if backend is None or backend == "splash":
+        try:
+            splash_models = model_splash.SplashModelStore(config.load_config()).list_models()
+        except (RuntimeError, ValueError) as error:
+            if backend == "splash":
+                raise
+            utils.warn(str(error))
+    if backend == "splash":
+        if splash_models:
+            _show_splash_models(splash_models)
+        else:
+            utils.info("No models found")
+        return
     models_dir = get_models_dir()
     gguf_files = []
 
@@ -85,7 +126,7 @@ def cmd_model_list() -> None:
     provider_models = providers.list_provider_models()
 
     # If neither found, inform user
-    if not gguf_files and not provider_models:
+    if not gguf_files and not provider_models and not splash_models:
         utils.info("No models found")
         return
 
@@ -106,15 +147,78 @@ def cmd_model_list() -> None:
     else:
         if gguf_files:
             utils.info("\nProvider models: none")
+    if splash_models:
+        utils.info("")
+        _show_splash_models(splash_models)
 
 
-def cmd_model_remove(model_name: str) -> None:
+def _show_splash_models(entries: list[ModelEntry]) -> None:
+    """Expose native identities, complete/incomplete state, and shared dependency sizes."""
+    utils.info("Splash models:")
+    for entry in entries:
+        utils.info(f"  {entry.reference} [{entry.installation_id}]")
+        utils.info(f"    Path: {entry.path}; {'complete' if entry.complete else 'incomplete'}")
+        utils.info(f"    Revision: {entry.revision or 'unknown'}")
+        utils.info(f"    Source bytes: {entry.owned_bytes} exclusive, {entry.shared_bytes} shared")
+        for role, source in entry.sources.items():
+            utils.info(f"    {role}: {source.get('repo')}@{source.get('revision') or 'local'}")
+
+
+def cmd_model_resolve(
+    model_ref: str, backend: str | None = None, installation_id: str | None = None
+) -> None:
+    """Print a locally installed model path, without starting inference or downloading it."""
+    cfg = config.load_config()
+    selected = backend or config.get_config_value(cfg, "inference.backend", "llama-cpp")
+    if selected == "splash":
+        path = model_splash.SplashModelStore(cfg).resolve(model_ref, installation_id)
+    elif installation_id is not None:
+        raise RuntimeError("--id is only supported for Splash model installations")
+    elif ":" in model_ref:
+        path = providers.resolve_model(model_ref)
+    else:
+        if Path(model_ref).name != model_ref:
+            raise RuntimeError("Use a local model filename from the Arkai models directory")
+        path = Path(get_models_dir()) / model_ref
+        if not path.is_file():
+            raise RuntimeError(f"Model not found: {model_ref}")
+    utils.info(str(path))
+
+
+def cmd_model_prune(dry_run: bool = False, backend: str | None = None) -> None:
+    """Preview or collect unreferenced data in the default Arkai-owned Splash caches."""
+    cfg = config.load_config()
+    selected = backend or config.get_config_value(cfg, "inference.backend", "llama-cpp")
+    if selected != "splash":
+        raise RuntimeError(
+            "Cache pruning is supported for Splash; configure it or use --backend splash"
+        )
+    result = model_splash.SplashModelStore(cfg).prune(dry_run)
+    for path in result["paths"]:
+        utils.info(f"{'Would remove' if dry_run else 'Removed'} {path}")
+    if not result["paths"]:
+        utils.info("No unreferenced Splash cache data found")
+
+
+def cmd_model_remove(
+    model_name: str, backend: str | None = None, installation_id: str | None = None
+) -> None:
     """Remove a local model file or provider-cached model.
 
     Args:
         model_name: Local model filename or provider reference
             (e.g., 'model.gguf' or 'hf:org/model')
     """
+    cfg = config.load_config()
+    selected = backend or config.get_config_value(cfg, "inference.backend", "llama-cpp")
+    if selected == "splash":
+        model_splash.SplashModelStore(cfg).remove(model_name, installation_id)
+        utils.info(
+            f"Removed {model_name}; shared cache data retained for model prune --backend splash"
+        )
+        return
+    if installation_id is not None:
+        raise RuntimeError("--id is only supported for Splash model installations")
     if ":" in model_name:
         providers.remove_model(model_name)
         utils.info(f"Removed {model_name}")

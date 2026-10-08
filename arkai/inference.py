@@ -115,10 +115,10 @@ def get_inference_model(port: int | None = None) -> str:
     return model_id
 
 
-def _is_inference_server_healthy(port: int) -> bool:
+def _is_inference_server_healthy(port: int, path: str = "/v1/models") -> bool:
     """Return whether the inference server responds successfully to a health check."""
     try:
-        response = requests.get(f"http://127.0.0.1:{port}/v1/models", timeout=5)
+        response = requests.get(f"http://127.0.0.1:{port}{path}", timeout=5)
         response.raise_for_status()
         return True
     except requests.RequestException:
@@ -185,7 +185,9 @@ def cmd_inference_start(
     configured_path = cfg.get("inference", {}).get("path")
     selected_backend = get_backend(config.get_config_value(cfg, "inference.backend", "llama-cpp"))
     selected_backend.check_environment()
-    default_path = "mlx_lm.server" if selected_backend.name == "mlx" else "llama-server"
+    default_path = {"mlx": "mlx_lm.server", "splash": "splash"}.get(
+        selected_backend.name, "llama-server"
+    )
     cmd = selected_backend.build_command(
         configured_path if configured_path is not None else default_path,
         model,
@@ -195,6 +197,10 @@ def cmd_inference_start(
         path_is_configured=configured_path is not None,
         sampling=sampling,
     )
+    if selected_backend.name == "splash":
+        from arkai import model_splash
+
+        cmd.extend(model_splash.serve_arguments(cfg))
     utils.info(f"Starting inference server on port {port}...")
     log_path = get_inference_log_path(instance_port)
     utils.info(f"Inference server logs: {log_path}")
@@ -211,7 +217,10 @@ def cmd_inference_start(
         with open(log_path, "w") as log_file:
             log_file.write(f"Command: {shlex.join(cmd)}\n\n")
             log_file.flush()
-            proc = subprocess.Popen(cmd, stdout=log_file, stderr=subprocess.STDOUT)
+            process_options: dict = {"stdout": log_file, "stderr": subprocess.STDOUT}
+            if selected_backend.name == "splash":
+                process_options["env"] = model_splash.splash_environment(cfg, create=True)
+            proc = subprocess.Popen(cmd, **process_options)
 
         # Write PID and state
         pid_path = get_inference_pid_path(instance_port)
@@ -235,6 +244,7 @@ def cmd_inference_start(
     utils.info("Waiting for inference server...")
     startup_timeout = config.get_config_value(cfg, "inference.startup_timeout", 600)
     startup_error = "Inference server failed to start"
+    health_path = "/ready" if selected_backend.name == "splash" else "/v1/models"
     for _ in range(startup_timeout):
         if proc.poll() is not None:
             startup_error = (
@@ -242,7 +252,7 @@ def cmd_inference_start(
                 "See the server log for details"
             )
             break
-        if _is_inference_server_healthy(port):
+        if _is_inference_server_healthy(port, health_path):
             utils.info(f"Inference server ready on port {port}")
             return
         time.sleep(1)

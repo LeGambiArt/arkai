@@ -9,6 +9,12 @@ import pytest
 from arkai import model, providers, utils
 
 
+@pytest.fixture(autouse=True)
+def isolated_model_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Never inspect the user's native model store or configuration in unit tests."""
+    monkeypatch.setenv("HOME", str(tmp_path))
+
+
 class TestGetModelsDir:
     """Test model directory helpers."""
 

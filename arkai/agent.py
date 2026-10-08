@@ -5,7 +5,7 @@ import os
 import platform
 import subprocess
 import sys
-from collections.abc import Iterator
+from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -211,7 +211,7 @@ def _agent_context(
     sandbox_volume: list | None = None,
     sandbox_environment: dict | None = None,
     backend: str | None = None,
-) -> Iterator[AgentContext]:
+) -> Generator[AgentContext, None, None]:
     """Set up and tear down agent infrastructure.
 
     Loads config, starts inference and wtmcp servers, resolves agent binary,

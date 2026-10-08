@@ -1,4 +1,27 @@
 Feature: Model Management
+  Scenario: Download a complete native Splash installation
+    Given the Splash model installer bridge is available
+    When I download a model through the Splash store
+    Then the native model operation is "download"
+
+  Scenario: Include native installations in the normal model inventory
+    Given the Splash model installer bridge is available
+    When I list the combined Arkai model inventory
+    Then the native model reference is listed
+
+  Scenario: Resolve and remove native Splash selections
+    Given the Splash model installer bridge is available
+    When I resolve a model through the Splash store
+    Then the native model operation is "resolve"
+    When I remove a model through the Splash store
+    Then the native model operation is "remove"
+
+  Scenario: Preview native cache collection
+    Given the Splash model installer bridge is available
+    When I preview native Splash cache pruning
+    Then the native model operation is "prune"
+    And native cache pruning is a dry run
+
   Scenario: List available models
     Given a clean models directory
     When I run "arkai model list"

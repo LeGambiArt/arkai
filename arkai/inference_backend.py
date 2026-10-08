@@ -61,7 +61,9 @@ def _load_builtin_backends() -> None:
 
     from arkai.inference_llama_cpp import LlamaCppBackend
     from arkai.inference_mlx import MlxBackend
+    from arkai.inference_splash import SplashBackend
 
     register_backend(LlamaCppBackend())
     register_backend(MlxBackend())
+    register_backend(SplashBackend())
     _BUILTINS_LOADED = True
