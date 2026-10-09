@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
+import pytest
+
 from arkai import agent, agent_pi, config
 
 
@@ -129,16 +131,31 @@ def test_agent_install_rejects_unsupported_agent() -> None:
 
 
 def test_pi_runtime_volumes_include_node_global_paths(tmp_path: Path, monkeypatch) -> None:
-    """Pi's Node installation is mounted read-only in the sandbox."""
+    """Pi and its Node installation are mounted read-only in the sandbox."""
     monkeypatch.setenv("PI_PACKAGE_DIR", str(tmp_path / "packages"))
-    bin_dir = tmp_path / "bin"
-    bin_dir.mkdir()
+    pi_prefix = tmp_path / "pi"
+    bin_dir = pi_prefix / "bin"
+    bin_dir.mkdir(parents=True)
     pi_path = bin_dir / "pi"
     pi_path.touch()
+    node_prefix = tmp_path / "node-v24"
+    node_bin = node_prefix / "bin"
+    node_bin.mkdir(parents=True)
+    node_path = node_bin / "node"
+    node_path.touch()
 
-    assert agent_pi.get_runtime_volumes(str(pi_path)) == [
-        f"{tmp_path}:ro",
+    assert agent_pi.get_runtime_volumes(str(pi_path), str(node_path)) == [
+        f"{pi_prefix}:ro",
+        f"{node_prefix}:ro",
     ]
+
+
+def test_pi_sandbox_requires_node_from_host_path(monkeypatch) -> None:
+    """A missing Node executable produces an actionable sandbox launch error."""
+    monkeypatch.setattr(agent_pi.shutil, "which", lambda _: None)
+
+    with pytest.raises(RuntimeError, match="Node.js was not found in PATH"):
+        agent_pi._resolve_node_path()
 
 
 def test_pi_runtime_volumes_preserve_npm_bin_symlink_location(tmp_path: Path, monkeypatch) -> None:
@@ -153,8 +170,16 @@ def test_pi_runtime_volumes_preserve_npm_bin_symlink_location(tmp_path: Path, mo
     target.touch()
     pi_path = bin_dir / "pi"
     pi_path.symlink_to(target)
+    node_prefix = tmp_path / "node-runtime"
+    node_bin = node_prefix / "bin"
+    node_bin.mkdir(parents=True)
+    node_path = node_bin / "node"
+    node_path.touch()
 
-    assert agent_pi.get_runtime_volumes(str(pi_path)) == [f"{prefix}:ro"]
+    assert agent_pi.get_runtime_volumes(str(pi_path), str(node_path)) == [
+        f"{prefix}:ro",
+        f"{node_prefix}:ro",
+    ]
 
 
 def test_pi_passes_mcp_config_when_wtmcp_is_running(tmp_path: Path, monkeypatch) -> None:
@@ -202,15 +227,31 @@ def test_pi_passes_configured_theme_to_cli(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_pi_interactive_sandbox_requests_tty(tmp_path: Path, monkeypatch) -> None:
-    """Interactive Pi sessions allocate a terminal inside the sandbox."""
+    """Interactive sandboxed Pi runs Node directly and allocate a terminal."""
     agent_dir = tmp_path / "pi-agent"
     monkeypatch.setattr(agent_pi, "get_agent_dir", lambda: agent_dir)
+    pi_prefix = tmp_path / "pi-core"
+    pi_bin = pi_prefix / "bin"
+    pi_bin.mkdir(parents=True)
+    pi_entrypoint = pi_prefix / "lib" / "cli.js"
+    pi_entrypoint.parent.mkdir(parents=True)
+    pi_entrypoint.write_text("#!/usr/bin/env node\n")
+    pi_path = pi_bin / "pi"
+    pi_path.symlink_to(pi_entrypoint)
+    node_prefix = tmp_path / "node-runtime"
+    node_bin = node_prefix / "bin"
+    node_bin.mkdir(parents=True)
+    node_path = node_bin / "node"
+    node_path.touch()
 
-    with patch.object(
-        agent, "_build_sandbox_cmd", return_value=["arapuca", "run", "--tty", "--"]
-    ) as build_sandbox:
+    with (
+        patch.object(
+            agent, "_build_sandbox_cmd", return_value=["arapuca", "run", "--tty", "--"]
+        ) as build_sandbox,
+        patch.object(agent_pi, "_resolve_node_path", return_value=str(node_path)),
+    ):
         spec = agent_pi.build_launch_spec(
-            "/bin/pi",
+            str(pi_path),
             {"inference": {"model": "test.gguf"}},
             None,
             True,
@@ -218,7 +259,19 @@ def test_pi_interactive_sandbox_requests_tty(tmp_path: Path, monkeypatch) -> Non
         )
 
     assert spec.command[:4] == ["arapuca", "run", "--tty", "--"]
+    assert spec.command[4:8] == [
+        str(node_path),
+        "--require",
+        str(spec.cleanup_paths[0]),
+        str(pi_entrypoint),
+    ]
+    assert spec.command[8:] == ["--model", "local-llm/test"]
+    assert "process.env.PATH" in spec.cleanup_paths[0].read_text()
+    assert str(node_bin) in spec.cleanup_paths[0].read_text()
     assert build_sandbox.call_args.kwargs["tty"] is True
+    assert build_sandbox.call_args.args[5] == [f"{pi_prefix}:ro", f"{node_prefix}:ro"]
+    for path in spec.cleanup_paths:
+        path.unlink(missing_ok=True)
 
 
 def test_pi_omits_mcp_config_when_wtmcp_is_not_running(tmp_path: Path, monkeypatch) -> None:

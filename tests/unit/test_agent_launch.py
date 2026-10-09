@@ -56,6 +56,7 @@ def test_run_launch_spec_owns_popen_and_cleanup(tmp_path: Path) -> None:
     temporary.write_text("{}")
     process = MagicMock()
     process.communicate.return_value = (b"answer\n", None)
+    process.returncode = 0
     spec = agent.AgentLaunchSpec(["/agent"], {"PATH": "/bin"}, [temporary, temporary_dir])
 
     with patch.object(agent.subprocess, "Popen", return_value=process) as popen:
@@ -71,6 +72,21 @@ def test_run_launch_spec_owns_popen_and_cleanup(tmp_path: Path) -> None:
     )
     assert not temporary.exists()
     assert not temporary_dir.exists()
+
+
+def test_run_launch_spec_reports_nonzero_exit_and_cleans_up(tmp_path: Path) -> None:
+    """A failed agent launch is reported after its temporary files are removed."""
+    temporary = tmp_path / "agent.json"
+    temporary.write_text("{}")
+    process = MagicMock()
+    process.wait.return_value = 127
+    spec = agent.AgentLaunchSpec(["/agent"], {}, [temporary])
+
+    with patch.object(agent.subprocess, "Popen", return_value=process):
+        with pytest.raises(RuntimeError, match="exited with status 127"):
+            agent.run_launch_spec(spec)
+
+    assert not temporary.exists()
 
 
 def test_run_launch_spec_cleans_up_when_popen_fails(tmp_path: Path) -> None:

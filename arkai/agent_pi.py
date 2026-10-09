@@ -3,6 +3,7 @@
 import json
 import os
 import shutil
+import tempfile
 from pathlib import Path
 
 from arkai import config, utils
@@ -34,11 +35,46 @@ def get_agent_dir() -> Path:
     return get_install_dir() / "agent"
 
 
-def get_runtime_volumes(agent_path: str) -> list[str]:
-    """Return read-only volumes needed by Pi's Node launcher in a sandbox."""
+def _resolve_node_path() -> str:
+    """Resolve the Node executable used to run Pi."""
+    node_path = shutil.which("node")
+    if node_path is None:
+        raise RuntimeError("Node.js was not found in PATH; it is required to run Pi in a sandbox")
+    return str(Path(node_path).resolve())
+
+
+def get_runtime_volumes(agent_path: str, node_path: str) -> list[str]:
+    """Return read-only volumes needed by Pi and its Node runtime in a sandbox."""
     bin_dir = Path(os.path.abspath(agent_path)).parent
-    prefix = bin_dir.parent
-    return [f"{prefix}:ro"] if prefix.exists() else []
+    prefixes = [bin_dir.parent, Path(node_path).resolve().parent.parent]
+    volumes: list[str] = []
+    for prefix in prefixes:
+        if prefix.exists():
+            volume = f"{prefix}:ro"
+            if volume not in volumes:
+                volumes.append(volume)
+    return volumes
+
+
+def _create_node_path_preload(agent_dir: str, node_path: str) -> Path:
+    """Create a per-launch Node preload that exposes Node tools to Pi's children."""
+    descriptor, preload_name = tempfile.mkstemp(
+        prefix="arkai-pi-env-", suffix=".cjs", dir=agent_dir
+    )
+    preload_path = Path(preload_name)
+    node_bin = str(Path(node_path).parent)
+    preload = (
+        f"const nodeBin = {json.dumps(node_bin)};\n"
+        f"const pathSeparator = {json.dumps(os.pathsep)};\n"
+        'process.env.PATH = nodeBin + pathSeparator + (process.env.PATH || "");\n'
+    )
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as preload_file:
+            preload_file.write(preload)
+    except Exception:
+        preload_path.unlink(missing_ok=True)
+        raise
+    return preload_path
 
 
 def _prepare_agent_dir(cfg: dict, wtmcp_port: int | None) -> str:
@@ -103,9 +139,21 @@ def build_launch_spec(
     model_id = _get_agent_model_id(cfg)
     env = os.environ.copy()
     env["PI_CODING_AGENT_DIR"] = agent_dir
+
+    agent_args = ["--model", f"local-llm/{model_id}"]
+    theme = config.get_config_value(cfg, "agent.theme")
+    if theme is not None:
+        agent_args.extend(["--use-theme", theme])
+    if mcp_available:
+        agent_args.extend(["--mcp-config", str(Path(agent_dir, "mcp.json"))])
+    if prompt is not None:
+        agent_args.extend(["-p", prompt])
+
+    cleanup_paths: list[Path] = []
     if use_sandbox:
+        node_path = _resolve_node_path()
         runtime_volumes = list(cli_volumes or [])
-        runtime_volumes.extend(get_runtime_volumes(agent_path))
+        runtime_volumes.extend(get_runtime_volumes(agent_path, node_path))
         sandbox_environment = dict(cli_environment or {})
         sandbox_environment["PI_CODING_AGENT_DIR"] = agent_dir
         cmd = _build_sandbox_cmd(
@@ -117,20 +165,16 @@ def build_launch_spec(
             runtime_volumes,
             sandbox_environment,
             tty=prompt is None,
-        ) + [agent_path]
+        )
+        preload_path = _create_node_path_preload(agent_dir, node_path)
+        cleanup_paths.append(preload_path)
+        cmd = cmd + [node_path, "--require", str(preload_path), str(Path(agent_path).resolve())]
     else:
         cmd = [agent_path]
 
-    cmd.extend(["--model", f"local-llm/{model_id}"])
-    theme = config.get_config_value(cfg, "agent.theme")
-    if theme is not None:
-        cmd.extend(["--use-theme", theme])
-    if mcp_available:
-        cmd.extend(["--mcp-config", str(Path(agent_dir, "mcp.json"))])
-    if prompt is not None:
-        cmd.extend(["-p", prompt])
+    cmd.extend(agent_args)
 
-    return AgentLaunchSpec(cmd, env)
+    return AgentLaunchSpec(cmd, env, cleanup_paths)
 
 
 def start(
