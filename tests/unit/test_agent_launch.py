@@ -100,6 +100,27 @@ def test_opencode_interactive_sandbox_requests_tty(tmp_path: Path, monkeypatch) 
         path.unlink(missing_ok=True)
 
 
+@pytest.mark.parametrize(
+    ("prompt", "expected_tty"),
+    [(None, True), ("do the task", False)],
+)
+def test_crush_sandbox_requests_tty_only_for_interactive_sessions(
+    tmp_path: Path, monkeypatch, prompt: str | None, expected_tty: bool
+) -> None:
+    """Interactive Crush sessions allocate a TTY; prompt runs remain non-interactive."""
+    sessions = tmp_path / "sessions"
+    monkeypatch.setattr(agent_crush.os.path, "expanduser", lambda _: str(sessions))
+
+    with patch.object(
+        agent, "_build_sandbox_cmd", return_value=["arapuca", "run", "--"]
+    ) as build_sandbox:
+        spec = agent_crush.build_launch_spec("/agent", _cfg(), None, True, None, prompt=prompt)
+
+    assert build_sandbox.call_args.kwargs["tty"] is expected_tty
+    for path in spec.cleanup_paths:
+        path.unlink(missing_ok=True)
+
+
 def test_other_agents_only_build_launch_specs() -> None:
     """Each agent module exposes configuration and command construction separately."""
     assert hasattr(agent_claude, "build_launch_spec")

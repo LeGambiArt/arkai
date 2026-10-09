@@ -76,6 +76,7 @@ def build_launch_spec(
                 sandbox_profile,
                 cli_volumes,
                 cli_environment,
+                tty=prompt is None,
             )
         except Exception:
             config_file.unlink(missing_ok=True)
