@@ -173,9 +173,12 @@ def run_launch_spec(spec: AgentLaunchSpec, capture_stdout: bool = False) -> str 
         )
         if capture_stdout:
             stdout_data, _ = process.communicate()
+            return_code = process.returncode
         else:
-            process.wait()
+            return_code = process.wait()
             stdout_data = None
+        if isinstance(return_code, int) and return_code != 0:
+            raise RuntimeError(f"Agent process exited with status {return_code}")
     except FileNotFoundError as error:
         utils.error(str(error), 3)
         sys.exit(3)
