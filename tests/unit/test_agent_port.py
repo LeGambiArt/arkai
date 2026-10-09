@@ -102,6 +102,22 @@ def test_mlx_agent_uses_default_model_request_alias() -> None:
     assert agent._get_agent_model_id(cfg) == "default_model"
 
 
+def test_splash_agent_preserves_server_model_id() -> None:
+    """Splash requires the full repository ID returned by its model endpoint."""
+    assert (
+        agent._get_agent_model_id(
+            {"inference": {"backend": "splash", "model": "incoai/Qwen3.8-27B-Splash"}}
+        )
+        == "incoai/Qwen3.8-27B-Splash"
+    )
+    assert (
+        agent._get_agent_model_id(
+            {"inference": {"backend": "splash", "model": "hf:incoai/Qwen3.8-27B-Splash:Q4"}}
+        )
+        == "incoai/Qwen3.8-27B-Splash"
+    )
+
+
 def test_llama_cpp_agent_keeps_human_readable_model_request_id() -> None:
     """llama.cpp continues receiving Arkai's existing model request ID."""
     cfg = {"inference": {"model": "hf:org/model-GGUF"}}
