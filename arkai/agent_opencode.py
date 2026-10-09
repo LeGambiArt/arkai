@@ -124,12 +124,19 @@ def build_launch_spec(
                 cli_volumes,
                 cli_environment,
                 tty=prompt is None,
+                allow_network_listeners=True,
             )
         except Exception:
             for path in cleanup_paths:
                 path.unlink(missing_ok=True)
             raise
         env_args = ["env", f"OPENCODE_CONFIG={config_file}"]
+        # OpenCode's project discovery walks above the mounted workspace. The
+        # sandbox intentionally grants only metadata traversal there, which
+        # Bun's discovery path cannot use reliably. Arkai also supplies the
+        # authoritative per-run config, so do not load repository-controlled
+        # config/plugins from outside the mounted project.
+        env_args.append("OPENCODE_DISABLE_PROJECT_CONFIG=true")
         if tui_file is not None:
             env_args.append(f"OPENCODE_TUI_CONFIG={tui_file}")
         command = sandbox_prefix + env_args + [agent_path]
@@ -140,7 +147,9 @@ def build_launch_spec(
         command = [agent_path]
 
     if prompt is not None:
-        command.extend(["run", prompt])
+        command.extend(["run", "--standalone", prompt])
+    else:
+        command.append("--standalone")
     return AgentLaunchSpec(command, environment, cleanup_paths)
 
 

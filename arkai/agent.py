@@ -508,6 +508,15 @@ def _get_agent_model_id(cfg: dict) -> str:
     inference_backend = config.get_config_value(cfg, "inference.backend", "llama-cpp")
     if inference_backend == "mlx":
         return "default_model"
+    if inference_backend == "splash":
+        # Splash validates the OpenAI-compatible request's model against its
+        # full Hugging Face repository ID, unlike the local GGUF servers that
+        # accept Arkai's shortened display name.
+        model = config.get_config_value(cfg, "inference.model")
+        if isinstance(model, str) and model.startswith("hf:"):
+            return model.split(":", 1)[1].split(":", 1)[0]
+        if isinstance(model, str) and model:
+            return model
     return _get_model_name(cfg)
 
 
@@ -554,6 +563,7 @@ def _build_sandbox_cmd(
     allow_network: bool = False,
     allow_inference: bool = True,
     extra_hosts: list[str] | None = None,
+    allow_network_listeners: bool = False,
 ) -> list:
     """Build the arapuca sandbox command prefix for an agent invocation.
 
@@ -567,6 +577,7 @@ def _build_sandbox_cmd(
         allow_network: Leave network access enabled on Linux for cloud providers.
         allow_inference: Allow the configured local inference host on Linux.
         extra_hosts: Additional HTTPS destinations permitted by the sandbox.
+        allow_network_listeners: Allow sandboxed processes to bind network listeners.
 
     Returns:
         List of command tokens ending with "--", ready for the agent command to be appended
@@ -603,7 +614,10 @@ def _build_sandbox_cmd(
     cmd: list = [arapuca_path, "run"]
 
     if workdir:
-        cmd += ["-v", f"{workdir}:rw"]
+        # Arapuca volumes are read-write by default; only read-only mounts
+        # need an explicit suffix. Older Arapuca releases treat ":rw" as
+        # part of the path, which leaves --cwd outside the mounted workspace.
+        cmd += ["-v", workdir]
     else:
         cmd += ["-v", f"{os.getcwd()}:ro"]
 
@@ -612,7 +626,7 @@ def _build_sandbox_cmd(
         config_dir_abs = os.path.abspath(config_dir)
         workdir_abs = os.path.abspath(workdir) if workdir else None
         if not workdir_abs or not config_dir_abs.startswith(workdir_abs + os.sep):
-            cmd += ["-v", f"{config_dir_abs}:rw"]
+            cmd += ["-v", config_dir_abs]
 
     # Add profile and CLI volumes
     for vol in volumes:
@@ -620,6 +634,8 @@ def _build_sandbox_cmd(
 
     for host in extra_hosts or []:
         cmd += ["--allow-host", host]
+    if allow_network_listeners:
+        cmd += ["--allow-network-listeners"]
 
     if platform.system() == "Linux":
         if allow_inference:

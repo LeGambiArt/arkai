@@ -511,6 +511,18 @@ what the agent can access:
   all other network access is denied
 - **Network (macOS):** `baseline` seccomp profile is applied
 
+OpenCode starts a private local server for each invocation. Arkai therefore
+requests Arapuca's `--allow-network-listeners` capability for sandboxed OpenCode
+runs. On macOS, Seatbelt cannot reliably constrain listeners to loopback, so a
+sandboxed OpenCode process may bind to a non-loopback interface. Use this only
+on trusted networks; disable the sandbox explicitly if you do not accept that
+macOS limitation or use another isolation boundary.
+
+Sandboxed OpenCode also skips project-level OpenCode configuration and rules
+(`opencode.json`, `.opencode/`, and project `AGENTS.md` discovery). Arkai provides
+the per-run OpenCode config, and project discovery otherwise traverses outside
+the mounted workspace.
+
 The current working directory is mounted read-write by default (override path with
 `--cwd`).
 

@@ -27,6 +27,7 @@ def test_opencode_builds_configuration_without_starting_process(
     popen.assert_not_called()
     config_path = Path(spec.environment["OPENCODE_CONFIG"])
     assert json.loads(config_path.read_text())["model"] == "local-llm/model"
+    assert spec.command == ["/agent", "--standalone"]
     config_path.unlink()
 
 
@@ -115,6 +116,9 @@ def test_opencode_interactive_sandbox_requests_tty(tmp_path: Path, monkeypatch) 
 
     assert spec.command[:4] == ["arapuca", "run", "--tty", "--"]
     assert build_sandbox.call_args.kwargs["tty"] is True
+    assert build_sandbox.call_args.kwargs["allow_network_listeners"] is True
+    assert "OPENCODE_DISABLE_PROJECT_CONFIG=true" in spec.command
+    assert spec.command[-1] == "--standalone"
     for path in spec.cleanup_paths:
         path.unlink(missing_ok=True)
 
@@ -337,6 +341,16 @@ def test_pi_cloud_sandbox_mounts_global_agent_data_and_allows_openai_hosts(
         "*.chatgpt.com:443",
     ]
     assert spec.command[-2:] == ["--models", "openai/*"]
+
+
+def test_opencode_prompt_uses_private_server(tmp_path: Path, monkeypatch) -> None:
+    """Prompt runs use a per-invocation private OpenCode server."""
+    sessions = tmp_path / "sessions"
+    monkeypatch.setattr(agent_opencode.os.path, "expanduser", lambda _: str(sessions))
+
+    spec = agent_opencode.build_launch_spec("/agent", _cfg(), None, False, None, prompt="hello")
+
+    assert spec.command == ["/agent", "run", "--standalone", "hello"]
     for path in spec.cleanup_paths:
         path.unlink(missing_ok=True)
 
@@ -399,6 +413,31 @@ def test_omp_cloud_sandbox_mounts_global_agent_dir_and_wtmcp_config(
     assert mcp_overlay in spec.cleanup_paths
     for path in spec.cleanup_paths:
         path.unlink(missing_ok=True)
+
+
+def test_sandbox_mounts_read_write_paths_without_rw_suffix(tmp_path: Path, monkeypatch) -> None:
+    """Arapuca defaults volume mounts to read-write; :rw breaks older CLIs."""
+    workdir = str(tmp_path / "project")
+    config_dir = str(tmp_path / "sessions")
+    monkeypatch.setattr(agent.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(agent.utils, "resolve_binary", lambda _: "/arapuca")
+
+    command = agent._build_sandbox_cmd(
+        {
+            "inference": {"port": 8123},
+            "sandbox": {"volume": ["/extra:ro"]},
+        },
+        workdir,
+        config_dir,
+        None,
+        allow_network_listeners=True,
+    )
+
+    mounts = [command[index + 1] for index, arg in enumerate(command[:-1]) if arg == "-v"]
+    assert mounts == [workdir, config_dir, "/extra:ro"]
+    assert f"{workdir}:rw" not in command
+    assert f"{config_dir}:rw" not in command
+    assert "--allow-network-listeners" in command
 
 
 def test_other_agents_only_build_launch_specs() -> None:
