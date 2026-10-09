@@ -81,8 +81,10 @@ def test_inference_log_path_is_separate_for_explicit_ports(tmp_path: Path) -> No
         assert inference.get_inference_log_path(9090) == str(tmp_path / "inference-9090.log")
 
 
-def test_inference_start_preserves_backend_output_in_log(tmp_path: Path) -> None:
-    """The server process must not lose diagnostics while starting."""
+def test_inference_start_displays_and_preserves_backend_output(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Show backend output while starting and retain it in the diagnostic log."""
     cfg = {
         "inference": {
             "model": "hf:owner/model:Q4_K_M",
@@ -99,6 +101,11 @@ def test_inference_start_preserves_backend_output_in_log(tmp_path: Path) -> None
     backend = MagicMock(name="llama-cpp")
     backend.name = "llama-cpp"
     backend.build_command.return_value = ["llama-server", "--port", "9090"]
+
+    def become_healthy(*_args: object) -> bool:
+        with (tmp_path / "inference-9090.log").open("a", encoding="utf-8") as log_file:
+            log_file.write("Downloading model: 50%\n")
+        return True
 
     with (
         patch.object(inference.config, "load_config", return_value=cfg),
@@ -117,7 +124,7 @@ def test_inference_start_preserves_backend_output_in_log(tmp_path: Path) -> None
         ),
         patch.object(inference, "get_backend", return_value=backend),
         patch.object(inference, "is_inference_running", return_value=False),
-        patch.object(inference, "_is_inference_server_healthy", return_value=True),
+        patch.object(inference, "_is_inference_server_healthy", side_effect=become_healthy),
         patch.object(inference.utils, "get_pid_dir", return_value=str(tmp_path)),
         patch.object(inference.utils, "detect_gpu", return_value="cpu"),
         patch.object(inference.utils, "is_port_in_use", return_value=False),
@@ -129,4 +136,7 @@ def test_inference_start_preserves_backend_output_in_log(tmp_path: Path) -> None
     kwargs = popen.call_args.kwargs
     assert kwargs["stdout"] is not inference.subprocess.DEVNULL
     assert kwargs["stderr"] == inference.subprocess.STDOUT
-    assert (tmp_path / "inference-9090.log").exists()
+    log_path = tmp_path / "inference-9090.log"
+    assert log_path.exists()
+    assert "Downloading model: 50%" in capsys.readouterr().out
+    assert "Downloading model: 50%" in log_path.read_text(encoding="utf-8")

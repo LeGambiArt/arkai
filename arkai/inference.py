@@ -5,6 +5,7 @@ import os
 import shlex
 import signal
 import subprocess
+import sys
 import time
 
 import requests
@@ -125,6 +126,14 @@ def _is_inference_server_healthy(port: int, path: str = "/v1/models") -> bool:
         return False
 
 
+def _display_startup_output(log_file) -> None:
+    """Forward newly written server output while Arkai waits for readiness."""
+    output = log_file.read()
+    if output:
+        sys.stdout.write(output)
+        sys.stdout.flush()
+
+
 def cmd_inference_start(
     model: str | None = None,
     gpu_layers: int | None = None,
@@ -214,9 +223,10 @@ def cmd_inference_start(
     try:
         # Keep backend diagnostics available after the CLI detaches from the server.
         os.makedirs(os.path.dirname(log_path), exist_ok=True)
-        with open(log_path, "w") as log_file:
+        with open(log_path, "w", encoding="utf-8") as log_file:
             log_file.write(f"Command: {shlex.join(cmd)}\n\n")
             log_file.flush()
+            startup_log_offset = log_file.tell()
             process_options: dict = {"stdout": log_file, "stderr": subprocess.STDOUT}
             if selected_backend.name == "splash":
                 process_options["env"] = model_splash.splash_environment(cfg, create=True)
@@ -245,17 +255,24 @@ def cmd_inference_start(
     startup_timeout = config.get_config_value(cfg, "inference.startup_timeout", 600)
     startup_error = "Inference server failed to start"
     health_path = "/ready" if selected_backend.name == "splash" else "/v1/models"
-    for _ in range(startup_timeout):
-        if proc.poll() is not None:
-            startup_error = (
-                f"Inference server exited before becoming ready (code {proc.returncode}). "
-                "See the server log for details"
-            )
-            break
-        if _is_inference_server_healthy(port, health_path):
-            utils.info(f"Inference server ready on port {port}")
-            return
-        time.sleep(1)
+    with open(log_path, encoding="utf-8", errors="replace") as startup_log:
+        startup_log.seek(startup_log_offset)
+        utils.info("Server output during startup:")
+        for _ in range(startup_timeout):
+            _display_startup_output(startup_log)
+            if proc.poll() is not None:
+                _display_startup_output(startup_log)
+                startup_error = (
+                    f"Inference server exited before becoming ready (code {proc.returncode}). "
+                    "See the server log for details"
+                )
+                break
+            if _is_inference_server_healthy(port, health_path):
+                _display_startup_output(startup_log)
+                utils.info(f"Inference server ready on port {port}")
+                return
+            time.sleep(1)
+        _display_startup_output(startup_log)
 
     # Kill the process that failed to become ready and clean up its files
     try:

@@ -352,20 +352,68 @@ def test_discovery_reports_missing_runtime(home: Path) -> None:
             model_splash.discover_installation({})
 
 
-def test_native_inventory_protocol_validation(transport, home: Path) -> None:
-    """Inventory must have validated fields and can be inspected without cache creation."""
-    (home / "Library/Application Support/Splash/models").mkdir(parents=True)
+def test_native_inventory_is_independent_of_splash_version(home: Path) -> None:
+    """List installed selections directly without loading a versioned Splash API."""
+    models_root = home / "Library/Application Support/Splash/models"
+    revision = "a" * 40
+    snapshot = home / "hub/models--owner--model/snapshots" / revision
+    snapshot.mkdir(parents=True)
+    (models_root / "owner").mkdir(parents=True)
+    (models_root / "owner/model").symlink_to(snapshot)
+
+    selection = home / "assembled-model"
+    selection.mkdir()
+    (selection / "model.json").write_text('{"model":"other/selected-model"}')
+    (models_root / ".selections").mkdir()
+    (models_root / ".selections/selection-id").symlink_to(selection)
+    (models_root / "owner/broken").symlink_to(home / "missing-model")
+
+    with (
+        patch.object(
+            model_splash,
+            "discover_installation",
+            side_effect=AssertionError("listing must not discover or version-check Splash"),
+        ),
+        patch.object(model_splash.subprocess, "Popen") as popen,
+    ):
+        entries = model_splash.SplashModelStore({}).list_models()
+
+    assert {entry.reference for entry in entries} == {
+        "hf:owner/model",
+        "hf:other/selected-model",
+        "hf:owner/broken",
+    }
+    by_reference = {entry.reference: entry for entry in entries}
+    assert by_reference["hf:owner/model"].complete is None
+    assert by_reference["hf:owner/model"].revision == revision
+    assert by_reference["hf:other/selected-model"].complete is None
+    assert by_reference["hf:owner/broken"].complete is False
+    popen.assert_not_called()
+
+
+def test_model_listing_marks_unverified_inventory(home: Path, capsys) -> None:
+    """Version-independent path discovery does not claim artifact verification."""
+    root = home / "Library/Application Support/Splash/models/owner"
+    root.mkdir(parents=True)
+    target = home / "snapshot"
+    target.mkdir()
+    (root / "model").symlink_to(target)
+    entries = model_splash.SplashModelStore({}).list_models()
+    model._show_splash_models(entries)
+    output = capsys.readouterr().out
+    assert "hf:owner/model" in output
+    assert "present; integrity not checked" in output
+    assert "Source bytes" not in output
+
+
+def test_model_entry_mapping_rejects_invalid_inventory() -> None:
+    """The versioned management bridge continues to validate its detailed records."""
     entry = {
         "reference": "hf:owner/model",
         "installation_id": "id",
         "path": "/selection",
         "complete": True,
     }
-    transport.communicate.return_value = (json.dumps({"version": 1, "models": [entry]}), "")
-    assert model_splash.SplashModelStore({}).list_models()[0].reference == "hf:owner/model"
-    transport.communicate.return_value = ('{"version":1,"models":false}', "")
-    with pytest.raises(RuntimeError, match="inventory"):
-        model_splash.SplashModelStore({}).list_models()
     with pytest.raises(RuntimeError, match="inventory"):
         ModelEntry.from_mapping({**entry, "owned_bytes": -1})
 

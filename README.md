@@ -286,9 +286,12 @@ are not passed to Splash, and configured server sampling defaults are rejected.
 ### Managing Splash models
 
 Splash installations use native metadata and links to Hugging Face Hub snapshots,
-not the Git-based provider cache. Arkai uses the verified **Splash 1.1.0** installer
-to download the target, required draft, tokenizer, and applicable vision sources.
-The installer runs in Splash's bundled Python; it does not start inference.
+not the Git-based provider cache. Arkai's model inventory reads native selection
+links directly, independent of the installed Splash version. This fast listing
+does not verify model artifacts. Download, resolve, remove, and prune use the
+verified **Splash 1.1.0** installer interface to manage the target, required draft,
+tokenizer, and applicable vision sources. The installer runs in Splash's bundled
+Python; it does not start inference.
 
 ```bash
 arkai model download --backend splash hf:incoai/Qwen3.8-27B-Splash
@@ -301,10 +304,11 @@ arkai model prune --backend splash --dry-run
 
 Download, resolve, remove, and prune use the configured inference backend when
 `--backend` is omitted. Unfiltered `model list` always includes local GGUF files,
-provider-cached models, and installed Splash models, regardless of the configured
-backend. It does not download or repair files. Inventory shows installation IDs,
-source revisions/dependencies, complete/incomplete state, and shared source sizes.
-Use `--id ID` for resolution or removal when multiple native installations match.
+provider-cached models, and installed Splash selections, regardless of the
+configured backend or Splash version. It does not download or repair files. Splash
+listing shows installation IDs and paths; artifact completeness is reported as
+unverified. Use `--id ID` for resolution or removal when multiple native
+installations match.
 
 Arkai automatically sets both cache locations for downloads and serving:
 

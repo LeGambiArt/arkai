@@ -12,7 +12,7 @@ class ModelEntry:
     reference: str
     installation_id: str
     path: Path
-    complete: bool
+    complete: bool | None
     sources: dict[str, Any] = field(default_factory=dict)
     files: list[str] = field(default_factory=list)
     revision: str | None = None

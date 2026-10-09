@@ -153,13 +153,23 @@ def cmd_model_list(backend: str | None = None) -> None:
 
 
 def _show_splash_models(entries: list[ModelEntry]) -> None:
-    """Expose native identities, complete/incomplete state, and shared dependency sizes."""
+    """Expose native identities and available inventory details."""
     utils.info("Splash models:")
     for entry in entries:
+        state = (
+            "complete"
+            if entry.complete is True
+            else "incomplete"
+            if entry.complete is False
+            else "present; integrity not checked"
+        )
         utils.info(f"  {entry.reference} [{entry.installation_id}]")
-        utils.info(f"    Path: {entry.path}; {'complete' if entry.complete else 'incomplete'}")
+        utils.info(f"    Path: {entry.path}; {state}")
         utils.info(f"    Revision: {entry.revision or 'unknown'}")
-        utils.info(f"    Source bytes: {entry.owned_bytes} exclusive, {entry.shared_bytes} shared")
+        if entry.files:
+            utils.info(
+                f"    Source bytes: {entry.owned_bytes} exclusive, {entry.shared_bytes} shared"
+            )
         for role, source in entry.sources.items():
             utils.info(f"    {role}: {source.get('repo')}@{source.get('revision') or 'local'}")
 

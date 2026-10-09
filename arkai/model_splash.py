@@ -1,5 +1,6 @@
 """Native Splash model management and shared download/serving cache paths."""
 
+import hashlib
 import json
 import os
 import re
@@ -263,18 +264,44 @@ class SplashModelStore:
         return Path(self.call("download", model=splash_model_id(reference))["path"])
 
     def list_models(self) -> list[ModelEntry]:
-        """Read native inventory, including installations created outside Arkai."""
-        options = splash_options(self.cfg)
+        """List native model selections without depending on Splash's private APIs."""
         home = Path(os.getenv("HOME") or str(Path.home()))
-        if (
-            "installation_root" not in options
-            and not (home / "Library/Application Support/Splash/models").is_dir()
-        ):
+        models_root = home / "Library" / "Application Support" / "Splash" / "models"
+        if not models_root.is_dir():
             return []
-        response = self.call("list")
-        if not isinstance(response.get("models"), list):
-            raise RuntimeError("Splash bridge returned an invalid model inventory")
-        return [ModelEntry.from_mapping(entry) for entry in response["models"]]
+
+        entries = []
+        try:
+            parents = sorted(models_root.iterdir())
+            for parent in parents:
+                if parent.is_symlink() or not parent.is_dir():
+                    continue
+                for selection in sorted(parent.iterdir()):
+                    if not selection.is_symlink():
+                        continue
+                    try:
+                        reference = _selection_reference(selection, models_root)
+                        target = selection.resolve()
+                    except (OSError, RuntimeError):
+                        continue
+                    if reference is None:
+                        continue
+                    entries.append(
+                        ModelEntry(
+                            reference=reference,
+                            installation_id=hashlib.sha256(str(selection).encode()).hexdigest(),
+                            path=selection,
+                            # A version-independent inventory can confirm that a selection
+                            # target exists, but cannot validate release-specific artifacts.
+                            complete=None if target.is_dir() else False,
+                            revision=_snapshot_revision(target),
+                        )
+                    )
+        except OSError as error:
+            raise RuntimeError(
+                f"Cannot read Splash model inventory at {models_root}: {error}"
+            ) from error
+        return entries
 
     def resolve(self, reference: str, installation_id: str | None = None) -> Path:
         """Resolve a complete cached selection without fetching or repairing artifacts."""
@@ -305,3 +332,36 @@ class SplashModelStore:
             dry_run=dry_run,
             owned=owned,
         )
+
+
+def _selection_reference(selection: Path, models_root: Path) -> str | None:
+    """Derive a model reference from a native selection path or its metadata."""
+    relative = selection.relative_to(models_root)
+    if len(relative.parts) == 2 and relative.parts[0] != ".selections":
+        candidate = f"hf:{relative.parts[0]}/{relative.parts[1]}"
+    elif relative.parts[0] == ".selections":
+        metadata = selection.resolve() / "model.json"
+        try:
+            record = json.loads(metadata.read_text(encoding="utf-8"))
+            model = record.get("model") if isinstance(record, dict) else None
+        except (OSError, ValueError, TypeError):
+            return None
+        if not isinstance(model, str):
+            return None
+        candidate = f"hf:{model}"
+    else:
+        return None
+    try:
+        return "hf:" + splash_model_id(candidate)
+    except ValueError:
+        return None
+
+
+def _snapshot_revision(target: Path) -> str | None:
+    """Return a Hub snapshot revision when the target path exposes one."""
+    parts = target.parts
+    for index, part in enumerate(parts[:-1]):
+        revision = parts[index + 1]
+        if part == "snapshots" and re.fullmatch(r"[0-9a-fA-F]{40}", revision):
+            return revision
+    return None
