@@ -35,14 +35,20 @@ def build_launch_spec(
     """Create Crush configuration and return its process launch specification."""
     from arkai.agent import _build_sandbox_cmd, _get_agent_model_id
 
-    config_dir = _get_config_dir()
     inference_port = config.get_config_value(cfg, "inference.port", 8081)
     model_name = _get_agent_model_id(cfg)
+    sessions_dir = _get_config_dir()
+    crush_config_dir = Path(tempfile.mkdtemp(prefix="crush-", dir=sessions_dir))
+    config_file = crush_config_dir / "crush.json"
     config_data: dict = {
         "providers": {
             "local-llm": {
-                "type": "llamacpp",
-                "base_url": f"http://127.0.0.1:{inference_port}",
+                "name": "Arkai Local Inference",
+                "type": "openai-compat",
+                "base_url": f"http://127.0.0.1:{inference_port}/v1",
+                "api_key": "local",
+                "discover_models": False,
+                "models": [{"id": model_name, "name": "Arkai Local Inference"}],
             }
         },
         "models": {
@@ -54,15 +60,11 @@ def build_launch_spec(
         config_data["mcp"] = {
             "wtmcp": {"type": "http", "url": f"http://127.0.0.1:{wtmcp_port}/mcp"}
         }
-    file_descriptor, config_name = tempfile.mkstemp(
-        prefix=".crush-", suffix=".json", dir=config_dir
-    )
-    os.close(file_descriptor)
-    config_file = Path(config_name)
     try:
         config_file.write_text(json.dumps(config_data, indent=2))
     except Exception:
         config_file.unlink(missing_ok=True)
+        crush_config_dir.rmdir()
         raise
 
     environment = os.environ.copy()
@@ -71,7 +73,7 @@ def build_launch_spec(
             sandbox_prefix = _build_sandbox_cmd(
                 cfg,
                 workdir,
-                str(config_dir),
+                str(crush_config_dir),
                 wtmcp_port,
                 sandbox_profile,
                 cli_volumes,
@@ -80,17 +82,22 @@ def build_launch_spec(
             )
         except Exception:
             config_file.unlink(missing_ok=True)
+            crush_config_dir.rmdir()
             raise
-        command = sandbox_prefix + ["env", f"CRUSH_CONFIG={config_file}", agent_path]
+        command = sandbox_prefix + [
+            "env",
+            f"CRUSH_GLOBAL_CONFIG={crush_config_dir}",
+            f"CRUSH_GLOBAL_DATA={crush_config_dir}",
+            agent_path,
+        ]
     else:
-        environment["CRUSH_CONFIG"] = str(config_file)
+        environment["CRUSH_GLOBAL_CONFIG"] = str(crush_config_dir)
+        environment["CRUSH_GLOBAL_DATA"] = str(crush_config_dir)
         command = [agent_path]
 
     if prompt is not None:
-        command.extend(["run", prompt])
-    else:
-        command.extend(["--cwd", str(config_dir)])
-    return AgentLaunchSpec(command, environment, [config_file])
+        command.extend(["run", "--quiet", prompt])
+    return AgentLaunchSpec(command, environment, [config_file, crush_config_dir])
 
 
 def start(

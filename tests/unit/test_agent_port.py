@@ -78,6 +78,18 @@ def test_agent_model_name_preserves_model_details() -> None:
     )
 
 
+def test_agent_model_id_preserves_running_server_id() -> None:
+    """Server model IDs with dotted versions are not mistaken for file paths."""
+    cfg = {
+        "inference": {
+            "backend": "splash",
+            "model": "incoai/Qwen3.8-27B-Splash",
+        }
+    }
+
+    assert agent._get_agent_model_id(cfg) == "incoai/Qwen3.8-27B-Splash"
+
+
 def test_mlx_agent_uses_default_model_request_alias() -> None:
     """MLX-LM maps the default_model request ID to its configured model path."""
     cfg = {

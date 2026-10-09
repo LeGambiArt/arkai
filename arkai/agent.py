@@ -3,6 +3,7 @@
 import argparse
 import os
 import platform
+import shutil
 import subprocess
 import sys
 from collections.abc import Generator
@@ -161,7 +162,7 @@ class AgentLaunchSpec:
 
 
 def run_launch_spec(spec: AgentLaunchSpec, capture_stdout: bool = False) -> str | None:
-    """Run an agent launch specification and clean up its temporary files."""
+    """Run an agent launch specification and clean up its temporary paths."""
     try:
         process = subprocess.Popen(
             spec.command,
@@ -181,7 +182,10 @@ def run_launch_spec(spec: AgentLaunchSpec, capture_stdout: bool = False) -> str 
     finally:
         for path in spec.cleanup_paths:
             try:
-                path.unlink()
+                if path.is_dir():
+                    shutil.rmtree(path)
+                else:
+                    path.unlink()
             except FileNotFoundError:
                 pass
 
@@ -453,7 +457,10 @@ def _get_model_name(cfg: dict) -> str:
         model_name = model_reference.rsplit(":", 1)[0].split("/")[-1]
         return model_name.replace("-GGUF", "").replace("-gguf", "")
     elif model_file:
-        return os.path.splitext(os.path.basename(model_file))[0]
+        model_path = Path(model_file)
+        if model_path.suffix.lower() in {".gguf", ".ggml", ".bin", ".safetensors"}:
+            return model_path.stem
+        return model_file
     return "local-model"
 
 

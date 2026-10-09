@@ -50,11 +50,13 @@ def test_opencode_uses_mlx_default_model_alias(tmp_path: Path, monkeypatch) -> N
 
 def test_run_launch_spec_owns_popen_and_cleanup(tmp_path: Path) -> None:
     """The shared runner starts the process and removes module-created files."""
-    temporary = tmp_path / "agent.json"
+    temporary_dir = tmp_path / "session"
+    temporary_dir.mkdir()
+    temporary = temporary_dir / "agent.json"
     temporary.write_text("{}")
     process = MagicMock()
     process.communicate.return_value = (b"answer\n", None)
-    spec = agent.AgentLaunchSpec(["/agent"], {"PATH": "/bin"}, [temporary])
+    spec = agent.AgentLaunchSpec(["/agent"], {"PATH": "/bin"}, [temporary, temporary_dir])
 
     with patch.object(agent.subprocess, "Popen", return_value=process) as popen:
         result = agent.run_launch_spec(spec, capture_stdout=True)
@@ -68,6 +70,7 @@ def test_run_launch_spec_owns_popen_and_cleanup(tmp_path: Path) -> None:
         env={"PATH": "/bin"},
     )
     assert not temporary.exists()
+    assert not temporary_dir.exists()
 
 
 def test_run_launch_spec_cleans_up_when_popen_fails(tmp_path: Path) -> None:
@@ -109,7 +112,8 @@ def test_crush_sandbox_requests_tty_only_for_interactive_sessions(
 ) -> None:
     """Interactive Crush sessions allocate a TTY; prompt runs remain non-interactive."""
     sessions = tmp_path / "sessions"
-    monkeypatch.setattr(agent_crush.os.path, "expanduser", lambda _: str(sessions))
+    sessions.mkdir()
+    monkeypatch.setattr(agent_crush, "_get_config_dir", lambda: sessions)
 
     with patch.object(
         agent, "_build_sandbox_cmd", return_value=["arapuca", "run", "--"]
@@ -117,8 +121,60 @@ def test_crush_sandbox_requests_tty_only_for_interactive_sessions(
         spec = agent_crush.build_launch_spec("/agent", _cfg(), None, True, None, prompt=prompt)
 
     assert build_sandbox.call_args.kwargs["tty"] is expected_tty
+    assert any(arg.startswith("CRUSH_GLOBAL_CONFIG=") for arg in spec.command)
+    config_env = next(arg for arg in spec.command if arg.startswith("CRUSH_GLOBAL_CONFIG="))
+    config_dir = Path(config_env.split("=", 1)[1])
+    assert f"CRUSH_GLOBAL_DATA={config_dir}" in spec.command
     for path in spec.cleanup_paths:
-        path.unlink(missing_ok=True)
+        if path.is_dir():
+            path.rmdir()
+        else:
+            path.unlink(missing_ok=True)
+
+
+def test_crush_selects_and_registers_local_inference(tmp_path: Path, monkeypatch) -> None:
+    """Crush config and data roots both use Arkai's isolated local config."""
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    monkeypatch.setattr(agent_crush, "_get_config_dir", lambda: sessions)
+
+    spec = agent_crush.build_launch_spec("/agent", _cfg(), None, False, None)
+
+    crush_config_dir = Path(spec.environment["CRUSH_GLOBAL_CONFIG"])
+    config_data = json.loads((crush_config_dir / "crush.json").read_text())
+    provider = config_data["providers"]["local-llm"]
+    assert provider["type"] == "openai-compat"
+    assert provider["base_url"] == "http://127.0.0.1:8123/v1"
+    assert provider["models"] == [{"id": "model", "name": "Arkai Local Inference"}]
+    assert config_data["models"] == {
+        "large": {"model": "model", "provider": "local-llm"},
+        "small": {"model": "model", "provider": "local-llm"},
+    }
+    assert "CRUSH_CONFIG" not in spec.environment
+    assert spec.environment["CRUSH_GLOBAL_DATA"] == str(crush_config_dir)
+    assert spec.command == ["/agent"]
+
+    for path in spec.cleanup_paths:
+        if path.is_dir():
+            path.rmdir()
+        else:
+            path.unlink(missing_ok=True)
+
+
+def test_crush_prompt_runs_quietly(tmp_path: Path, monkeypatch) -> None:
+    """Non-interactive Crush runs suppress their status output."""
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    monkeypatch.setattr(agent_crush, "_get_config_dir", lambda: sessions)
+
+    spec = agent_crush.build_launch_spec("/agent", _cfg(), None, False, None, prompt="do the task")
+
+    assert spec.command == ["/agent", "run", "--quiet", "do the task"]
+    for path in spec.cleanup_paths:
+        if path.is_dir():
+            path.rmdir()
+        else:
+            path.unlink(missing_ok=True)
 
 
 def test_other_agents_only_build_launch_specs() -> None:
