@@ -2,6 +2,7 @@
 
 import json
 import os
+import platform
 import shutil
 import tempfile
 from pathlib import Path
@@ -56,7 +57,9 @@ def get_runtime_volumes(agent_path: str, node_path: str) -> list[str]:
     return volumes
 
 
-def _create_node_path_preload(agent_dir: str, node_path: str) -> Path:
+def _create_node_path_preload(
+    agent_dir: str, node_path: str, enable_osc52_fallback: bool = False
+) -> Path:
     """Create a per-launch Node preload that exposes Node tools to Pi's children."""
     descriptor, preload_name = tempfile.mkstemp(
         prefix="arkai-pi-env-", suffix=".cjs", dir=agent_dir
@@ -68,6 +71,13 @@ def _create_node_path_preload(agent_dir: str, node_path: str) -> Path:
         f"const pathSeparator = {json.dumps(os.pathsep)};\n"
         'process.env.PATH = nodeBin + pathSeparator + (process.env.PATH || "");\n'
     )
+    if enable_osc52_fallback:
+        preload += (
+            "if (!process.env.SSH_CONNECTION && !process.env.SSH_CLIENT && "
+            "!process.env.MOSH_CONNECTION) {\n"
+            '    process.env.MOSH_CONNECTION = "arkai-local";\n'
+            "}\n"
+        )
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as preload_file:
             preload_file.write(preload)
@@ -166,7 +176,15 @@ def build_launch_spec(
             sandbox_environment,
             tty=prompt is None,
         )
-        preload_path = _create_node_path_preload(agent_dir, node_path)
+        preload_path = _create_node_path_preload(
+            agent_dir,
+            node_path,
+            enable_osc52_fallback=(
+                prompt is None
+                and platform.system() == "Darwin"
+                and os.environ.get("TERM_PROGRAM") != "Apple_Terminal"
+            ),
+        )
         cleanup_paths.append(preload_path)
         cmd = cmd + [node_path, "--require", str(preload_path), str(Path(agent_path).resolve())]
     else:

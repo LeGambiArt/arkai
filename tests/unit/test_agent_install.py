@@ -226,8 +226,15 @@ def test_pi_passes_configured_theme_to_cli(tmp_path: Path, monkeypatch) -> None:
     ]
 
 
-def test_pi_interactive_sandbox_requests_tty(tmp_path: Path, monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("term_program", "expected_osc52"),
+    [("iTerm.app", True), ("Apple_Terminal", False)],
+)
+def test_pi_interactive_sandbox_requests_tty(
+    tmp_path: Path, monkeypatch, term_program: str, expected_osc52: bool
+) -> None:
     """Interactive sandboxed Pi runs Node directly and allocate a terminal."""
+    monkeypatch.setenv("TERM_PROGRAM", term_program)
     agent_dir = tmp_path / "pi-agent"
     monkeypatch.setattr(agent_pi, "get_agent_dir", lambda: agent_dir)
     pi_prefix = tmp_path / "pi-core"
@@ -249,6 +256,7 @@ def test_pi_interactive_sandbox_requests_tty(tmp_path: Path, monkeypatch) -> Non
             agent, "_build_sandbox_cmd", return_value=["arapuca", "run", "--tty", "--"]
         ) as build_sandbox,
         patch.object(agent_pi, "_resolve_node_path", return_value=str(node_path)),
+        patch.object(agent_pi.platform, "system", return_value="Darwin"),
     ):
         spec = agent_pi.build_launch_spec(
             str(pi_path),
@@ -266,10 +274,48 @@ def test_pi_interactive_sandbox_requests_tty(tmp_path: Path, monkeypatch) -> Non
         str(pi_entrypoint),
     ]
     assert spec.command[8:] == ["--model", "local-llm/test"]
-    assert "process.env.PATH" in spec.cleanup_paths[0].read_text()
-    assert str(node_bin) in spec.cleanup_paths[0].read_text()
+    preload = spec.cleanup_paths[0].read_text()
+    assert "process.env.PATH" in preload
+    assert str(node_bin) in preload
+    assert ('process.env.MOSH_CONNECTION = "arkai-local"' in preload) is expected_osc52
     assert build_sandbox.call_args.kwargs["tty"] is True
     assert build_sandbox.call_args.args[5] == [f"{pi_prefix}:ro", f"{node_prefix}:ro"]
+    for path in spec.cleanup_paths:
+        path.unlink(missing_ok=True)
+
+
+def test_pi_prompt_sandbox_does_not_enable_osc52_fallback(tmp_path: Path, monkeypatch) -> None:
+    """Non-interactive Pi launches do not emit terminal clipboard sequences."""
+    agent_dir = tmp_path / "pi-agent"
+    monkeypatch.setattr(agent_pi, "get_agent_dir", lambda: agent_dir)
+    pi_prefix = tmp_path / "pi-core"
+    pi_bin = pi_prefix / "bin"
+    pi_bin.mkdir(parents=True)
+    pi_path = pi_bin / "pi"
+    pi_path.write_text("#!/bin/sh\n")
+    node_prefix = tmp_path / "node-runtime"
+    node_bin = node_prefix / "bin"
+    node_bin.mkdir(parents=True)
+    node_path = node_bin / "node"
+    node_path.touch()
+
+    with (
+        patch.object(agent, "_build_sandbox_cmd", return_value=["arapuca", "run", "--"]),
+        patch.object(agent_pi, "_resolve_node_path", return_value=str(node_path)),
+        patch.object(agent_pi.platform, "system", return_value="Darwin"),
+    ):
+        spec = agent_pi.build_launch_spec(
+            str(pi_path),
+            {"inference": {"model": "test.gguf"}},
+            None,
+            True,
+            None,
+            prompt="hello",
+        )
+
+    assert "-p" in spec.command
+    assert "--tty" not in spec.command
+    assert "MOSH_CONNECTION" not in spec.cleanup_paths[0].read_text()
     for path in spec.cleanup_paths:
         path.unlink(missing_ok=True)
 

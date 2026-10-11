@@ -113,6 +113,10 @@ and `pi-subagents`.
 Pi is installed only for arkai under `~/.local/state/arkai/pi/`; it is not added to
 your global npm installation or shell `PATH`. Node.js and npm must be installed.
 
+**Known issue:** On macOS, copying from sandboxed pi.dev to the system clipboard
+does not work in Terminal.app because it does not support OSC 52 clipboard writes.
+Use a terminal that supports OSC 52, such as iTerm2, kitty, or Alacritty.
+
 If you think you only live once (or don't have `wtmcp` or `arapuca` installed):
 
 ```
