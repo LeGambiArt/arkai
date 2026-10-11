@@ -4,6 +4,8 @@ import json
 import os
 import platform
 import shutil
+import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -85,6 +87,117 @@ def _create_node_path_preload(
         preload_path.unlink(missing_ok=True)
         raise
     return preload_path
+
+
+def _is_arkai_managed_pi(agent_path: str) -> bool:
+    """Return whether the selected Pi executable is Arkai's managed install."""
+    try:
+        return Path(agent_path).resolve() == (get_core_dir() / "bin" / "pi").resolve()
+    except (OSError, RuntimeError):
+        return False
+
+
+def _check_for_package_updates(agent_path: str, agent_dir: str) -> list[dict[str, str]]:
+    """Use Pi's own package manager to check Arkai-installed extensions for updates."""
+    package_root = Path(agent_path).resolve().parents[2]
+    entrypoint = package_root / "dist" / "index.js"
+    if not entrypoint.is_file():
+        raise RuntimeError(f"Pi package manager entry point not found: {entrypoint}")
+
+    package_names = json.dumps(PI_PACKAGES)
+    script = (
+        f"const {{ DefaultPackageManager, SettingsManager }} = "
+        f"await import({json.dumps(entrypoint.as_uri())});\n"
+        "const agentDir = process.env.PI_CODING_AGENT_DIR;\n"
+        "const settingsManager = SettingsManager.create(agentDir, agentDir);\n"
+        "const packageManager = new DefaultPackageManager({\n"
+        "  cwd: agentDir, agentDir, settingsManager,\n"
+        "});\n"
+        "const packageNames = new Set(" + package_names + ");\n"
+        "const updates = await packageManager.checkForAvailableUpdates();\n"
+        "console.log(JSON.stringify(updates.filter((update) =>\n"
+        '  update.scope === "user" && update.type === "npm" &&\n'
+        "  packageNames.has(update.displayName)\n"
+        ")));\n"
+    )
+    env = os.environ.copy()
+    env["PI_CODING_AGENT_DIR"] = agent_dir
+    try:
+        result = subprocess.run(
+            [_resolve_node_path(), "--input-type=module", "-e", script],
+            cwd=agent_dir,
+            capture_output=True,
+            text=True,
+            timeout=60,
+            env=env,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as error:
+        raise RuntimeError(f"Pi package update check failed: {error}") from error
+    if result.returncode != 0:
+        detail = result.stderr.strip() or f"exit code {result.returncode}"
+        raise RuntimeError(f"Pi package update check failed: {detail}")
+    try:
+        updates = json.loads(result.stdout)
+    except json.JSONDecodeError as error:
+        raise RuntimeError("Pi package update check returned invalid JSON") from error
+    if not isinstance(updates, list):
+        raise RuntimeError("Pi package update check returned an unexpected result")
+    package_names = set(PI_PACKAGES)
+    return [
+        update
+        for update in updates
+        if isinstance(update, dict)
+        and isinstance(update.get("source"), str)
+        and isinstance(update.get("displayName"), str)
+        and update.get("scope") == "user"
+        and update.get("type") == "npm"
+        and update["displayName"] in package_names
+    ]
+
+
+def _maybe_update_arkai_packages(agent_path: str) -> None:
+    """Ask before upgrading outdated extensions in Arkai's managed Pi installation."""
+    if not _is_arkai_managed_pi(agent_path):
+        return
+
+    agent_dir = str(get_agent_dir())
+    try:
+        updates = _check_for_package_updates(agent_path, agent_dir)
+    except RuntimeError as error:
+        utils.warn(f"Could not check Arkai-installed Pi packages for updates: {error}")
+        return
+    if not updates:
+        return
+
+    package_list = "\n".join(f"- {update['displayName']}" for update in updates)
+    utils.warn(f"Updates are available for Arkai-installed Pi packages:\n{package_list}")
+    try:
+        answer = input("Upgrade these packages before starting Pi? [Y/n] ").strip().lower()
+    except EOFError:
+        answer = "n"
+    if answer not in {"", "y", "yes"}:
+        utils.info("Starting Pi without updating packages.")
+        return
+
+    env = os.environ.copy()
+    env["PI_CODING_AGENT_DIR"] = agent_dir
+    for update in updates:
+        utils.info(f"Updating {update['displayName']}...")
+        try:
+            result = subprocess.run(
+                [agent_path, "update", "--extension", update["source"]],
+                cwd=agent_dir,
+                env=env,
+                check=False,
+            )
+        except OSError as error:
+            raise RuntimeError(f"Could not update {update['displayName']}: {error}") from error
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"Updating {update['displayName']} failed with exit code {result.returncode}"
+            )
+    utils.info("Pi package updates complete.")
 
 
 def _prepare_agent_dir(cfg: dict, wtmcp_port: int | None) -> str:
@@ -208,6 +321,8 @@ def start(
     capture_stdout: bool = False,
 ) -> str | None:
     """Build and run Pi's launch specification."""
+    if prompt is None and sys.stdin.isatty() and sys.stdout.isatty():
+        _maybe_update_arkai_packages(agent_path)
     return run_launch_spec(
         build_launch_spec(
             agent_path,

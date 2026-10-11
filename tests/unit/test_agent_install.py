@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -156,6 +157,118 @@ def test_pi_sandbox_requires_node_from_host_path(monkeypatch) -> None:
 
     with pytest.raises(RuntimeError, match="Node.js was not found in PATH"):
         agent_pi._resolve_node_path()
+
+
+def test_pi_identifies_arkai_managed_binary(tmp_path: Path, monkeypatch) -> None:
+    """Only Arkai's managed Pi binary is eligible for automatic update checks."""
+    core_dir = tmp_path / "pi" / "core"
+    pi_path = core_dir / "bin" / "pi"
+    pi_path.parent.mkdir(parents=True)
+    pi_path.write_text("#!/bin/sh\n")
+    monkeypatch.setattr(agent_pi, "get_core_dir", lambda: core_dir)
+
+    assert agent_pi._is_arkai_managed_pi(str(pi_path))
+    assert not agent_pi._is_arkai_managed_pi("/usr/local/bin/pi")
+
+
+def test_pi_update_check_uses_pi_manager_and_filters_to_arkai_packages(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The preflight uses Pi's update checker but only reports Arkai extensions."""
+    core_dir = tmp_path / "pi-core"
+    package_root = core_dir / "lib" / "node_modules" / "@earendil-works" / "pi-coding-agent"
+    pi_entrypoint = package_root / "dist" / "bundle" / "cli.js"
+    pi_entrypoint.parent.mkdir(parents=True)
+    pi_entrypoint.touch()
+    pi_path = core_dir / "bin" / "pi"
+    pi_path.parent.mkdir(parents=True)
+    pi_path.symlink_to(pi_entrypoint)
+    manager_entrypoint = package_root / "dist" / "index.js"
+    manager_entrypoint.touch()
+    agent_dir = tmp_path / "pi-agent"
+    updates = [
+        {
+            "source": "npm:pi-mcp-adapter",
+            "displayName": "pi-mcp-adapter",
+            "scope": "user",
+            "type": "npm",
+        },
+        {
+            "source": "npm:pi-web-access",
+            "displayName": "pi-web-access",
+            "scope": "user",
+            "type": "npm",
+        },
+        {
+            "source": "npm:another-extension",
+            "displayName": "another-extension",
+            "scope": "user",
+            "type": "npm",
+        },
+        {
+            "source": "npm:pi-subagents",
+            "displayName": "pi-subagents",
+            "scope": "project",
+            "type": "npm",
+        },
+    ]
+    result = SimpleNamespace(returncode=0, stdout=json.dumps(updates), stderr="")
+
+    with (
+        patch.object(agent_pi, "_resolve_node_path", return_value="/node/bin/node"),
+        patch.object(agent_pi.subprocess, "run", return_value=result) as run,
+    ):
+        found = agent_pi._check_for_package_updates(str(pi_path), str(agent_dir))
+
+    assert [update["displayName"] for update in found] == ["pi-mcp-adapter", "pi-web-access"]
+    command = run.call_args.args[0]
+    assert command[:3] == ["/node/bin/node", "--input-type=module", "-e"]
+    assert manager_entrypoint.as_uri() in command[3]
+    assert "checkForAvailableUpdates" in command[3]
+    assert run.call_args.kwargs["env"]["PI_CODING_AGENT_DIR"] == str(agent_dir)
+    assert run.call_args.kwargs["cwd"] == str(agent_dir)
+
+
+def test_pi_updates_only_reported_packages_after_confirmation(tmp_path: Path, monkeypatch) -> None:
+    """Pi's updater runs for each outdated package only after user approval."""
+    agent_dir = tmp_path / "pi-agent"
+    updates = [
+        {"source": "npm:pi-mcp-adapter", "displayName": "pi-mcp-adapter"},
+        {"source": "npm:pi-web-access", "displayName": "pi-web-access"},
+    ]
+    monkeypatch.setattr(agent_pi, "get_agent_dir", lambda: agent_dir)
+    with (
+        patch.object(agent_pi, "_is_arkai_managed_pi", return_value=True),
+        patch.object(agent_pi, "_check_for_package_updates", return_value=updates),
+        patch("builtins.input", return_value="") as prompt,
+        patch.object(agent_pi.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as run,
+    ):
+        agent_pi._maybe_update_arkai_packages("/managed/pi")
+
+    assert [call.args[0] for call in run.call_args_list] == [
+        ["/managed/pi", "update", "--extension", "npm:pi-mcp-adapter"],
+        ["/managed/pi", "update", "--extension", "npm:pi-web-access"],
+    ]
+    prompt.assert_called_once_with("Upgrade these packages before starting Pi? [Y/n] ")
+    assert all(call.kwargs["cwd"] == str(agent_dir) for call in run.call_args_list)
+
+
+def test_pi_keeps_outdated_packages_when_update_is_declined(tmp_path: Path, monkeypatch) -> None:
+    """Declining the Pi update prompt leaves installed packages unchanged."""
+    monkeypatch.setattr(agent_pi, "get_agent_dir", lambda: tmp_path / "pi-agent")
+    with (
+        patch.object(agent_pi, "_is_arkai_managed_pi", return_value=True),
+        patch.object(
+            agent_pi,
+            "_check_for_package_updates",
+            return_value=[{"source": "npm:pi-mcp-adapter", "displayName": "pi-mcp-adapter"}],
+        ),
+        patch("builtins.input", return_value="n"),
+        patch.object(agent_pi.subprocess, "run") as run,
+    ):
+        agent_pi._maybe_update_arkai_packages("/managed/pi")
+
+    run.assert_not_called()
 
 
 def test_pi_runtime_volumes_preserve_npm_bin_symlink_location(tmp_path: Path, monkeypatch) -> None:
