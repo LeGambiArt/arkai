@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from arkai import agent, agent_claude, agent_crush, agent_omp, agent_opencode
+from arkai import agent, agent_claude, agent_crush, agent_omp, agent_opencode, agent_pi
 
 
 def _cfg() -> dict:
@@ -279,6 +279,126 @@ def test_omp_sandbox_mounts_binary_and_sets_agent_dir(tmp_path: Path, monkeypatc
         "OMP_SKIP_SETUP=1",
         "/opt/omp/bin/omp",
     ]
+
+
+def test_pi_cloud_uses_global_auth_and_openai_provider(tmp_path: Path, monkeypatch) -> None:
+    """Pi cloud launch reads global credentials without replacing global models."""
+    agent_dir = tmp_path / "pi-agent"
+    agent_dir.mkdir()
+    auth_file = agent_dir / "auth.json"
+    models_file = agent_dir / "models.json"
+    settings_file = agent_dir / "settings.json"
+    auth_file.write_text('{"openai":{"type":"api_key","key":"stored"}}')
+    models_file.write_text('{"providers":{"custom":{}}}')
+    settings_file.write_text('{"defaultProvider":"openai","defaultModel":"gpt-model"}')
+    monkeypatch.setattr(agent_pi, "get_global_agent_dir", lambda: agent_dir)
+
+    with patch("arkai.wtmcp.is_wtmcp_running", return_value=False):
+        spec = agent_pi.build_launch_spec(
+            "/bin/pi", _cfg(), None, False, str(tmp_path), cloud_services=["OPENAI"]
+        )
+
+    assert spec.command == ["/bin/pi", "--models", "openai/*"]
+    assert spec.environment["PI_CODING_AGENT_DIR"] == str(agent_dir)
+    assert auth_file.read_text() == '{"openai":{"type":"api_key","key":"stored"}}'
+    assert models_file.read_text() == '{"providers":{"custom":{}}}'
+    assert settings_file.read_text() == '{"defaultProvider":"openai","defaultModel":"gpt-model"}'
+
+
+def test_pi_cloud_sandbox_mounts_global_agent_data_and_allows_openai_hosts(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Pi cloud sandbox mounts its global auth directory and narrowly allows OpenAI."""
+    agent_dir = tmp_path / "pi-agent"
+    agent_dir.mkdir()
+    monkeypatch.setattr(agent_pi.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(agent_pi, "get_global_agent_dir", lambda: agent_dir)
+    monkeypatch.setattr(agent_pi, "_resolve_node_path", lambda: "/runtime/bin/node")
+    monkeypatch.setattr(agent_pi, "get_runtime_volumes", lambda *_: [])
+    with (
+        patch("arkai.wtmcp.is_wtmcp_running", return_value=False),
+        patch.object(agent, "_build_sandbox_cmd", return_value=["arapuca", "run", "--"]) as build,
+    ):
+        spec = agent_pi.build_launch_spec(
+            "/runtime/bin/pi",
+            _cfg(),
+            None,
+            True,
+            str(tmp_path / "project"),
+            cloud_services=["openai"],
+        )
+
+    assert build.call_args.args[2] == str(agent_dir)
+    assert build.call_args.kwargs["allow_network"] is False
+    assert build.call_args.kwargs["allow_inference"] is False
+    assert build.call_args.kwargs["extra_hosts"] == [
+        "*.openai.com:443",
+        "chatgpt.com:443",
+        "*.chatgpt.com:443",
+    ]
+    assert spec.command[-2:] == ["--models", "openai/*"]
+    for path in spec.cleanup_paths:
+        path.unlink(missing_ok=True)
+
+
+def test_omp_cloud_uses_global_auth_and_does_not_overwrite_local_settings(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """OMP cloud launch preserves the user's model/auth files and selects OpenAI."""
+    agent_dir = tmp_path / "omp-agent"
+    agent_dir.mkdir()
+    config_file = agent_dir / "config.yml"
+    models_file = agent_dir / "models.yml"
+    auth_file = agent_dir / "agent.db"
+    config_file.write_text("modelRoles:\n  default: openai/gpt-model\n")
+    models_file.write_text("providers: {}\n")
+    auth_file.write_bytes(b"saved auth data")
+    monkeypatch.setattr(agent_omp, "get_global_agent_dir", lambda: agent_dir)
+    monkeypatch.delenv("PI_CONFIG_DIR", raising=False)
+
+    spec = agent_omp.build_launch_spec(
+        "/bin/omp", _cfg(), None, False, str(tmp_path), cloud_services=["OPENAI"]
+    )
+
+    assert spec.environment["PI_CODING_AGENT_DIR"] == str(agent_dir)
+    assert "PI_CONFIG_DIR" not in spec.environment
+    assert "--provider" in spec.command
+    assert "openai" in spec.command
+    assert "--model" not in spec.command
+    assert config_file.read_text() == "modelRoles:\n  default: openai/gpt-model\n"
+    assert models_file.read_text() == "providers: {}\n"
+    assert auth_file.read_bytes() == b"saved auth data"
+
+
+def test_omp_cloud_sandbox_mounts_global_agent_dir_and_wtmcp_config(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """OMP cloud sandbox mounts global data and creates only a temporary MCP overlay."""
+    agent_dir = tmp_path / "omp-agent"
+    agent_dir.mkdir()
+    workdir = tmp_path / "project"
+    workdir.mkdir()
+    monkeypatch.setattr(agent_omp.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(agent_omp, "get_global_agent_dir", lambda: agent_dir)
+    with patch.object(agent, "_build_sandbox_cmd", return_value=["arapuca", "run", "--"]) as build:
+        spec = agent_omp.build_launch_spec(
+            "/opt/omp/bin/omp", _cfg(), 8123, True, str(workdir), cloud_services=["openai"]
+        )
+
+    assert build.call_args.args[2] == str(agent_dir)
+    assert build.call_args.kwargs["allow_inference"] is False
+    assert build.call_args.kwargs["extra_hosts"] == [
+        "*.openai.com:443",
+        "chatgpt.com:443",
+        "*.chatgpt.com:443",
+    ]
+    mcp_overlay = workdir / ".omp" / "mcp.json"
+    assert json.loads(mcp_overlay.read_text())["mcpServers"]["wtmcp"]["url"] == (
+        "http://127.0.0.1:8123/mcp"
+    )
+    assert mcp_overlay in spec.cleanup_paths
+    for path in spec.cleanup_paths:
+        path.unlink(missing_ok=True)
 
 
 def test_other_agents_only_build_launch_specs() -> None:

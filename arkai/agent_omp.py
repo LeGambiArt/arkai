@@ -7,7 +7,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-from arkai import config, utils
+from arkai import cloud_auth, config, utils
 from arkai.agent import AgentLaunchSpec, run_install_command, run_launch_spec
 
 OMP_INSTALLER_URL = "https://omp.sh/install"
@@ -27,6 +27,41 @@ def get_core_dir() -> Path:
 def get_agent_dir() -> Path:
     """Return the directory containing OMP's Arkai-managed configuration and data."""
     return get_install_dir() / "agent"
+
+
+def get_global_agent_dir() -> Path:
+    """Return OMP's user-level agent directory, including its stored credentials."""
+    configured_dir = os.environ.get("PI_CODING_AGENT_DIR")
+    if configured_dir:
+        return Path(configured_dir).expanduser().resolve()
+    config_root = os.environ.get("PI_CONFIG_DIR") or ".omp"
+    config_root_path = Path(config_root).expanduser()
+    if not config_root_path.is_absolute():
+        config_root_path = Path.home() / config_root_path
+    return (config_root_path / "agent").resolve()
+
+
+def _write_project_mcp_config(workdir: str | None, port: int) -> Path | None:
+    """Add a temporary project-level WTMCP entry without replacing user MCP config."""
+    project_dir = Path(workdir or os.getcwd())
+    candidates = [
+        project_dir / ".omp" / "mcp.json",
+        project_dir / ".omp" / ".mcp.json",
+        project_dir / "mcp.json",
+        project_dir / ".mcp.json",
+    ]
+    mcp_config = next((candidate for candidate in candidates if not candidate.exists()), None)
+    if mcp_config is None:
+        utils.warn("Skipping Arkai's WTMCP config; all OMP project MCP config paths already exist")
+        return None
+    mcp_config.parent.mkdir(parents=True, exist_ok=True)
+    mcp_config.write_text(
+        json.dumps(
+            {"mcpServers": {"wtmcp": {"type": "http", "url": f"http://127.0.0.1:{port}/mcp"}}},
+            indent=2,
+        )
+    )
+    return mcp_config
 
 
 def get_agent_path(cfg: dict) -> str:
@@ -109,15 +144,27 @@ def build_launch_spec(
     cli_volumes: list | None = None,
     cli_environment: dict | None = None,
     prompt: str | None = None,
+    cloud_services: list[str] | None = None,
 ) -> AgentLaunchSpec:
     """Create OMP configuration and return its process launch specification."""
-    from arkai.agent import _build_sandbox_cmd, _get_agent_model_id
+    from arkai.agent import _build_sandbox_cmd
 
-    agent_dir = _prepare_agent_dir(cfg, wtmcp_port)
-    model_id = _get_agent_model_id(cfg)
+    cloud_services = list(dict.fromkeys(service.lower() for service in cloud_services or []))
+    is_cloud = bool(cloud_services)
+    if is_cloud:
+        agent_dir = get_global_agent_dir()
+        agent_dir.mkdir(parents=True, exist_ok=True)
+        mcp_config = _write_project_mcp_config(workdir, wtmcp_port) if wtmcp_port else None
+    else:
+        agent_dir = _prepare_agent_dir(cfg, wtmcp_port)
+        mcp_config = None
+
     environment = os.environ.copy()
-    environment["PI_CONFIG_DIR"] = OMP_CONFIG_DIR
-    environment["PI_CODING_AGENT_DIR"] = str(agent_dir)
+    if not is_cloud:
+        environment["PI_CONFIG_DIR"] = OMP_CONFIG_DIR
+        environment["PI_CODING_AGENT_DIR"] = str(agent_dir)
+    else:
+        environment["PI_CODING_AGENT_DIR"] = str(agent_dir)
     environment["OMP_SKIP_SETUP"] = "1"
 
     command: list[str]
@@ -128,31 +175,61 @@ def build_launch_spec(
         binary_volume = f"{binary_dir}:ro"
         if binary_volume not in volumes:
             volumes.append(binary_volume)
-        sandbox_prefix = _build_sandbox_cmd(
-            cfg,
-            workdir,
-            str(agent_dir),
-            wtmcp_port,
-            sandbox_profile,
-            volumes,
-            cli_environment,
-            tty=prompt is None,
+        sandbox_environment = dict(cli_environment or {})
+        sandbox_environment["PI_CODING_AGENT_DIR"] = str(agent_dir)
+        sandbox_environment["OMP_SKIP_SETUP"] = "1"
+        if is_cloud and "PI_CONFIG_DIR" in os.environ:
+            sandbox_environment["PI_CONFIG_DIR"] = os.environ["PI_CONFIG_DIR"]
+        try:
+            sandbox_prefix = _build_sandbox_cmd(
+                cfg,
+                workdir,
+                str(agent_dir),
+                wtmcp_port,
+                sandbox_profile,
+                volumes,
+                sandbox_environment,
+                tty=prompt is None,
+                allow_network=False,
+                allow_inference=not is_cloud,
+                extra_hosts=(
+                    ["*.openai.com:443", "chatgpt.com:443", "*.chatgpt.com:443"]
+                    if is_cloud and platform.system() == "Linux"
+                    else None
+                ),
+            )
+        except Exception:
+            if is_cloud and mcp_config is not None:
+                mcp_config.unlink(missing_ok=True)
+            raise
+        env_args = ["env"]
+        if not is_cloud or "PI_CONFIG_DIR" in os.environ:
+            config_root = OMP_CONFIG_DIR if not is_cloud else os.environ["PI_CONFIG_DIR"]
+            env_args.append(f"PI_CONFIG_DIR={config_root}")
+        env_args.extend(
+            [
+                f"PI_CODING_AGENT_DIR={agent_dir}",
+                "OMP_SKIP_SETUP=1",
+                resolved_agent_path,
+            ]
         )
-        command = sandbox_prefix + [
-            "env",
-            f"PI_CONFIG_DIR={OMP_CONFIG_DIR}",
-            f"PI_CODING_AGENT_DIR={agent_dir}",
-            "OMP_SKIP_SETUP=1",
-            resolved_agent_path,
-        ]
+        command = sandbox_prefix + env_args
     else:
         command = [str(Path(agent_path).resolve())]
 
-    command.extend(["--profile", "default", "--model", f"local-llm/{model_id}"])
+    command.append("--profile")
+    command.append("default")
+    if is_cloud:
+        command.extend(["--provider", "openai"])
+    else:
+        from arkai.agent import _get_agent_model_id
+
+        command.extend(["--model", f"local-llm/{_get_agent_model_id(cfg)}"])
     if prompt is not None:
         command.extend(["-p", "--no-session", "--mode", "text", prompt])
 
-    return AgentLaunchSpec(command, environment)
+    cleanup_paths = [mcp_config] if mcp_config is not None else []
+    return AgentLaunchSpec(command, environment, cleanup_paths)
 
 
 def start(
@@ -166,8 +243,11 @@ def start(
     cli_environment: dict | None = None,
     prompt: str | None = None,
     capture_stdout: bool = False,
+    cloud_services: list[str] | None = None,
 ) -> str | None:
     """Build and run OMP's launch specification."""
+    if cloud_services:
+        cloud_auth.ensure_openai_api_key("omp", get_global_agent_dir(), agent_path)
     return run_launch_spec(
         build_launch_spec(
             agent_path,
@@ -179,6 +259,7 @@ def start(
             cli_volumes,
             cli_environment,
             prompt,
+            cloud_services,
         ),
         capture_stdout,
     )

@@ -256,6 +256,27 @@ class TestListCommand:
         assert "✓" in captured.out  # Mark active profile
 
 
+def test_cloud_sandbox_allows_configured_cloud_hosts(tmp_path, monkeypatch) -> None:
+    """Cloud runs allow configured HTTPS hosts while retaining the network deny rule."""
+    monkeypatch.setattr(agent_module.utils, "resolve_binary", lambda _: "/bin/arapuca")
+    monkeypatch.setattr(agent_module.platform, "system", lambda: "Linux")
+    workdir = tmp_path / "project"
+    workdir.mkdir()
+
+    command = agent_module._build_sandbox_cmd(
+        {"sandbox": {}},
+        str(workdir),
+        None,
+        None,
+        allow_network=False,
+        extra_hosts=["api.openai.com:443"],
+    )
+
+    assert "--deny-network" in command
+    assert command[command.index("--allow-host") + 1] == "api.openai.com:443"
+    assert "--memory" in command
+
+
 class TestShowCommand:
     """Test sandbox show command output."""
 

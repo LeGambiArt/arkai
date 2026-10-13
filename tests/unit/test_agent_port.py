@@ -144,6 +144,49 @@ def test_agent_context_uses_model_reported_by_inference_server() -> None:
     get_model.assert_called_once_with(9090)
 
 
+def test_cloud_agent_skips_local_inference_engine() -> None:
+    """An OpenAI Pi session does not query, start, or stop local inference."""
+    cfg = {
+        "agent": {"name": "pi", "path": "/agent", "mcp": False},
+        "inference": {"port": 8081},
+        "sandbox": {"disable": True},
+    }
+
+    with (
+        patch.object(agent.config, "load_config", return_value=cfg),
+        patch.object(agent.config, "validate_config", return_value=True) as validate,
+        patch.object(agent.inference, "is_inference_running") as running,
+        patch.object(agent.inference, "cmd_inference_start") as start,
+        patch.object(agent.inference, "get_inference_model") as get_model,
+        patch.object(agent.inference, "cmd_inference_stop") as stop,
+        patch.object(agent.utils, "resolve_binary", return_value="/agent"),
+    ):
+        with agent._agent_context("pi", cloud_services=["OPENAI"]) as context:
+            assert context.cloud_services == ["openai"]
+
+    validate.assert_called_once_with(cfg, require_model=False, warn_missing_model=False)
+    running.assert_not_called()
+    start.assert_not_called()
+    get_model.assert_not_called()
+    stop.assert_not_called()
+
+
+def test_cloud_agent_rejects_opencode() -> None:
+    """Cloud services are restricted to Pi and OMP, not OpenCode."""
+    with patch.object(
+        agent.config,
+        "load_config",
+        return_value={"agent": {}, "inference": {}, "sandbox": {}},
+    ):
+        try:
+            with agent._agent_context("opencode", cloud_services=["openai"]):
+                pass
+        except RuntimeError as error:
+            assert "only the pi and omp agents" in str(error)
+        else:
+            raise AssertionError("Expected cloud support to reject non-OpenCode agents")
+
+
 def test_agent_cli_registers_port_for_start_and_prompt() -> None:
     """Both agent subcommands accept the inference port option."""
     import argparse
@@ -173,6 +216,35 @@ def test_agent_cli_registers_backend_for_start_and_prompt() -> None:
     prompt_args = parser.parse_args(["agent", "prompt", "--backend", "mlx", "hello"])
     assert start_args.backend == "mlx"
     assert prompt_args.backend == "mlx"
+
+
+def test_agent_cli_accepts_multiple_case_insensitive_cloud_services() -> None:
+    """The start command normalizes cloud names and accepts multiple occurrences."""
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    agent.ingest_cli_options(subparsers)
+
+    args = parser.parse_args(["agent", "start", "--cloud", "OpenAI", "--cloud", "OPENAI"])
+
+    assert args.cloud == ["openai", "openai"]
+
+
+def test_agent_cli_rejects_unknown_cloud_service() -> None:
+    """Only currently supported cloud providers are accepted by the CLI parser."""
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    agent.ingest_cli_options(subparsers)
+
+    try:
+        parser.parse_args(["agent", "start", "--cloud", "anthropic"])
+    except SystemExit as error:
+        assert error.code == 2
+    else:
+        raise AssertionError("Expected an unknown cloud provider to be rejected")
 
 
 def test_agent_prompt_passes_backend_override_to_context() -> None:
@@ -214,17 +286,17 @@ def test_agent_context_passes_backend_override_to_inference() -> None:
 
 def test_pi_agent_dispatches_to_pi_launcher() -> None:
     """Pi agent sessions are dispatched to the Pi launcher."""
-    ctx = agent.AgentContext(agent_name="pi", agent_path="/bin/pi")
+    ctx = agent.AgentContext(agent_name="pi", agent_path="/bin/pi", cloud_services=["openai"])
     with patch.object(agent_pi, "start", return_value=None) as launcher:
         agent._dispatch_agent(ctx)
 
-    launcher.assert_called_once()
+    assert launcher.call_args.kwargs["cloud_services"] == ["openai"]
 
 
 def test_omp_agent_dispatches_to_omp_launcher() -> None:
     """OMP agent sessions are dispatched to the OMP launcher."""
-    ctx = agent.AgentContext(agent_name="omp", agent_path="/bin/omp")
+    ctx = agent.AgentContext(agent_name="omp", agent_path="/bin/omp", cloud_services=["openai"])
     with patch.object(agent_omp, "start", return_value=None) as launcher:
         agent._dispatch_agent(ctx)
 
-    launcher.assert_called_once()
+    assert launcher.call_args.kwargs["cloud_services"] == ["openai"]

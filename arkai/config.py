@@ -134,13 +134,18 @@ def load_config(project_dir: str = ".") -> dict:
     return config
 
 
-def validate_config(config: dict, require_model: bool = True) -> bool:
+def validate_config(
+    config: dict,
+    require_model: bool = True,
+    warn_missing_model: bool = True,
+) -> bool:
     """Validate config schema, required fields, mutual exclusivity.
 
     Args:
         config: Configuration dictionary to validate
         require_model: If True, require inference.model.
             If False, allow missing model when inference service is available.
+        warn_missing_model: If True, warn when inference.model is absent but optional.
 
     Returns:
         True if valid, False if any errors found (errors printed to stderr).
@@ -202,7 +207,7 @@ def validate_config(config: dict, require_model: bool = True) -> bool:
         if require_model:
             utils.error("inference.model is required to start inference server")
             valid = False
-        else:
+        elif warn_missing_model:
             utils.warn("No model configured; will use available inference service")
 
     # Check port ranges

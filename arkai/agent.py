@@ -35,6 +35,7 @@ def exec_cmd(args: dict | None = None) -> None:
                 agent_env,
                 args.port,  # ty: ignore[unresolved-attribute]
                 args.backend,  # ty: ignore[unresolved-attribute]
+                getattr(args, "cloud", None),
             )
         case "prompt":
             cmd_agent_prompt(
@@ -112,6 +113,15 @@ def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
     agent_start_parser = agent_subparsers.add_parser("start", help="Start interactive agent")
     _add_agent_common_args(agent_start_parser)
     agent_start_parser.add_argument(
+        "--cloud",
+        nargs="+",
+        action="extend",
+        type=str.lower,
+        choices=("openai",),
+        metavar="SERVICE",
+        help="Use cloud AI services instead of the local inference engine (Pi/OMP only)",
+    )
+    agent_start_parser.add_argument(
         "-b", "--backend", help="Override inference backend from config"
     )
     agent_prompt_parser = agent_subparsers.add_parser(
@@ -150,6 +160,7 @@ class AgentContext:
     sandbox_profile: str | None = None
     sandbox_volume: list | None = None
     sandbox_environment: dict | None = None
+    cloud_services: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -218,6 +229,7 @@ def _agent_context(
     sandbox_volume: list | None = None,
     sandbox_environment: dict | None = None,
     backend: str | None = None,
+    cloud_services: list[str] | None = None,
 ) -> Generator[AgentContext, None, None]:
     """Set up and tear down agent infrastructure.
 
@@ -237,6 +249,7 @@ def _agent_context(
         sandbox_volume: List of volumes to mount in the sandbox
         sandbox_environment: Dict of environment variables to set in the sandbox
         backend: Override inference backend from config
+        cloud_services: Cloud provider names; supported only by Pi and OMP for now.
 
     Yields:
         AgentContext with all infrastructure ready
@@ -245,6 +258,18 @@ def _agent_context(
         RuntimeError: If config invalid or services fail to start
     """
     cfg = config.load_config()
+
+    cloud_services = list(dict.fromkeys(service.lower() for service in cloud_services or []))
+    unsupported_clouds = sorted(set(cloud_services) - {"openai"})
+    if unsupported_clouds:
+        raise RuntimeError(f"Unsupported cloud service(s): {', '.join(unsupported_clouds)}")
+    use_cloud = bool(cloud_services)
+    if use_cloud and agent_name not in {"pi", "omp"}:
+        raise RuntimeError("--cloud currently supports only the pi and omp agents")
+    if use_cloud and model is not None:
+        raise RuntimeError(
+            "--model cannot be used with --cloud; configure the model in the agent's global config"
+        )
 
     cfg["agent"]["name"] = agent_name
     if model:
@@ -255,12 +280,20 @@ def _agent_context(
         cfg["inference"]["backend"] = backend
 
     inference_running = (
-        inference.is_inference_running(port)
-        if port is not None
-        else inference.is_inference_running()
+        False
+        if use_cloud
+        else (
+            inference.is_inference_running(port)
+            if port is not None
+            else inference.is_inference_running()
+        )
     )
-    require_model = not inference_running
-    config.validate_config(cfg, require_model=require_model)
+    require_model = not use_cloud and not inference_running
+    config.validate_config(
+        cfg,
+        require_model=require_model,
+        warn_missing_model=not use_cloud,
+    )
 
     if agent_name not in config.VALID_AGENTS:
         utils.error(
@@ -305,7 +338,7 @@ def _agent_context(
     wtmcp_port, wtmcp_started = (None, False)
     engine_started: bool = False
     try:
-        if not inference_running:
+        if not use_cloud and not inference_running:
             if no_start_inference:
                 raise RuntimeError("Inference engine is not running.")
             else:
@@ -321,10 +354,11 @@ def _agent_context(
                         inference.cmd_inference_start(model=model, port=port, backend=backend)
                 engine_started = True
 
-        inference_port = config.get_config_value(cfg, "inference.port", 8081)
-        active_model = inference.get_inference_model(inference_port)
-        cfg.setdefault("inference", {})["model"] = active_model
-        _sync_running_inference_backend(cfg, port)
+        if not use_cloud:
+            inference_port = config.get_config_value(cfg, "inference.port", 8081)
+            active_model = inference.get_inference_model(inference_port)
+            cfg.setdefault("inference", {})["model"] = active_model
+            _sync_running_inference_backend(cfg, port)
 
         if use_mcp:
             # may raise RuntimeError
@@ -342,6 +376,7 @@ def _agent_context(
             sandbox_profile=sandbox_profile,
             sandbox_volume=sandbox_volume,
             sandbox_environment=sandbox_environment,
+            cloud_services=cloud_services,
         )
 
         yield ctx  # may raise from execution
@@ -516,6 +551,9 @@ def _build_sandbox_cmd(
     cli_volumes: list | None = None,
     cli_environment: dict | None = None,
     tty: bool = False,
+    allow_network: bool = False,
+    allow_inference: bool = True,
+    extra_hosts: list[str] | None = None,
 ) -> list:
     """Build the arapuca sandbox command prefix for an agent invocation.
 
@@ -526,6 +564,9 @@ def _build_sandbox_cmd(
         config_dir: Directory containing agent config files; mounted separately when not
             already covered by workdir. Pass None when the agent has no config file.
         wtmcp_port: wtmcp port to allow on Linux, or None if MCP is disabled
+        allow_network: Leave network access enabled on Linux for cloud providers.
+        allow_inference: Allow the configured local inference host on Linux.
+        extra_hosts: Additional HTTPS destinations permitted by the sandbox.
 
     Returns:
         List of command tokens ending with "--", ready for the agent command to be appended
@@ -577,11 +618,16 @@ def _build_sandbox_cmd(
     for vol in volumes:
         cmd += ["-v", vol]
 
+    for host in extra_hosts or []:
+        cmd += ["--allow-host", host]
+
     if platform.system() == "Linux":
-        cmd += ["--allow-host", f"127.0.0.1:{inference_port}"]
+        if allow_inference:
+            cmd += ["--allow-host", f"127.0.0.1:{inference_port}"]
         if wtmcp_port is not None:
             cmd += ["--allow-host", f"127.0.0.1:{wtmcp_port}"]
-        cmd += ["--deny-network"]
+        if not allow_network:
+            cmd += ["--deny-network"]
     else:
         cmd += ["--seccomp", "baseline"]
 
@@ -635,7 +681,7 @@ def _dispatch_agent(
     module_name = launcher_modules.get(ctx.agent_name)
     if module_name:
         module = __import__(module_name, fromlist=["start"])
-        return module.start(
+        launch_args = (
             ctx.agent_path,
             ctx.cfg,
             ctx.wtmcp_port,
@@ -647,6 +693,9 @@ def _dispatch_agent(
             prompt,
             capture_stdout,
         )
+        if ctx.agent_name in {"pi", "omp"}:
+            return module.start(*launch_args, cloud_services=ctx.cloud_services)
+        return module.start(*launch_args)
     return None
 
 
@@ -695,6 +744,7 @@ def cmd_agent(
     sandbox_environment: dict | None = None,
     port: int | None = None,
     backend: str | None = None,
+    cloud_services: list[str] | None = None,
 ) -> None:
     """Start interactive agent session (requires TTY).
 
@@ -731,6 +781,7 @@ def cmd_agent(
         sandbox_volume=sandbox_volume,
         sandbox_environment=sandbox_environment,
         backend=backend,
+        cloud_services=cloud_services,
     ) as ctx:
         _dispatch_agent(ctx)
 

@@ -9,7 +9,7 @@ import sys
 import tempfile
 from pathlib import Path
 
-from arkai import config, utils
+from arkai import cloud_auth, config, utils
 from arkai.agent import AgentLaunchSpec, run_install_command, run_launch_spec
 
 PI_CORE_PACKAGE = "@earendil-works/pi-coding-agent"
@@ -36,6 +36,34 @@ def get_agent_path(cfg: dict) -> str:
 def get_agent_dir() -> Path:
     """Return the directory containing Pi's Arkai-managed runtime data."""
     return get_install_dir() / "agent"
+
+
+def get_global_agent_dir() -> Path:
+    """Return the user's Pi agent directory, including global auth and settings."""
+    configured_dir = os.environ.get("PI_CODING_AGENT_DIR") or "~/.pi/agent"
+    return Path(configured_dir).expanduser().resolve()
+
+
+def _write_run_mcp_config(agent_dir: str, port: int) -> Path:
+    """Write a temporary WTMCP config without replacing the user's global config."""
+    descriptor, filename = tempfile.mkstemp(prefix="arkai-mcp-", suffix=".json", dir=agent_dir)
+    path = Path(filename)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as config_file:
+            json.dump(
+                {"mcpServers": {"wtmcp": {"url": f"http://127.0.0.1:{port}/mcp"}}},
+                config_file,
+                indent=2,
+            )
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+    return path
+
+
+def ensure_openai_api_key(agent_path: str) -> None:
+    """Use or securely save an OpenAI API key in Pi's global agent directory."""
+    cloud_auth.ensure_openai_api_key("pi", get_global_agent_dir())
 
 
 def _resolve_node_path() -> str:
@@ -252,56 +280,82 @@ def build_launch_spec(
     cli_volumes: list | None = None,
     cli_environment: dict | None = None,
     prompt: str | None = None,
+    cloud_services: list[str] | None = None,
 ) -> AgentLaunchSpec:
     """Create Pi configuration and return its process launch specification."""
     from arkai import wtmcp
-    from arkai.agent import _build_sandbox_cmd, _get_agent_model_id
+    from arkai.agent import _build_sandbox_cmd
 
+    cloud_services = list(dict.fromkeys(service.lower() for service in cloud_services or []))
+    is_cloud = bool(cloud_services)
     mcp_available = wtmcp_port is not None and wtmcp.is_wtmcp_running(wtmcp_port)
-    agent_dir = _prepare_agent_dir(cfg, wtmcp_port if mcp_available else None)
-    model_id = _get_agent_model_id(cfg)
+    if is_cloud:
+        agent_dir = get_global_agent_dir()
+        agent_dir.mkdir(parents=True, exist_ok=True)
+        mcp_config = _write_run_mcp_config(str(agent_dir), wtmcp_port) if mcp_available else None
+    else:
+        agent_dir = Path(_prepare_agent_dir(cfg, wtmcp_port if mcp_available else None))
+        mcp_config = Path(agent_dir, "mcp.json") if mcp_available else None
     env = os.environ.copy()
-    env["PI_CODING_AGENT_DIR"] = agent_dir
+    env["PI_CODING_AGENT_DIR"] = str(agent_dir)
+    if is_cloud:
+        # Scope model selection without --provider, which Pi requires to accompany --model.
+        # This leaves Pi's interactive /login flow available when the key is not configured yet.
+        agent_args = ["--models", "openai/*"]
+    else:
+        from arkai.agent import _get_agent_model_id
 
-    agent_args = ["--model", f"local-llm/{model_id}"]
+        agent_args = ["--model", f"local-llm/{_get_agent_model_id(cfg)}"]
     theme = config.get_config_value(cfg, "agent.theme")
     if theme is not None:
         agent_args.extend(["--use-theme", theme])
     if mcp_available:
-        agent_args.extend(["--mcp-config", str(Path(agent_dir, "mcp.json"))])
+        agent_args.extend(["--mcp-config", str(mcp_config)])
     if prompt is not None:
         agent_args.extend(["-p", prompt])
 
-    cleanup_paths: list[Path] = []
-    if use_sandbox:
-        node_path = _resolve_node_path()
-        runtime_volumes = list(cli_volumes or [])
-        runtime_volumes.extend(get_runtime_volumes(agent_path, node_path))
-        sandbox_environment = dict(cli_environment or {})
-        sandbox_environment["PI_CODING_AGENT_DIR"] = agent_dir
-        cmd = _build_sandbox_cmd(
-            cfg,
-            workdir,
-            agent_dir,
-            None,
-            sandbox_profile,
-            runtime_volumes,
-            sandbox_environment,
-            tty=prompt is None,
-        )
-        preload_path = _create_node_path_preload(
-            agent_dir,
-            node_path,
-            enable_osc52_fallback=(
-                prompt is None
-                and platform.system() == "Darwin"
-                and os.environ.get("TERM_PROGRAM") != "Apple_Terminal"
-            ),
-        )
-        cleanup_paths.append(preload_path)
-        cmd = cmd + [node_path, "--require", str(preload_path), str(Path(agent_path).resolve())]
-    else:
-        cmd = [agent_path]
+    cleanup_paths = [mcp_config] if is_cloud and mcp_config is not None else []
+    try:
+        if use_sandbox:
+            node_path = _resolve_node_path()
+            runtime_volumes = list(cli_volumes or [])
+            runtime_volumes.extend(get_runtime_volumes(agent_path, node_path))
+            sandbox_environment = dict(cli_environment or {})
+            sandbox_environment["PI_CODING_AGENT_DIR"] = str(agent_dir)
+            cmd = _build_sandbox_cmd(
+                cfg,
+                workdir,
+                str(agent_dir),
+                None,
+                sandbox_profile,
+                runtime_volumes,
+                sandbox_environment,
+                tty=prompt is None,
+                allow_network=False,
+                allow_inference=not is_cloud,
+                extra_hosts=(
+                    ["*.openai.com:443", "chatgpt.com:443", "*.chatgpt.com:443"]
+                    if is_cloud and platform.system() == "Linux"
+                    else None
+                ),
+            )
+            preload_path = _create_node_path_preload(
+                str(agent_dir),
+                node_path,
+                enable_osc52_fallback=(
+                    prompt is None
+                    and platform.system() == "Darwin"
+                    and os.environ.get("TERM_PROGRAM") != "Apple_Terminal"
+                ),
+            )
+            cleanup_paths.append(preload_path)
+            cmd = cmd + [node_path, "--require", str(preload_path), str(Path(agent_path).resolve())]
+        else:
+            cmd = [agent_path]
+    except Exception:
+        for path in cleanup_paths:
+            path.unlink(missing_ok=True)
+        raise
 
     cmd.extend(agent_args)
 
@@ -319,8 +373,11 @@ def start(
     cli_environment: dict | None = None,
     prompt: str | None = None,
     capture_stdout: bool = False,
+    cloud_services: list[str] | None = None,
 ) -> str | None:
     """Build and run Pi's launch specification."""
+    if cloud_services:
+        ensure_openai_api_key(agent_path)
     if prompt is None and sys.stdin.isatty() and sys.stdout.isatty():
         _maybe_update_arkai_packages(agent_path)
     return run_launch_spec(
@@ -334,6 +391,7 @@ def start(
             cli_volumes,
             cli_environment,
             prompt,
+            cloud_services,
         ),
         capture_stdout,
     )
