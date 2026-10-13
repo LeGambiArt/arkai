@@ -51,7 +51,7 @@ When you run `arkai agent start`, it starts `llama-server` (loading your GGUF mo
 - `mlx-lm` (`pip install -e '.[mlx]'`, optional; Apple Silicon)
 - `wtmcp` — for MCP tool integration with agents *(optional)*
 - `arapuca` — for sandboxed agent execution *(optional)*
-- Agent binary: `opencode`, `crush`, `claude`, or `pi` — at least one required
+- Agent binary: `opencode`, `crush`, `claude`, `pi`, or `omp` — at least one required
 
 
 ## Installation
@@ -112,6 +112,25 @@ and `pi-subagents`.
 
 Pi is installed only for arkai under `~/.local/state/arkai/pi/`; it is not added to
 your global npm installation or shell `PATH`. Node.js and npm must be installed.
+
+Install [oh-my-pi](https://github.com/can1357/oh-my-pi) using its verified official
+macOS/Linux binary installer:
+
+```bash
+arkai agent install omp
+```
+
+OMP is installed under `~/.local/state/arkai/omp/`; it is not added to your global
+`PATH` or OMP installation. Arkai configures OMP to use its local inference server
+and, when enabled, its wtmcp MCP server. OMP also supports non-interactive prompts:
+
+```bash
+arkai agent prompt -a omp "Summarize this project"
+```
+
+The automatic OMP installer currently supports macOS and Linux. On other platforms,
+install OMP using its [official instructions](https://github.com/can1357/oh-my-pi#install)
+and set `agent.path` to the executable in Arkai's config.
 
 **Known issue:** On macOS, copying from sandboxed pi.dev to the system clipboard
 does not work in Terminal.app because it does not support OSC 52 clipboard writes.
@@ -392,7 +411,7 @@ tears down services on exit.
 arkai agent start [-a AGENT] [-m MODEL] [options]
 ```
 
-**Supported agents:** `opencode`, `crush`, `claude`
+**Supported agents:** `opencode`, `crush`, `claude`, `pi`, `omp`
 
 ### Flags
 
@@ -561,7 +580,7 @@ arkai config validate --file PATH  # validate a specific file
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `agent.name` | string | `opencode` | Agent to use: `opencode`, `crush`, or `claude` |
+| `agent.name` | string | `opencode` | Agent to use: `opencode`, `crush`, `claude`, `pi`, or `omp` |
 | `agent.path` | string | *(agent name)* | Custom path to agent binary |
 | `agent.mcp` | bool | `true` | Whether to start wtmcp for agent sessions |
 

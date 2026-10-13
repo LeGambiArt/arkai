@@ -280,6 +280,7 @@ def _agent_context(
         "crush": "arkai.agent_crush",
         "claude": "arkai.agent_claude",
         "pi": "arkai.agent_pi",
+        "omp": "arkai.agent_omp",
     }
     module = __import__(launcher_modules[agent_name], fromlist=["get_agent_path"])
     agent_path: str = module.get_agent_path(cfg)
@@ -629,6 +630,7 @@ def _dispatch_agent(
         "crush": "arkai.agent_crush",
         "claude": "arkai.agent_claude",
         "pi": "arkai.agent_pi",
+        "omp": "arkai.agent_omp",
     }
     module_name = launcher_modules.get(ctx.agent_name)
     if module_name:
@@ -665,7 +667,7 @@ def cmd_agent_install(agent_name: str | None = None) -> None:
     Raises:
         ValueError: If the requested agent has no installer.
     """
-    installers = {"pi": "arkai.agent_pi"}
+    installers = {"pi": "arkai.agent_pi", "omp": "arkai.agent_omp"}
     if agent_name is None:
         utils.info("Agents supported for installation: " + ", ".join(installers))
         return

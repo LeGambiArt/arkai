@@ -2,7 +2,7 @@
 
 from unittest.mock import patch
 
-from arkai import agent, agent_pi, inference
+from arkai import agent, agent_omp, agent_pi, inference
 
 
 def test_agent_start_passes_explicit_port_to_inference() -> None:
@@ -216,6 +216,15 @@ def test_pi_agent_dispatches_to_pi_launcher() -> None:
     """Pi agent sessions are dispatched to the Pi launcher."""
     ctx = agent.AgentContext(agent_name="pi", agent_path="/bin/pi")
     with patch.object(agent_pi, "start", return_value=None) as launcher:
+        agent._dispatch_agent(ctx)
+
+    launcher.assert_called_once()
+
+
+def test_omp_agent_dispatches_to_omp_launcher() -> None:
+    """OMP agent sessions are dispatched to the OMP launcher."""
+    ctx = agent.AgentContext(agent_name="omp", agent_path="/bin/omp")
+    with patch.object(agent_omp, "start", return_value=None) as launcher:
         agent._dispatch_agent(ctx)
 
     launcher.assert_called_once()

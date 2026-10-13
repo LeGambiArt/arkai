@@ -7,12 +7,17 @@ from unittest.mock import patch
 
 import pytest
 
-from arkai import agent, agent_pi, config
+from arkai import agent, agent_omp, agent_pi, config
 
 
 def test_pi_is_a_valid_agent() -> None:
     """Pi is accepted by configuration validation."""
     assert "pi" in config.VALID_AGENTS
+
+
+def test_omp_is_a_valid_agent() -> None:
+    """OMP is accepted by configuration validation."""
+    assert "omp" in config.VALID_AGENTS
 
 
 def test_install_pi_declines_before_running_commands(capsys) -> None:
@@ -120,15 +125,74 @@ def test_agent_install_lists_supported_agents(capsys) -> None:
     """Omitting the install name lists supported installers."""
     agent.cmd_agent_install()
 
-    assert "pi" in capsys.readouterr().out
+    output = capsys.readouterr().out
+    assert "pi" in output
+    assert "omp" in output
 
 
 def test_agent_install_rejects_unsupported_agent() -> None:
     """Unknown agent installers fail with supported alternatives."""
     import pytest
 
-    with pytest.raises(ValueError, match="Supported agents: pi"):
+    with pytest.raises(ValueError, match="Supported agents: pi, omp"):
         agent.cmd_agent_install("opencode")
+
+
+def test_omp_installer_declines_before_running_commands(capsys) -> None:
+    """Declining the OMP installer does not download or execute anything."""
+    with (
+        patch("builtins.input", return_value="n"),
+        patch.object(agent_omp, "run_install_command") as run_install,
+    ):
+        agent.cmd_agent_install("omp")
+
+    run_install.assert_not_called()
+    assert "cancelled" in capsys.readouterr().out.lower()
+
+
+def test_omp_installer_downloads_official_binary_to_managed_location(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """The installer uses OMP's official script and Arkai-owned install prefix."""
+    core_dir = tmp_path / "omp" / "bin"
+    omp_path = core_dir / "omp"
+    commands: list[tuple[list[str], dict]] = []
+
+    def run_install(command: list[str], env: dict[str, str] | None = None) -> None:
+        commands.append((command, {"env": env}))
+        if command[0] == "/bin/sh":
+            core_dir.mkdir(parents=True, exist_ok=True)
+            omp_path.write_text("#!/bin/sh\necho 'omp test-version'\n")
+            omp_path.chmod(0o755)
+
+    monkeypatch.setattr(agent_omp, "get_core_dir", lambda: core_dir)
+    monkeypatch.setattr(agent_omp.platform, "system", lambda: "Darwin")
+    with (
+        patch("builtins.input", return_value="yes"),
+        patch.object(agent_omp.shutil, "which", side_effect=lambda name: f"/bin/{name}"),
+        patch.object(agent_omp, "run_install_command", side_effect=run_install),
+        patch.object(agent_omp.utils, "run_command", return_value=(0, "omp test-version\n", "")),
+    ):
+        agent.cmd_agent_install("omp")
+
+    installer_path = commands[0][0][-1]
+    assert commands[0][0] == [
+        "/bin/curl",
+        "-fsSL",
+        agent_omp.OMP_INSTALLER_URL,
+        "-o",
+        installer_path,
+    ]
+    assert commands[1][0] == ["/bin/sh", installer_path, "--binary"]
+    assert commands[1][1]["env"]["PI_INSTALL_DIR"] == str(core_dir)
+    assert omp_path.is_file()
+
+
+def test_omp_installer_rejects_unsupported_platform(monkeypatch) -> None:
+    """Automatic OMP installation fails clearly outside macOS and Linux."""
+    monkeypatch.setattr(agent_omp.platform, "system", lambda: "Windows")
+    with pytest.raises(RuntimeError, match="supports macOS and Linux"):
+        agent_omp.install()
 
 
 def test_pi_runtime_volumes_include_node_global_paths(tmp_path: Path, monkeypatch) -> None:

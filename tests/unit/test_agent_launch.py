@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from arkai import agent, agent_claude, agent_crush, agent_opencode
+from arkai import agent, agent_claude, agent_crush, agent_omp, agent_opencode
 
 
 def _cfg() -> dict:
@@ -193,7 +193,94 @@ def test_crush_prompt_runs_quietly(tmp_path: Path, monkeypatch) -> None:
             path.unlink(missing_ok=True)
 
 
+def test_omp_builds_local_model_and_mcp_configuration(tmp_path: Path, monkeypatch) -> None:
+    """OMP uses Arkai's local inference endpoint and an isolated MCP config."""
+    agent_dir = tmp_path / "omp-agent"
+    monkeypatch.setattr(agent_omp, "get_agent_dir", lambda: agent_dir)
+    cfg = {
+        "inference": {
+            "backend": "llama-cpp",
+            "model": "/models/test.gguf",
+            "port": 8123,
+            "context_size": 32768,
+        }
+    }
+
+    spec = agent_omp.build_launch_spec("/bin/omp", cfg, 8124, False, None)
+
+    models = agent.utils.load_yaml(str(agent_dir / "models.yml"))
+    provider = models["providers"]["local-llm"]
+    assert provider["baseUrl"] == "http://127.0.0.1:8123/v1"
+    assert provider["api"] == "openai-completions"
+    assert provider["models"][0]["id"] == "test"
+    assert provider["models"][0]["contextWindow"] == 32768
+    settings = agent.utils.load_yaml(str(agent_dir / "config.yml"))
+    assert settings["modelRoles"]["default"] == "local-llm/test"
+    assert settings["startup"] == {"quiet": True, "setupWizard": False}
+    mcp = json.loads((agent_dir / "mcp.json").read_text())
+    assert mcp["mcpServers"]["wtmcp"] == {
+        "type": "http",
+        "url": "http://127.0.0.1:8124/mcp",
+    }
+    assert spec.environment["PI_CODING_AGENT_DIR"] == str(agent_dir)
+    assert spec.environment["PI_CONFIG_DIR"] == agent_omp.OMP_CONFIG_DIR
+    assert spec.environment["OMP_SKIP_SETUP"] == "1"
+    assert spec.command == [
+        "/bin/omp",
+        "--profile",
+        "default",
+        "--model",
+        "local-llm/test",
+    ]
+
+
+def test_omp_prompt_runs_without_session_and_cleans_stale_mcp(tmp_path: Path, monkeypatch) -> None:
+    """OMP prompt mode is one-shot text output and removes stale MCP configuration."""
+    agent_dir = tmp_path / "omp-agent"
+    agent_dir.mkdir()
+    (agent_dir / "mcp.json").write_text("{}")
+    monkeypatch.setattr(agent_omp, "get_agent_dir", lambda: agent_dir)
+    cfg = {"inference": {"model": "model.gguf", "port": 8123}}
+
+    spec = agent_omp.build_launch_spec("/bin/omp", cfg, None, False, None, prompt="do the task")
+
+    assert spec.command == [
+        "/bin/omp",
+        "--profile",
+        "default",
+        "--model",
+        "local-llm/model",
+        "-p",
+        "--no-session",
+        "--mode",
+        "text",
+        "do the task",
+    ]
+    assert not (agent_dir / "mcp.json").exists()
+
+
+def test_omp_sandbox_mounts_binary_and_sets_agent_dir(tmp_path: Path, monkeypatch) -> None:
+    """Sandboxed OMP receives its isolated config path and read-only executable mount."""
+    agent_dir = tmp_path / "omp-agent"
+    monkeypatch.setattr(agent_omp, "get_agent_dir", lambda: agent_dir)
+    with patch.object(agent, "_build_sandbox_cmd", return_value=["arapuca", "run", "--"]) as build:
+        spec = agent_omp.build_launch_spec("/opt/omp/bin/omp", _cfg(), None, True, None)
+
+    assert "/opt/omp/bin:ro" in build.call_args.args[5]
+    assert spec.command[:8] == [
+        "arapuca",
+        "run",
+        "--",
+        "env",
+        f"PI_CONFIG_DIR={agent_omp.OMP_CONFIG_DIR}",
+        f"PI_CODING_AGENT_DIR={agent_dir}",
+        "OMP_SKIP_SETUP=1",
+        "/opt/omp/bin/omp",
+    ]
+
+
 def test_other_agents_only_build_launch_specs() -> None:
     """Each agent module exposes configuration and command construction separately."""
     assert hasattr(agent_claude, "build_launch_spec")
     assert hasattr(agent_crush, "build_launch_spec")
+    assert hasattr(agent_omp, "build_launch_spec")

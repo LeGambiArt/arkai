@@ -6,6 +6,7 @@
 # CLI options will override any of these settings, if available.
 
 agent:
+  # Supported agents: opencode, crush, claude, pi, omp
   name: opencode
 
 inference:
