@@ -196,6 +196,7 @@ def test_crush_prompt_runs_quietly(tmp_path: Path, monkeypatch) -> None:
 def test_omp_builds_local_model_and_mcp_configuration(tmp_path: Path, monkeypatch) -> None:
     """OMP uses Arkai's local inference endpoint and an isolated MCP config."""
     agent_dir = tmp_path / "omp-agent"
+    omp_path = tmp_path / "bin" / "omp"
     monkeypatch.setattr(agent_omp, "get_agent_dir", lambda: agent_dir)
     cfg = {
         "inference": {
@@ -206,7 +207,7 @@ def test_omp_builds_local_model_and_mcp_configuration(tmp_path: Path, monkeypatc
         }
     }
 
-    spec = agent_omp.build_launch_spec("/bin/omp", cfg, 8124, False, None)
+    spec = agent_omp.build_launch_spec(str(omp_path), cfg, 8124, False, None)
 
     models = agent.utils.load_yaml(str(agent_dir / "models.yml"))
     provider = models["providers"]["local-llm"]
@@ -226,7 +227,7 @@ def test_omp_builds_local_model_and_mcp_configuration(tmp_path: Path, monkeypatc
     assert spec.environment["PI_CONFIG_DIR"] == agent_omp.OMP_CONFIG_DIR
     assert spec.environment["OMP_SKIP_SETUP"] == "1"
     assert spec.command == [
-        "/bin/omp",
+        str(omp_path.resolve()),
         "--profile",
         "default",
         "--model",
@@ -237,15 +238,16 @@ def test_omp_builds_local_model_and_mcp_configuration(tmp_path: Path, monkeypatc
 def test_omp_prompt_runs_without_session_and_cleans_stale_mcp(tmp_path: Path, monkeypatch) -> None:
     """OMP prompt mode is one-shot text output and removes stale MCP configuration."""
     agent_dir = tmp_path / "omp-agent"
+    omp_path = tmp_path / "bin" / "omp"
     agent_dir.mkdir()
     (agent_dir / "mcp.json").write_text("{}")
     monkeypatch.setattr(agent_omp, "get_agent_dir", lambda: agent_dir)
     cfg = {"inference": {"model": "model.gguf", "port": 8123}}
 
-    spec = agent_omp.build_launch_spec("/bin/omp", cfg, None, False, None, prompt="do the task")
+    spec = agent_omp.build_launch_spec(str(omp_path), cfg, None, False, None, prompt="do the task")
 
     assert spec.command == [
-        "/bin/omp",
+        str(omp_path.resolve()),
         "--profile",
         "default",
         "--model",
