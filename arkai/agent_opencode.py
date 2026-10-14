@@ -74,6 +74,9 @@ def build_launch_spec(
     cloud_services = list(dict.fromkeys(service.lower() for service in cloud_services or []))
     is_cloud = bool(cloud_services)
     config_data: dict = {"$schema": "https://opencode.ai/config.json"}
+    from arkai.agent import _cloud_provider
+
+    cloud_provider = _cloud_provider(cloud_services)
     if not is_cloud:
         inference_port = config.get_config_value(cfg, "inference.port", 8081)
         inference_backend = config.get_config_value(cfg, "inference.backend", "llama-cpp")
@@ -125,6 +128,11 @@ def build_launch_spec(
     if is_cloud and cloud_api_key:
         environment["OPENAI_API_KEY"] = cloud_api_key
         sandbox_environment["OPENAI_API_KEY"] = cloud_api_key
+    sandbox_volumes = list(cli_volumes or [])
+    if cloud_provider == "vertex":
+        sandbox_volumes, sandbox_environment = cloud_auth.vertex_sandbox_settings(
+            sandbox_volumes, sandbox_environment
+        )
     if use_sandbox:
         try:
             sandbox_prefix = _build_sandbox_cmd(
@@ -133,7 +141,7 @@ def build_launch_spec(
                 str(config_dir),
                 wtmcp_port,
                 sandbox_profile,
-                cli_volumes,
+                sandbox_volumes,
                 sandbox_environment,
                 tty=prompt is None,
                 allow_network_listeners=True,
@@ -141,7 +149,13 @@ def build_launch_spec(
                 allow_inference=not is_cloud,
                 extra_hosts=(
                     ["*.openai.com:443", "api.openai.com:443"]
-                    if is_cloud and platform.system() == "Linux"
+                    if cloud_provider == "openai" and platform.system() == "Linux"
+                    else [
+                        "*-aiplatform.googleapis.com:443",
+                        "aiplatform.googleapis.com:443",
+                        "oauth2.googleapis.com:443",
+                    ]
+                    if cloud_provider == "vertex" and platform.system() == "Linux"
                     else None
                 ),
             )
@@ -188,7 +202,7 @@ def start(
     """Build and run OpenCode's launch specification."""
     cloud_api_key = (
         cloud_auth.ensure_openai_api_key("opencode", _get_config_dir(), agent_path)
-        if cloud_services
+        if cloud_services and any(service.lower() == "openai" for service in cloud_services)
         else None
     )
     return run_launch_spec(

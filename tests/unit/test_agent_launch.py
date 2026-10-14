@@ -97,6 +97,35 @@ def test_opencode_cloud_sandbox_allows_openai_only(tmp_path: Path, monkeypatch) 
         path.unlink(missing_ok=True)
 
 
+def test_opencode_vertex_sandbox_passes_adc_and_allows_vertex_hosts(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """OpenCode Vertex runs receive ADC settings and Vertex HTTPS access in the sandbox."""
+    sessions = tmp_path / "sessions"
+    credentials = tmp_path / "adc.json"
+    credentials.write_text("{}")
+    monkeypatch.setattr(agent_opencode.os.path, "expanduser", lambda _: str(sessions))
+    monkeypatch.setattr(agent_opencode.platform, "system", lambda: "Linux")
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
+    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", str(credentials))
+    with patch.object(agent, "_build_sandbox_cmd", return_value=["arapuca", "run", "--"]) as build:
+        spec = agent_opencode.build_launch_spec(
+            "/agent", _cfg(), None, True, str(tmp_path), cloud_services=["vertex"]
+        )
+
+    assert build.call_args.kwargs["allow_inference"] is False
+    assert build.call_args.kwargs["extra_hosts"] == [
+        "*-aiplatform.googleapis.com:443",
+        "aiplatform.googleapis.com:443",
+        "oauth2.googleapis.com:443",
+    ]
+    assert build.call_args.args[6]["GOOGLE_CLOUD_PROJECT"] == "test-project"
+    assert build.call_args.args[5] == [f"{credentials}:ro"]
+    assert spec.environment["GOOGLE_APPLICATION_CREDENTIALS"] == str(credentials)
+    for path in spec.cleanup_paths:
+        path.unlink(missing_ok=True)
+
+
 def test_run_launch_spec_owns_popen_and_cleanup(tmp_path: Path) -> None:
     """The shared runner starts the process and removes module-created files."""
     temporary_dir = tmp_path / "session"
