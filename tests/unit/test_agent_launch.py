@@ -492,6 +492,18 @@ def test_omp_cloud_sandbox_mounts_global_agent_dir_and_wtmcp_config(
         path.unlink(missing_ok=True)
 
 
+def test_omp_vertex_cloud_selects_google_vertex_provider(tmp_path: Path, monkeypatch) -> None:
+    """OMP Vertex launches select OMP's native Google Vertex provider."""
+    monkeypatch.setattr(agent_omp, "get_global_agent_dir", lambda: tmp_path / "omp-agent")
+
+    spec = agent_omp.build_launch_spec(
+        "/bin/omp", _cfg(), None, False, str(tmp_path), cloud_services=["vertex"]
+    )
+
+    assert spec.command[spec.command.index("--provider") + 1] == "google-vertex"
+    assert "--model" not in spec.command
+
+
 def test_sandbox_mounts_read_write_paths_without_rw_suffix(tmp_path: Path, monkeypatch) -> None:
     """Arapuca defaults volume mounts to read-write; :rw breaks older CLIs."""
     workdir = str(tmp_path / "project")

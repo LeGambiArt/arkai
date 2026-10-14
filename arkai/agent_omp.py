@@ -151,6 +151,9 @@ def build_launch_spec(
 
     cloud_services = list(dict.fromkeys(service.lower() for service in cloud_services or []))
     is_cloud = bool(cloud_services)
+    from arkai.agent import _cloud_provider
+
+    cloud_provider = _cloud_provider(cloud_services)
     if is_cloud:
         agent_dir = get_global_agent_dir()
         agent_dir.mkdir(parents=True, exist_ok=True)
@@ -178,6 +181,10 @@ def build_launch_spec(
         sandbox_environment = dict(cli_environment or {})
         sandbox_environment["PI_CODING_AGENT_DIR"] = str(agent_dir)
         sandbox_environment["OMP_SKIP_SETUP"] = "1"
+        if cloud_provider == "vertex":
+            volumes, sandbox_environment = cloud_auth.vertex_sandbox_settings(
+                volumes, sandbox_environment
+            )
         if is_cloud and "PI_CONFIG_DIR" in os.environ:
             sandbox_environment["PI_CONFIG_DIR"] = os.environ["PI_CONFIG_DIR"]
         try:
@@ -194,7 +201,13 @@ def build_launch_spec(
                 allow_inference=not is_cloud,
                 extra_hosts=(
                     ["*.openai.com:443", "chatgpt.com:443", "*.chatgpt.com:443"]
-                    if is_cloud and platform.system() == "Linux"
+                    if cloud_provider == "openai" and platform.system() == "Linux"
+                    else [
+                        "*-aiplatform.googleapis.com:443",
+                        "aiplatform.googleapis.com:443",
+                        "oauth2.googleapis.com:443",
+                    ]
+                    if cloud_provider == "vertex" and platform.system() == "Linux"
                     else None
                 ),
             )
@@ -220,7 +233,8 @@ def build_launch_spec(
     command.append("--profile")
     command.append("default")
     if is_cloud:
-        command.extend(["--provider", "openai"])
+        provider_name = "google-vertex" if cloud_provider == "vertex" else "openai"
+        command.extend(["--provider", provider_name])
     else:
         from arkai.agent import _get_agent_model_id
 
@@ -246,7 +260,7 @@ def start(
     cloud_services: list[str] | None = None,
 ) -> str | None:
     """Build and run OMP's launch specification."""
-    if cloud_services:
+    if cloud_services and any(service.lower() == "openai" for service in cloud_services):
         cloud_auth.ensure_openai_api_key("omp", get_global_agent_dir(), agent_path)
     return run_launch_spec(
         build_launch_spec(
