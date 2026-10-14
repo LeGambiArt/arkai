@@ -2,7 +2,7 @@
 
 from unittest.mock import patch
 
-from arkai import agent, agent_omp, agent_pi, inference
+from arkai import agent, agent_omp, agent_opencode, agent_pi, inference
 
 
 def test_agent_start_passes_explicit_port_to_inference() -> None:
@@ -187,20 +187,34 @@ def test_cloud_agent_skips_local_inference_engine() -> None:
     stop.assert_not_called()
 
 
-def test_cloud_agent_rejects_opencode() -> None:
-    """Cloud services are restricted to Pi and OMP, not OpenCode."""
+def test_cloud_agent_skips_local_inference_for_opencode() -> None:
+    """OpenCode cloud sessions do not query, start, or stop local inference."""
+    cfg = {
+        "agent": {"name": "opencode", "path": "/agent", "mcp": False},
+        "inference": {"port": 8081},
+        "sandbox": {"disable": True},
+    }
+
     with patch.object(
         agent.config,
         "load_config",
-        return_value={"agent": {}, "inference": {}, "sandbox": {}},
+        return_value=cfg,
     ):
-        try:
-            with agent._agent_context("opencode", cloud_services=["openai"]):
-                pass
-        except RuntimeError as error:
-            assert "only the pi and omp agents" in str(error)
-        else:
-            raise AssertionError("Expected cloud support to reject non-OpenCode agents")
+        with (
+            patch.object(agent.config, "validate_config", return_value=True),
+            patch.object(agent.inference, "is_inference_running") as running,
+            patch.object(agent.inference, "cmd_inference_start") as start,
+            patch.object(agent.inference, "get_inference_model") as get_model,
+            patch.object(agent.inference, "cmd_inference_stop") as stop,
+            patch.object(agent.utils, "resolve_binary", return_value="/agent"),
+        ):
+            with agent._agent_context("opencode", cloud_services=["openai"]) as context:
+                assert context.cloud_services == ["openai"]
+
+    running.assert_not_called()
+    start.assert_not_called()
+    get_model.assert_not_called()
+    stop.assert_not_called()
 
 
 def test_agent_cli_registers_port_for_start_and_prompt() -> None:
@@ -313,6 +327,17 @@ def test_omp_agent_dispatches_to_omp_launcher() -> None:
     """OMP agent sessions are dispatched to the OMP launcher."""
     ctx = agent.AgentContext(agent_name="omp", agent_path="/bin/omp", cloud_services=["openai"])
     with patch.object(agent_omp, "start", return_value=None) as launcher:
+        agent._dispatch_agent(ctx)
+
+    assert launcher.call_args.kwargs["cloud_services"] == ["openai"]
+
+
+def test_opencode_agent_dispatches_cloud_services() -> None:
+    """OpenCode receives the selected cloud providers from the shared dispatcher."""
+    ctx = agent.AgentContext(
+        agent_name="opencode", agent_path="/bin/opencode", cloud_services=["openai"]
+    )
+    with patch.object(agent_opencode, "start", return_value=None) as launcher:
         agent._dispatch_agent(ctx)
 
     assert launcher.call_args.kwargs["cloud_services"] == ["openai"]

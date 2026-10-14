@@ -31,6 +31,24 @@ def _read_pi_key(agent_dir: Path) -> str | None:
     return _key_from_data(auth_data.get("openai"))
 
 
+def _get_opencode_auth_path() -> Path:
+    """Return OpenCode's standard global authentication file."""
+    data_home = os.environ.get("XDG_DATA_HOME")
+    root = Path(data_home) if data_home else Path.home() / ".local" / "share"
+    return root / "opencode" / "auth.json"
+
+
+def _read_opencode_key() -> str | None:
+    """Read an OpenAI API key saved by OpenCode's own auth flow."""
+    try:
+        auth_data = json.loads(_get_opencode_auth_path().read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(auth_data, dict):
+        return None
+    return _key_from_data(auth_data.get("openai"))
+
+
 def _read_omp_key(agent_dir: Path) -> str | None:
     database = agent_dir / "agent.db"
     if not database.is_file():
@@ -124,6 +142,36 @@ def _write_pi_key(agent_dir: Path, key: str) -> None:
         raise
 
 
+def _write_opencode_key(key: str) -> None:
+    """Persist an OpenCode API key in its standard auth file securely."""
+    auth_path = _get_opencode_auth_path()
+    auth_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        auth_data = json.loads(auth_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        auth_data = {}
+    except json.JSONDecodeError as error:
+        raise RuntimeError(
+            f"Could not save OpenAI credentials: {auth_path} is invalid JSON"
+        ) from error
+    if not isinstance(auth_data, dict):
+        raise RuntimeError(f"Could not save OpenAI credentials: {auth_path} must contain an object")
+    auth_data["openai"] = {"type": "api", "key": key}
+
+    descriptor, filename = tempfile.mkstemp(prefix="auth-", suffix=".json", dir=auth_path.parent)
+    temporary_path = Path(filename)
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as auth_file:
+            json.dump(auth_data, auth_file, indent=2)
+            auth_file.write("\n")
+        os.replace(temporary_path, auth_path)
+        auth_path.chmod(0o600)
+    except Exception:
+        temporary_path.unlink(missing_ok=True)
+        raise
+
+
 def _read_omp_cli_key(agent_path: str, agent_dir: Path) -> str | None:
     """Ask OMP's credential resolver about database, config, and dotenv credentials."""
     environment = os.environ.copy()
@@ -183,7 +231,12 @@ def _write_omp_models_key(agent_dir: Path, key: str) -> None:
 
 def ensure_openai_api_key(agent_name: str, agent_dir: Path, agent_path: str | None = None) -> str:
     """Find or securely prompt for and persist the OpenAI API key."""
-    if agent_name == "pi":
+    if agent_name == "opencode":
+        global_key = _read_opencode_key()
+        if global_key:
+            return global_key
+        key = os.environ.get("OPENAI_API_KEY", "").strip()
+    elif agent_name == "pi":
         global_key = _read_pi_key(agent_dir)
         if global_key:
             if global_key.startswith("$"):
@@ -240,7 +293,9 @@ def ensure_openai_api_key(agent_name: str, agent_dir: Path, agent_path: str | No
     if not key:
         raise RuntimeError("OpenAI API key is required for --cloud openai")
 
-    if agent_name == "pi":
+    if agent_name == "opencode":
+        _write_opencode_key(key)
+    elif agent_name == "pi":
         _write_pi_key(agent_dir, key)
     else:
         _write_omp_models_key(agent_dir, key)

@@ -2,11 +2,12 @@
 
 import json
 import os
+import platform
 import shutil
 import tempfile
 from pathlib import Path
 
-from arkai import config, utils
+from arkai import cloud_auth, config, utils
 from arkai.agent import AgentLaunchSpec, run_launch_spec
 
 
@@ -63,27 +64,34 @@ def build_launch_spec(
     cli_volumes: list | None = None,
     cli_environment: dict | None = None,
     prompt: str | None = None,
+    cloud_services: list[str] | None = None,
+    cloud_api_key: str | None = None,
 ) -> AgentLaunchSpec:
     """Create OpenCode configuration and return its process launch specification."""
     from arkai.agent import _build_sandbox_cmd, _get_agent_model_id, _get_model_name
 
     config_dir = _get_config_dir()
-    inference_port = config.get_config_value(cfg, "inference.port", 8081)
-    inference_backend = config.get_config_value(cfg, "inference.backend", "llama-cpp")
-    model_id = _get_agent_model_id(cfg)
-    model_name = _get_model_name(cfg)
-    config_data: dict = {
-        "$schema": "https://opencode.ai/config.json",
-        "provider": {
-            "local-llm": {
-                "name": f"Local LLM ({inference_backend})",
-                "npm": "@ai-sdk/openai-compatible",
-                "options": {"baseURL": f"http://127.0.0.1:{inference_port}/v1"},
-                "models": {model_id: {"name": model_name}},
+    cloud_services = list(dict.fromkeys(service.lower() for service in cloud_services or []))
+    is_cloud = bool(cloud_services)
+    config_data: dict = {"$schema": "https://opencode.ai/config.json"}
+    if not is_cloud:
+        inference_port = config.get_config_value(cfg, "inference.port", 8081)
+        inference_backend = config.get_config_value(cfg, "inference.backend", "llama-cpp")
+        model_id = _get_agent_model_id(cfg)
+        model_name = _get_model_name(cfg)
+        config_data.update(
+            {
+                "provider": {
+                    "local-llm": {
+                        "name": f"Local LLM ({inference_backend})",
+                        "npm": "@ai-sdk/openai-compatible",
+                        "options": {"baseURL": f"http://127.0.0.1:{inference_port}/v1"},
+                        "models": {model_id: {"name": model_name}},
+                    }
+                },
+                "model": f"local-llm/{model_id}",
             }
-        },
-        "model": f"local-llm/{model_id}",
-    }
+        )
     if wtmcp_port is not None:
         config_data["mcp"] = {
             "wtmcp": {
@@ -113,6 +121,10 @@ def build_launch_spec(
         cleanup_paths.append(Path(tui_file))
 
     environment = os.environ.copy()
+    sandbox_environment = dict(cli_environment or {})
+    if is_cloud and cloud_api_key:
+        environment["OPENAI_API_KEY"] = cloud_api_key
+        sandbox_environment["OPENAI_API_KEY"] = cloud_api_key
     if use_sandbox:
         try:
             sandbox_prefix = _build_sandbox_cmd(
@@ -122,9 +134,16 @@ def build_launch_spec(
                 wtmcp_port,
                 sandbox_profile,
                 cli_volumes,
-                cli_environment,
+                sandbox_environment,
                 tty=prompt is None,
                 allow_network_listeners=True,
+                allow_network=False,
+                allow_inference=not is_cloud,
+                extra_hosts=(
+                    ["*.openai.com:443", "api.openai.com:443"]
+                    if is_cloud and platform.system() == "Linux"
+                    else None
+                ),
             )
         except Exception:
             for path in cleanup_paths:
@@ -164,8 +183,14 @@ def start(
     cli_environment: dict | None = None,
     prompt: str | None = None,
     capture_stdout: bool = False,
+    cloud_services: list[str] | None = None,
 ) -> str | None:
     """Build and run OpenCode's launch specification."""
+    cloud_api_key = (
+        cloud_auth.ensure_openai_api_key("opencode", _get_config_dir(), agent_path)
+        if cloud_services
+        else None
+    )
     return run_launch_spec(
         build_launch_spec(
             agent_path,
@@ -177,6 +202,8 @@ def start(
             cli_volumes,
             cli_environment,
             prompt,
+            cloud_services,
+            cloud_api_key,
         ),
         capture_stdout,
     )

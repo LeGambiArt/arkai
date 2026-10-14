@@ -405,13 +405,14 @@ Terminates the server and cleans up PID and state files.
 
 `arkai agent start` is the primary command. It auto-starts the inference server if
 not already running, starts wtmcp (unless `--no-mcp`), launches the agent, and
-tears down services on exit. Pi and OMP can use a cloud provider instead of the
-local inference server with `--cloud`.
+tears down services on exit. OpenCode, Pi, and OMP can use a cloud provider instead
+of the local inference server with `--cloud`.
 
 ```bash
 arkai agent start [-a AGENT] [-m MODEL] [options]
 arkai agent start -a pi --cloud openai
 arkai agent start -a omp --cloud openai
+arkai agent start -a opencode --cloud openai
 ```
 
 **Supported agents:** `opencode`, `crush`, `claude`, `pi`, `omp`
@@ -422,7 +423,7 @@ arkai agent start -a omp --cloud openai
 |------|-------------|
 | `-a/--agent AGENT` | Override agent from config |
 | `-m/--model MODEL` | Override model from config |
-| `--cloud SERVICE [SERVICE ...]` | Use cloud AI services instead of local inference (currently `openai`; Pi and OMP only) |
+| `--cloud SERVICE [SERVICE ...]` | Use cloud AI services instead of local inference (currently `openai`; OpenCode, Pi, and OMP) |
 | `--no-mcp` | Skip wtmcp entirely |
 | `--no-sandbox` | Skip sandbox for this run |
 | `-s/--sandbox PROFILE` | Use a specific sandbox profile for this run |
@@ -436,17 +437,19 @@ arkai agent start -a omp --cloud openai
 
 With `--cloud openai`, Arkai does not start or require the local inference
 engine. Pi and OMP use their user-level agent configuration and saved OpenAI
-credentials. If no OpenAI key is configured there or in `OPENAI_API_KEY`, Arkai
-prompts for it once and saves it for future launches (Pi `auth.json`; OMP's
-global `models.yml`). An environment key is imported into that global config,
-not passed through to the sandbox. In Pi, choose an OpenAI model with `/model`
+credentials; OpenCode uses its configured model and native OpenAI provider. If
+no OpenAI key is configured there or in `OPENAI_API_KEY`, Arkai prompts for it
+once and saves it for future launches (Pi `auth.json`, OMP's global `models.yml`,
+or OpenCode's global `auth.json`). In Pi, choose an OpenAI model with `/model`
 and press `Ctrl+S` in the picker to save it as the default for future launches;
-OMP uses its configured default model and authentication.
+OMP uses its configured default model, and OpenCode uses its normal model
+selection and settings.
 The `-m/--model` option cannot be combined with `--cloud`; configure the cloud
-model in the agent's global settings instead. Arkai mounts the user's agent
-directory in the sandbox. On Linux, the network deny rule remains enabled with
-OpenAI HTTPS endpoints allowlisted; macOS uses Arapuca's baseline profile. Use
-`--no-sandbox` to run without those boundaries.
+model in the agent's global settings instead. Pi and OMP use their global agent
+directories in the sandbox; OpenCode receives its API key through the sandbox
+environment. On Linux, the network deny rule remains enabled with OpenAI HTTPS
+endpoints allowlisted; macOS uses Arapuca's baseline profile. Use `--no-sandbox`
+to run without those boundaries.
 
 ### Lifecycle
 

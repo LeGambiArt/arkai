@@ -151,3 +151,35 @@ def test_omp_resolved_global_key_is_persisted_to_models_config(tmp_path: Path, m
     assert yaml.safe_load((agent_dir / "models.yml").read_text()) == {
         "providers": {"openai": {"apiKey": "resolved-key"}}
     }
+
+
+def test_opencode_reads_native_auth_file(tmp_path: Path, monkeypatch) -> None:
+    """OpenCode cloud launches reuse its saved OpenAI API key."""
+    data_home = tmp_path / "data"
+    auth_path = data_home / "opencode" / "auth.json"
+    auth_path.parent.mkdir(parents=True)
+    auth_path.write_text('{"openai":{"type":"api","key":"saved"}}')
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    with patch.object(cloud_auth.getpass, "getpass") as prompt:
+        key = cloud_auth.ensure_openai_api_key("opencode", tmp_path)
+
+    assert key == "saved"
+    prompt.assert_not_called()
+
+
+def test_opencode_saves_prompted_key_to_native_auth_file(tmp_path: Path, monkeypatch) -> None:
+    """OpenCode API keys are saved with private permissions in its global auth file."""
+    data_home = tmp_path / "data"
+    monkeypatch.setenv("XDG_DATA_HOME", str(data_home))
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    with patch.object(cloud_auth.getpass, "getpass", return_value="  secret  ") as prompt:
+        key = cloud_auth.ensure_openai_api_key("opencode", tmp_path)
+
+    auth_path = data_home / "opencode" / "auth.json"
+    assert key == "secret"
+    assert json.loads(auth_path.read_text()) == {"openai": {"type": "api", "key": "secret"}}
+    assert auth_path.stat().st_mode & 0o777 == 0o600
+    prompt.assert_called_once()

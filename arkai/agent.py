@@ -119,7 +119,7 @@ def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
         type=str.lower,
         choices=("openai",),
         metavar="SERVICE",
-        help="Use cloud AI services instead of the local inference engine (Pi/OMP only)",
+        help="Use cloud AI services instead of the local inference engine (OpenCode/Pi/OMP)",
     )
     agent_start_parser.add_argument(
         "-b", "--backend", help="Override inference backend from config"
@@ -249,7 +249,7 @@ def _agent_context(
         sandbox_volume: List of volumes to mount in the sandbox
         sandbox_environment: Dict of environment variables to set in the sandbox
         backend: Override inference backend from config
-        cloud_services: Cloud provider names; supported only by Pi and OMP for now.
+        cloud_services: Cloud provider names; supported by OpenCode, Pi, and OMP.
 
     Yields:
         AgentContext with all infrastructure ready
@@ -264,8 +264,8 @@ def _agent_context(
     if unsupported_clouds:
         raise RuntimeError(f"Unsupported cloud service(s): {', '.join(unsupported_clouds)}")
     use_cloud = bool(cloud_services)
-    if use_cloud and agent_name not in {"pi", "omp"}:
-        raise RuntimeError("--cloud currently supports only the pi and omp agents")
+    if use_cloud and agent_name not in {"opencode", "pi", "omp"}:
+        raise RuntimeError("--cloud currently supports only the opencode, pi, and omp agents")
     if use_cloud and model is not None:
         raise RuntimeError(
             "--model cannot be used with --cloud; configure the model in the agent's global config"
@@ -709,7 +709,7 @@ def _dispatch_agent(
             prompt,
             capture_stdout,
         )
-        if ctx.agent_name in {"pi", "omp"}:
+        if ctx.agent_name in {"opencode", "pi", "omp"}:
             return module.start(*launch_args, cloud_services=ctx.cloud_services)
         return module.start(*launch_args)
     return None

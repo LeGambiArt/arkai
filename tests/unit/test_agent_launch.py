@@ -49,6 +49,54 @@ def test_opencode_uses_mlx_default_model_alias(tmp_path: Path, monkeypatch) -> N
     config_path.unlink()
 
 
+def test_opencode_cloud_uses_native_openai_provider_and_api_key(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """OpenCode cloud config leaves provider/model selection to OpenCode itself."""
+    sessions = tmp_path / "sessions"
+    monkeypatch.setattr(agent_opencode.os.path, "expanduser", lambda _: str(sessions))
+
+    spec = agent_opencode.build_launch_spec(
+        "/agent", _cfg(), None, False, None, cloud_services=["OPENAI"], cloud_api_key="secret"
+    )
+
+    config_path = Path(spec.environment["OPENCODE_CONFIG"])
+    config_data = json.loads(config_path.read_text())
+    assert config_data == {"$schema": "https://opencode.ai/config.json"}
+    assert spec.environment["OPENAI_API_KEY"] == "secret"
+    assert spec.command == ["/agent", "--standalone"]
+    config_path.unlink()
+
+
+def test_opencode_cloud_sandbox_allows_openai_only(tmp_path: Path, monkeypatch) -> None:
+    """Cloud sandbox allows OpenAI endpoints but does not grant local inference access."""
+    sessions = tmp_path / "sessions"
+    monkeypatch.setattr(agent_opencode.os.path, "expanduser", lambda _: str(sessions))
+    monkeypatch.setattr(agent_opencode.platform, "system", lambda: "Linux")
+    with patch.object(
+        agent, "_build_sandbox_cmd", return_value=["arapuca", "run", "--"]
+    ) as build_sandbox:
+        spec = agent_opencode.build_launch_spec(
+            "/agent",
+            _cfg(),
+            None,
+            True,
+            str(tmp_path),
+            cloud_services=["openai"],
+            cloud_api_key="secret",
+        )
+
+    assert build_sandbox.call_args.kwargs["allow_network"] is False
+    assert build_sandbox.call_args.kwargs["allow_inference"] is False
+    assert build_sandbox.call_args.kwargs["extra_hosts"] == [
+        "*.openai.com:443",
+        "api.openai.com:443",
+    ]
+    assert build_sandbox.call_args.args[6]["OPENAI_API_KEY"] == "secret"
+    for path in spec.cleanup_paths:
+        path.unlink(missing_ok=True)
+
+
 def test_run_launch_spec_owns_popen_and_cleanup(tmp_path: Path) -> None:
     """The shared runner starts the process and removes module-created files."""
     temporary_dir = tmp_path / "session"
