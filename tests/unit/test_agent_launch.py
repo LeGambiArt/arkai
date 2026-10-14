@@ -386,6 +386,150 @@ def test_pi_cloud_uses_global_auth_and_openai_provider(tmp_path: Path, monkeypat
     assert settings_file.read_text() == '{"defaultProvider":"openai","defaultModel":"gpt-model"}'
 
 
+def test_pi_vertex_cloud_registers_anthropic_catalog_and_scopes_picker(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Pi Vertex launch exposes Anthropic model families through its native adapter."""
+    agent_dir = tmp_path / "pi-agent"
+    monkeypatch.setattr(agent_pi, "get_global_agent_dir", lambda: agent_dir)
+    package_json = tmp_path / "pi-package" / "package.json"
+    package_json.parent.mkdir()
+    package_json.write_text('{"name":"@earendil-works/pi-coding-agent"}')
+    monkeypatch.setattr(agent_pi, "_find_pi_package_json", lambda _: str(package_json))
+    models_dev = {
+        "google-vertex-anthropic": {
+            "models": {
+                "claude-haiku-4-5@20251001": {
+                    "id": "claude-haiku-4-5@20251001",
+                    "name": "Claude Haiku 4.5",
+                    "reasoning": True,
+                    "modalities": {"input": ["text", "image"]},
+                    "limit": {"context": 200000, "output": 64000},
+                    "cost": {"input": 1, "output": 5, "cache_read": 0.1, "cache_write": 1.25},
+                },
+                "claude-sonnet-5@default": {
+                    "id": "claude-sonnet-5@default",
+                    "name": "Claude Sonnet 5",
+                    "reasoning": True,
+                    "modalities": {"input": ["text"]},
+                    "limit": {"context": 1000000, "output": 128000},
+                    "cost": {"input": 2, "output": 10, "cache_read": 0.2, "cache_write": 2.5},
+                },
+            }
+        }
+    }
+    response = MagicMock()
+    response.json.return_value = models_dev
+    with (
+        patch("arkai.wtmcp.is_wtmcp_running", return_value=False),
+        patch.object(agent_pi.requests, "get", return_value=response),
+    ):
+        spec = agent_pi.build_launch_spec(
+            "/bin/pi", _cfg(), None, False, str(tmp_path), cloud_services=["vertex"]
+        )
+
+    assert spec.command == [
+        "/bin/pi",
+        "--extension",
+        str(agent_dir / ".arkai" / "google-vertex-anthropic.js"),
+        "--models",
+        "google-vertex/*,google-vertex-anthropic/*",
+    ]
+    assert spec.environment["PI_CODING_AGENT_DIR"] == str(agent_dir)
+    assert spec.environment["ARKAI_PI_PACKAGE_JSON"] == str(package_json)
+    models = json.loads((agent_dir / "models.json").read_text())
+    vertex_models = models["providers"]["google-vertex-anthropic"]["models"]
+    assert [model["id"] for model in vertex_models] == [
+        "claude-haiku-4-5@20251001",
+        "claude-sonnet-5@default",
+    ]
+    assert all(model["api"] == "anthropic-messages" for model in vertex_models)
+    assert (agent_dir / ".arkai" / "google-vertex-anthropic.js").is_file()
+
+
+def test_pi_vertex_catalog_merge_preserves_existing_models(tmp_path: Path) -> None:
+    """Refreshing the Vertex catalog preserves existing Pi model configuration."""
+    agent_dir = tmp_path / "pi-agent"
+    agent_dir.mkdir()
+    existing = {
+        "$schema": "custom-schema",
+        "providers": {
+            "custom": {"models": [{"id": "custom-model"}]},
+            "google-vertex-anthropic": {
+                "api": "anthropic-messages",
+                "models": [{"id": "existing-vertex-anthropic-model"}],
+            },
+        },
+        "other": "keep-me",
+    }
+    models_path = agent_dir / "models.json"
+    models_path.write_text(json.dumps(existing))
+
+    catalog_models = [
+        {"id": "claude-opus-5@default", "name": "Claude Opus 5", "api": "anthropic-messages"},
+        {"id": "claude-sonnet-5@default", "name": "Claude Sonnet 5", "api": "anthropic-messages"},
+    ]
+    agent_pi._merge_vertex_anthropic_models(agent_dir, catalog_models)
+    agent_pi._merge_vertex_anthropic_models(agent_dir, catalog_models)
+
+    updated = json.loads(models_path.read_text())
+    assert updated["$schema"] == "custom-schema"
+    assert updated["other"] == "keep-me"
+    assert updated["providers"]["custom"] == existing["providers"]["custom"]
+    vertex_models = updated["providers"]["google-vertex-anthropic"]["models"]
+    assert [model["id"] for model in vertex_models] == [
+        "existing-vertex-anthropic-model",
+        "claude-opus-5@default",
+        "claude-sonnet-5@default",
+    ]
+
+
+def test_pi_vertex_sandbox_mounts_provider_runtime(tmp_path: Path, monkeypatch) -> None:
+    """The sandbox mounts Pi's provider dependencies and Vertex ADC for extension calls."""
+    agent_dir = tmp_path / "pi-agent"
+    package_json = tmp_path / "pi-package" / "package.json"
+    package_json.parent.mkdir()
+    package_json.write_text('{"name":"@earendil-works/pi-coding-agent"}')
+    credentials = tmp_path / "adc.json"
+    credentials.write_text("{}")
+    monkeypatch.setattr(agent_pi, "get_global_agent_dir", lambda: agent_dir)
+    monkeypatch.setattr(agent_pi, "_find_pi_package_json", lambda _: str(package_json))
+    monkeypatch.setattr(agent_pi, "_resolve_node_path", lambda: "/runtime/bin/node")
+    monkeypatch.setattr(agent_pi, "get_runtime_volumes", lambda *_: [])
+    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", str(credentials))
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "us-east5")
+    response = MagicMock()
+    response.json.return_value = {
+        "google-vertex-anthropic": {
+            "models": {
+                "claude-haiku-4-5@20251001": {
+                    "id": "claude-haiku-4-5@20251001",
+                    "name": "Claude Haiku 4.5",
+                    "reasoning": True,
+                    "modalities": {"input": ["text"]},
+                    "limit": {"context": 200000, "output": 64000},
+                    "cost": {"input": 1, "output": 5},
+                }
+            }
+        }
+    }
+    with (
+        patch("arkai.wtmcp.is_wtmcp_running", return_value=False),
+        patch.object(agent_pi.requests, "get", return_value=response),
+        patch.object(agent, "_build_sandbox_cmd", return_value=["arapuca", "run", "--"]) as build,
+    ):
+        spec = agent_pi.build_launch_spec(
+            "/bin/pi", _cfg(), None, True, str(tmp_path), cloud_services=["vertex"]
+        )
+
+    assert f"{package_json.parent}:ro" in build.call_args.args[5]
+    assert f"{credentials}:ro" in build.call_args.args[5]
+    assert build.call_args.args[6]["ARKAI_PI_PACKAGE_JSON"] == str(package_json)
+    for path in spec.cleanup_paths:
+        path.unlink(missing_ok=True)
+
+
 def test_pi_cloud_sandbox_mounts_global_agent_data_and_allows_openai_hosts(
     tmp_path: Path, monkeypatch
 ) -> None:

@@ -40,6 +40,9 @@ arkai = "arkai.cli:main"
 [tool.setuptools]
 packages = ["arkai"]
 
+[tool.setuptools.package-data]
+arkai = ["pi_vertex_anthropic.js"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
