@@ -11,6 +11,51 @@ from pathlib import Path
 
 import yaml
 
+_VERTEX_ENV_VARS = (
+    "GOOGLE_CLOUD_API_KEY",
+    "GOOGLE_CLOUD_PROJECT",
+    "GCLOUD_PROJECT",
+    "GOOGLE_CLOUD_LOCATION",
+    "GOOGLE_VERTEX_PROJECT",
+    "GOOGLE_VERTEX_LOCATION",
+    "VERTEX_LOCATION",
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "CLOUDSDK_CONFIG",
+)
+
+
+def vertex_sandbox_settings(
+    volumes: list[str] | None = None, environment: dict[str, str] | None = None
+) -> tuple[list[str], dict[str, str]]:
+    """Prepare Google Vertex settings and ADC credentials for a sandboxed agent."""
+    sandbox_volumes = list(volumes or [])
+    sandbox_environment = dict(environment or {})
+    for name in _VERTEX_ENV_VARS:
+        value = sandbox_environment.get(name, os.environ.get(name))
+        if value is not None:
+            sandbox_environment[name] = value
+
+    credentials = sandbox_environment.get("GOOGLE_APPLICATION_CREDENTIALS")
+    if credentials:
+        credentials_path = Path(credentials).expanduser().resolve()
+        if credentials_path.is_file():
+            sandbox_environment["GOOGLE_APPLICATION_CREDENTIALS"] = str(credentials_path)
+            volume = f"{credentials_path}:ro"
+            if volume not in sandbox_volumes:
+                sandbox_volumes.append(volume)
+    else:
+        credentials_path = (
+            Path.home() / ".config" / "gcloud" / "application_default_credentials.json"
+        )
+        if credentials_path.is_file():
+            credentials_path = credentials_path.resolve()
+            sandbox_environment["GOOGLE_APPLICATION_CREDENTIALS"] = str(credentials_path)
+            volume = f"{credentials_path}:ro"
+            if volume not in sandbox_volumes:
+                sandbox_volumes.append(volume)
+
+    return sandbox_volumes, sandbox_environment
+
 
 def _key_from_data(data: object) -> str | None:
     if isinstance(data, dict):

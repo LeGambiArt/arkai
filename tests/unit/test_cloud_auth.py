@@ -11,6 +11,36 @@ import yaml
 from arkai import cloud_auth
 
 
+def test_vertex_sandbox_settings_mounts_explicit_adc_credentials(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Vertex sandbox settings pass Google variables and mount ADC credentials read-only."""
+    credentials = tmp_path / "service-account.json"
+    credentials.write_text("{}")
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
+    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", str(credentials))
+
+    volumes, environment = cloud_auth.vertex_sandbox_settings(["/extra:ro"], {})
+
+    assert volumes == ["/extra:ro", f"{credentials}:ro"]
+    assert environment["GOOGLE_CLOUD_PROJECT"] == "test-project"
+    assert environment["GOOGLE_APPLICATION_CREDENTIALS"] == str(credentials)
+
+
+def test_vertex_sandbox_settings_preserves_cli_auth_overrides(tmp_path: Path, monkeypatch) -> None:
+    """Explicit sandbox environment values take precedence over the host environment."""
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "host-project")
+    monkeypatch.delenv("GOOGLE_APPLICATION_CREDENTIALS", raising=False)
+    monkeypatch.setattr(cloud_auth.Path, "home", lambda: tmp_path)
+
+    volumes, environment = cloud_auth.vertex_sandbox_settings(
+        environment={"GOOGLE_CLOUD_PROJECT": "sandbox-project"}
+    )
+
+    assert volumes == []
+    assert environment["GOOGLE_CLOUD_PROJECT"] == "sandbox-project"
+
+
 def test_environment_key_is_persisted_for_pi_sandbox_runs(tmp_path: Path, monkeypatch) -> None:
     """A host environment key is imported into Pi's global auth instead of passed through."""
     monkeypatch.setenv("OPENAI_API_KEY", "from-environment")

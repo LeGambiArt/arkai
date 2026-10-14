@@ -117,9 +117,9 @@ def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
         nargs="+",
         action="extend",
         type=str.lower,
-        choices=("openai",),
+        choices=("openai", "vertex"),
         metavar="SERVICE",
-        help="Use cloud AI services instead of the local inference engine (OpenCode/Pi/OMP)",
+        help="Use a cloud AI provider instead of the local inference engine (OpenCode/Pi/OMP)",
     )
     agent_start_parser.add_argument(
         "-b", "--backend", help="Override inference backend from config"
@@ -170,6 +170,16 @@ class AgentLaunchSpec:
     command: list[str]
     environment: dict[str, str]
     cleanup_paths: list[Path] = field(default_factory=list)
+
+
+def _cloud_provider(cloud_services: list[str] | None) -> str | None:
+    """Return the single selected cloud provider, if any."""
+    providers = list(dict.fromkeys(service.lower() for service in cloud_services or []))
+    if len(providers) > 1:
+        raise RuntimeError("Only one --cloud provider can be selected at a time")
+    if providers and providers[0] not in {"openai", "vertex"}:
+        raise RuntimeError(f"Unsupported cloud service: {providers[0]}")
+    return providers[0] if providers else None
 
 
 def run_launch_spec(spec: AgentLaunchSpec, capture_stdout: bool = False) -> str | None:
@@ -260,9 +270,11 @@ def _agent_context(
     cfg = config.load_config()
 
     cloud_services = list(dict.fromkeys(service.lower() for service in cloud_services or []))
-    unsupported_clouds = sorted(set(cloud_services) - {"openai"})
+    unsupported_clouds = sorted(set(cloud_services) - {"openai", "vertex"})
     if unsupported_clouds:
         raise RuntimeError(f"Unsupported cloud service(s): {', '.join(unsupported_clouds)}")
+    if len(set(cloud_services)) > 1:
+        raise RuntimeError("Only one --cloud provider can be selected at a time")
     use_cloud = bool(cloud_services)
     if use_cloud and agent_name not in {"opencode", "pi", "omp"}:
         raise RuntimeError("--cloud currently supports only the opencode, pi, and omp agents")

@@ -413,6 +413,9 @@ arkai agent start [-a AGENT] [-m MODEL] [options]
 arkai agent start -a pi --cloud openai
 arkai agent start -a omp --cloud openai
 arkai agent start -a opencode --cloud openai
+arkai agent start -a pi --cloud vertex
+arkai agent start -a omp --cloud vertex
+arkai agent start -a opencode --cloud vertex
 ```
 
 **Supported agents:** `opencode`, `crush`, `claude`, `pi`, `omp`
@@ -423,7 +426,7 @@ arkai agent start -a opencode --cloud openai
 |------|-------------|
 | `-a/--agent AGENT` | Override agent from config |
 | `-m/--model MODEL` | Override model from config |
-| `--cloud SERVICE [SERVICE ...]` | Use cloud AI services instead of local inference (currently `openai`; OpenCode, Pi, and OMP) |
+| `--cloud SERVICE` | Use a cloud AI provider instead of local inference (`openai` or `vertex`; OpenCode, Pi, and OMP) |
 | `--no-mcp` | Skip wtmcp entirely |
 | `--no-sandbox` | Skip sandbox for this run |
 | `-s/--sandbox PROFILE` | Use a specific sandbox profile for this run |
@@ -444,10 +447,21 @@ or OpenCode's global `auth.json`). In Pi, choose an OpenAI model with `/model`
 and press `Ctrl+S` in the picker to save it as the default for future launches;
 OMP uses its configured default model, and OpenCode uses its normal model
 selection and settings.
+With `--cloud vertex`, authenticate with Google Application Default Credentials
+(`gcloud auth application-default login`) or set `GOOGLE_APPLICATION_CREDENTIALS`,
+and configure `GOOGLE_CLOUD_PROJECT` plus `GOOGLE_CLOUD_LOCATION` (or the
+`GOOGLE_VERTEX_PROJECT` and `GOOGLE_VERTEX_LOCATION` aliases) as needed. Pi and
+OMP select their native Vertex providers; OpenCode uses the Vertex model
+selected in its normal model settings. Pi registers a separate `google-vertex-anthropic`
+provider and refreshes its Claude model catalog from Models.dev daily, so Haiku,
+Sonnet, Opus, and newer catalog entries are available in `/model`; existing Pi
+models are preserved, and a cached catalog is used when refresh fails. Sandboxed
+runs mount an ADC credential file read-only when one is available and permit
+Vertex AI and OAuth endpoints.
 The `-m/--model` option cannot be combined with `--cloud`; configure the cloud
 model in the agent's global settings instead. Pi and OMP use their global agent
-directories in the sandbox; OpenCode receives its API key through the sandbox
-environment. On Linux, the network deny rule remains enabled with OpenAI HTTPS
+directories in the sandbox; OpenCode's OpenAI API key is passed through the sandbox
+environment. On Linux, the network deny rule remains enabled with provider HTTPS
 endpoints allowlisted; macOS uses Arapuca's baseline profile. Use `--no-sandbox`
 to run without those boundaries.
 

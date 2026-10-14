@@ -261,8 +261,21 @@ def test_agent_cli_accepts_multiple_case_insensitive_cloud_services() -> None:
     assert args.cloud == ["openai", "openai"]
 
 
+def test_agent_cli_accepts_vertex_cloud_provider() -> None:
+    """The start command accepts Vertex as a cloud provider."""
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    agent.ingest_cli_options(subparsers)
+
+    args = parser.parse_args(["agent", "start", "--cloud", "Vertex"])
+
+    assert args.cloud == ["vertex"]
+
+
 def test_agent_cli_rejects_unknown_cloud_service() -> None:
-    """Only currently supported cloud providers are accepted by the CLI parser."""
+    """Only supported cloud providers are accepted by the CLI parser."""
     import argparse
 
     parser = argparse.ArgumentParser()
@@ -275,6 +288,23 @@ def test_agent_cli_rejects_unknown_cloud_service() -> None:
         assert error.code == 2
     else:
         raise AssertionError("Expected an unknown cloud provider to be rejected")
+
+
+def test_cloud_agent_rejects_multiple_distinct_providers() -> None:
+    """A launch can select only one provider for its agent session."""
+    cfg = {
+        "agent": {"name": "pi", "path": "/agent", "mcp": False},
+        "inference": {},
+        "sandbox": {"disable": True},
+    }
+    with patch.object(agent.config, "load_config", return_value=cfg):
+        try:
+            with agent._agent_context("pi", cloud_services=["openai", "vertex"]):
+                pass
+        except RuntimeError as error:
+            assert "Only one --cloud provider" in str(error)
+        else:
+            raise AssertionError("Expected multiple cloud providers to be rejected")
 
 
 def test_agent_prompt_passes_backend_override_to_context() -> None:
