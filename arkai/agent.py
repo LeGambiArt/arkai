@@ -373,8 +373,9 @@ def _agent_context(
             _sync_running_inference_backend(cfg, port)
 
         if use_mcp:
-            # may raise RuntimeError
             wtmcp_port, wtmcp_started = _start_wtmcp_server(cfg)
+            if wtmcp_port is None:
+                use_mcp = False
 
         ctx = AgentContext(
             cfg=cfg,
@@ -545,7 +546,7 @@ def _sync_running_inference_backend(cfg: dict, port: int | None = None) -> None:
         cfg.setdefault("inference", {})["backend"] = backend
 
 
-def _start_wtmcp_server(cfg: dict) -> tuple[int, bool]:
+def _start_wtmcp_server(cfg: dict) -> tuple[int | None, bool]:
     """Start wtmcp server and return port. Assumes inference server is running."""
     from arkai import wtmcp
 
@@ -557,8 +558,10 @@ def _start_wtmcp_server(cfg: dict) -> tuple[int, bool]:
             wtmcp.cmd_wtmcp_start(port=wtmcp_port)
             wtmcp_started = True
         except RuntimeError as e:
-            utils.error(str(e), 1)
-            sys.exit(1)
+            if str(e).startswith("wtmcp binary not found"):
+                utils.warn("wtmcp binary not found; starting agent without MCP.")
+                return None, False
+            raise
 
     return wtmcp_port, wtmcp_started
 
