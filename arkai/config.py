@@ -49,7 +49,7 @@ DEFAULTS = {
     },
 }
 
-VALID_AGENTS = {"opencode", "crush", "claude", "pi", "omp"}
+VALID_AGENTS = {"opencode", "crush", "claude", "codex", "pi", "omp"}
 MODEL_SETTINGS = {
     "temperature",
     "top_p",

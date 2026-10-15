@@ -6,7 +6,15 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from arkai import agent, agent_claude, agent_crush, agent_omp, agent_opencode, agent_pi
+from arkai import (
+    agent,
+    agent_claude,
+    agent_codex,
+    agent_crush,
+    agent_omp,
+    agent_opencode,
+    agent_pi,
+)
 
 
 def _cfg() -> dict:
@@ -199,6 +207,83 @@ def test_run_launch_spec_cleans_up_when_popen_fails(tmp_path: Path) -> None:
 
     assert error.value.code == 3
     assert not temporary.exists()
+
+
+def test_codex_builds_a_temporary_local_profile_without_touching_user_config(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Codex local config uses a unique profile and preserves its base config."""
+    codex_home = tmp_path / "codex"
+    codex_home.mkdir()
+    base_config = codex_home / "config.toml"
+    base_config.write_text('approval_policy = "on-request"\n')
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    spec = agent_codex.build_launch_spec("/bin/codex", _cfg(), 8124, False, None)
+
+    profile_path = spec.cleanup_paths[0]
+    profile_name = profile_path.name.removesuffix(".config.toml")
+    profile = profile_path.read_text()
+    assert profile_name.startswith("arkai-")
+    assert 'model = "model"' in profile
+    assert 'model_provider = "arkai"' in profile
+    assert 'web_search = "disabled"' in profile
+    assert 'sandbox_mode = "danger-full-access"' not in profile
+    assert 'base_url = "http://127.0.0.1:8123/v1"' in profile
+    assert 'wire_api = "responses"' in profile
+    assert "requires_openai_auth = false" in profile
+    assert "[mcp_servers.wtmcp]" in profile
+    assert 'url = "http://127.0.0.1:8124/mcp"' in profile
+    assert base_config.read_text() == 'approval_policy = "on-request"\n'
+    assert spec.command == ["/bin/codex", "--no-daemon", "--profile", profile_name]
+    assert spec.environment["CODEX_HOME"] == str(codex_home.resolve())
+
+    profile_path.unlink()
+
+
+def test_codex_prompt_uses_exec_with_a_unique_profile(tmp_path: Path, monkeypatch) -> None:
+    """Codex prompt mode uses exec while interactive mode leaves the TUI command default."""
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+
+    spec = agent_codex.build_launch_spec(
+        "/bin/codex", _cfg(), None, False, None, prompt="summarize this project"
+    )
+
+    profile_name = spec.cleanup_paths[0].name.removesuffix(".config.toml")
+    assert spec.command == [
+        "/bin/codex",
+        "--no-daemon",
+        "--profile",
+        profile_name,
+        "exec",
+        "summarize this project",
+    ]
+    spec.cleanup_paths[0].unlink()
+
+
+def test_codex_sandbox_mounts_codex_home_and_allocates_tty(tmp_path: Path, monkeypatch) -> None:
+    """Codex's profile and auth home are visible to the sandboxed CLI."""
+    codex_home = tmp_path / "codex"
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    with patch.object(agent, "_build_sandbox_cmd", return_value=["arapuca", "run", "--"]) as build:
+        spec = agent_codex.build_launch_spec("/bin/codex", _cfg(), 8124, True, str(tmp_path))
+
+    profile_name = spec.cleanup_paths[0].name.removesuffix(".config.toml")
+    assert build.call_args.args[2] == str(codex_home.resolve())
+    assert build.call_args.kwargs["tty"] is True
+    assert build.call_args.args[6]["CODEX_HOME"] == str(codex_home.resolve())
+    assert 'sandbox_mode = "danger-full-access"' in spec.cleanup_paths[0].read_text()
+    assert spec.command == [
+        "arapuca",
+        "run",
+        "--",
+        "/bin/codex",
+        "--no-daemon",
+        "--profile",
+        profile_name,
+    ]
+    spec.cleanup_paths[0].unlink()
 
 
 def test_opencode_interactive_sandbox_requests_tty(tmp_path: Path, monkeypatch) -> None:

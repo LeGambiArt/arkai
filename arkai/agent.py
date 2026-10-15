@@ -324,6 +324,7 @@ def _agent_context(
         "opencode": "arkai.agent_opencode",
         "crush": "arkai.agent_crush",
         "claude": "arkai.agent_claude",
+        "codex": "arkai.agent_codex",
         "pi": "arkai.agent_pi",
         "omp": "arkai.agent_omp",
     }
@@ -707,6 +708,7 @@ def _dispatch_agent(
         "opencode": "arkai.agent_opencode",
         "crush": "arkai.agent_crush",
         "claude": "arkai.agent_claude",
+        "codex": "arkai.agent_codex",
         "pi": "arkai.agent_pi",
         "omp": "arkai.agent_omp",
     }

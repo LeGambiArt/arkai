@@ -51,7 +51,7 @@ When you run `arkai agent start`, it starts `llama-server` (loading your GGUF mo
 - `mlx-lm` (`pip install -e '.[mlx]'`, optional; Apple Silicon)
 - `wtmcp` — for MCP tool integration with agents *(optional)*
 - `arapuca` — for sandboxed agent execution *(optional)*
-- Agent binary: `opencode`, `crush`, `claude`, `pi`, or `omp` — at least one required
+- Agent binary: `opencode`, `crush`, `claude`, `codex`, `pi`, or `omp` — at least one required
 
 
 ## Installation
@@ -98,6 +98,22 @@ Start agent:
 ```
 arkai agent start -m hf:ibm-granite/granite-4.1-8b-GGUF -a opencode
 ```
+
+Codex CLI is also supported in interactive and prompt modes:
+
+```bash
+arkai agent start -a codex
+arkai agent prompt -a codex "Summarize this project"
+```
+
+Arkai creates a unique temporary Codex profile that points at its local inference
+server and removes the profile after the run. Codex continues to use its normal
+`CODEX_HOME`, authentication, and base config; Arkai does not edit `config.toml`.
+Codex requires the selected inference backend to support the Responses API at
+`/v1/responses`; this has been verified with the Splash backend.
+When Arkai's Arapuca sandbox is enabled, Codex's nested command sandbox is set to
+`danger-full-access` to avoid nesting two sandboxes; Arapuca remains the outer
+boundary. With `--no-sandbox`, Codex retains its normal sandbox configuration.
 
 Install pi.dev and its standard MCP, web-access, and subagent packages:
 
@@ -406,7 +422,8 @@ Terminates the server and cleans up PID and state files.
 `arkai agent start` is the primary command. It auto-starts the inference server if
 not already running, starts wtmcp (unless `--no-mcp`), launches the agent, and
 tears down services on exit. Crush, OpenCode, Pi, and OMP can use a cloud provider
-instead of the local inference server with `--cloud`.
+instead of the local inference server with `--cloud`. Codex uses Arkai's local
+inference profile by default.
 
 ```bash
 arkai agent start [-a AGENT] [-m MODEL] [options]
@@ -420,7 +437,7 @@ arkai agent start -a omp --cloud vertex
 arkai agent start -a opencode --cloud vertex
 ```
 
-**Supported agents:** `opencode`, `crush`, `claude`, `pi`, `omp`
+**Supported agents:** `opencode`, `crush`, `claude`, `codex`, `pi`, `omp`
 
 ### Flags
 
@@ -634,7 +651,7 @@ arkai config validate --file PATH  # validate a specific file
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `agent.name` | string | `opencode` | Agent to use: `opencode`, `crush`, `claude`, `pi`, or `omp` |
+| `agent.name` | string | `opencode` | Agent to use: `opencode`, `crush`, `claude`, `codex`, `pi`, or `omp` |
 | `agent.path` | string | *(agent name)* | Custom path to agent binary |
 | `agent.mcp` | bool | `true` | Whether to start wtmcp for agent sessions |
 

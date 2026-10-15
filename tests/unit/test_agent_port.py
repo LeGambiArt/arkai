@@ -2,7 +2,7 @@
 
 from unittest.mock import patch
 
-from arkai import agent, agent_crush, agent_omp, agent_opencode, agent_pi, inference
+from arkai import agent, agent_codex, agent_crush, agent_omp, agent_opencode, agent_pi, inference
 
 
 def test_agent_start_passes_explicit_port_to_inference() -> None:
@@ -500,3 +500,12 @@ def test_crush_agent_dispatches_cloud_services() -> None:
 
     assert launcher.call_args.kwargs["cloud_services"] == ["openai"]
     assert launcher.call_args.kwargs["cloud_model"] == "openai/model-v2"
+
+
+def test_codex_agent_dispatches_to_codex_launcher() -> None:
+    """The shared dispatcher sends Codex runs to the profile-aware launcher."""
+    ctx = agent.AgentContext(agent_name="codex", agent_path="/bin/codex")
+    with patch.object(agent_codex, "start", return_value=None) as launcher:
+        agent._dispatch_agent(ctx)
+
+    assert launcher.call_args.args[0] == "/bin/codex"
