@@ -271,7 +271,7 @@ def _load_embedding_model(model_name: str | None = None):
         Loaded SentenceTransformer model instance
     """
     try:
-        from sentence_transformers import SentenceTransformer
+        from sentence_transformers import SentenceTransformer  # ty: ignore[unresolved-import]
     except ImportError:
         raise RuntimeError(
             "sentence-transformers is required for embeddings. "

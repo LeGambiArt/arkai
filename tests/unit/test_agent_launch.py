@@ -241,6 +241,69 @@ def test_codex_builds_a_temporary_local_profile_without_touching_user_config(
     profile_path.unlink()
 
 
+def test_codex_openai_cloud_uses_codex_openai_provider(tmp_path: Path, monkeypatch) -> None:
+    """Codex OpenAI cloud runs select its built-in OpenAI provider and model."""
+    codex_home = tmp_path / "codex"
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    spec = agent_codex.build_launch_spec(
+        "/bin/codex",
+        _cfg(),
+        None,
+        False,
+        None,
+        cloud_services=["openai"],
+        cloud_model="gpt-5.6-codex",
+    )
+
+    profile = spec.cleanup_paths[0].read_text()
+    assert 'model = "gpt-5.6-codex"' in profile
+    assert 'model_provider = "openai"' in profile
+    assert 'openai_base_url = "https://api.openai.com/v1"' in profile
+    assert 'model_provider = "arkai"' not in profile
+    assert "[model_providers.arkai]" not in profile
+    assert "127.0.0.1" not in profile
+    assert spec.command[0:3] == ["/bin/codex", "--no-daemon", "--profile"]
+    spec.cleanup_paths[0].unlink()
+
+
+def test_codex_openai_cloud_sandbox_allows_provider_and_passes_api_key(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Cloud Codex runs pass an available API key and allow OpenAI HTTPS access."""
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    monkeypatch.setenv("OPENAI_API_KEY", "secret")
+    monkeypatch.setattr(agent_codex.platform, "system", lambda: "Linux")
+    certificate = tmp_path / "ca.pem"
+    certificate.write_text("test ca")
+    monkeypatch.setenv("SSL_CERT_FILE", str(certificate))
+    with patch.object(agent, "_build_sandbox_cmd", return_value=["arapuca", "run", "--"]) as build:
+        spec = agent_codex.build_launch_spec(
+            "/bin/codex", _cfg(), None, True, str(tmp_path), cloud_services=["openai"]
+        )
+
+    assert build.call_args.kwargs["allow_inference"] is False
+    assert build.call_args.kwargs["extra_hosts"] == ["*.openai.com:443", "api.openai.com:443"]
+    assert build.call_args.args[6]["CODEX_API_KEY"] == "secret"
+    assert build.call_args.args[6]["SSL_CERT_FILE"] == str(certificate.resolve())
+    assert f"{certificate.resolve()}:ro" in build.call_args.args[5]
+    spec.cleanup_paths[0].unlink()
+
+
+def test_codex_openai_cloud_allows_mac_keychain_in_arakuca(tmp_path: Path, monkeypatch) -> None:
+    """macOS Codex cloud profiles may access Keychain certificate/auth data."""
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    monkeypatch.setattr(agent_codex.platform, "system", lambda: "Darwin")
+
+    with patch.object(agent, "_build_sandbox_cmd", return_value=["arapuca", "run", "--"]) as build:
+        spec = agent_codex.build_launch_spec(
+            "/bin/codex", _cfg(), None, True, str(tmp_path), cloud_services=["openai"]
+        )
+
+    assert build.call_args.kwargs["allow_keychain"] is True
+    spec.cleanup_paths[0].unlink()
+
+
 def test_codex_prompt_uses_exec_with_a_unique_profile(tmp_path: Path, monkeypatch) -> None:
     """Codex prompt mode uses exec while interactive mode leaves the TUI command default."""
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
@@ -258,6 +321,20 @@ def test_codex_prompt_uses_exec_with_a_unique_profile(tmp_path: Path, monkeypatc
         "exec",
         "summarize this project",
     ]
+    spec.cleanup_paths[0].unlink()
+
+
+def test_codex_prompt_allows_a_non_git_working_directory(tmp_path: Path, monkeypatch) -> None:
+    """Non-repository prompt runs opt out of Codex's Git repository startup check."""
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    workdir = tmp_path / "scratch"
+    workdir.mkdir()
+
+    spec = agent_codex.build_launch_spec(
+        "/bin/codex", _cfg(), None, False, str(workdir), prompt="answer briefly"
+    )
+
+    assert "--skip-git-repo-check" in spec.command
     spec.cleanup_paths[0].unlink()
 
 

@@ -52,6 +52,7 @@ def exec_cmd(args: dict | None = None) -> None:
                 args.output,  # ty: ignore[unresolved-attribute]
                 args.port,  # ty: ignore[unresolved-attribute]
                 args.backend,  # ty: ignore[unresolved-attribute]
+                getattr(args, "cloud", None),
             )
         case "install":
             cmd_agent_install(args.agent_name)  # ty: ignore[unresolved-attribute]
@@ -119,9 +120,7 @@ def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
         type=str.lower,
         choices=("openai", "vertex"),
         metavar="SERVICE",
-        help=(
-            "Use a cloud AI provider instead of the local inference engine (Crush/OpenCode/Pi/OMP)"
-        ),
+        help="Use a cloud AI provider instead of local inference (Codex supports OpenAI only)",
     )
     agent_start_parser.add_argument(
         "-b", "--backend", help="Override inference backend from config"
@@ -130,6 +129,15 @@ def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
         "prompt", help="Run agent with a prompt non-interactively"
     )
     _add_agent_common_args(agent_prompt_parser)
+    agent_prompt_parser.add_argument(
+        "--cloud",
+        nargs=1,
+        action="extend",
+        type=str.lower,
+        choices=("openai", "vertex"),
+        metavar="SERVICE",
+        help="Use a cloud AI provider instead of local inference (Codex supports OpenAI only)",
+    )
     agent_prompt_parser.add_argument(
         "-b", "--backend", help="Override inference backend from config"
     )
@@ -262,7 +270,7 @@ def _agent_context(
         sandbox_volume: List of volumes to mount in the sandbox
         sandbox_environment: Dict of environment variables to set in the sandbox
         backend: Override inference backend from config
-        cloud_services: Cloud provider names; supported by Crush, OpenCode, Pi, and OMP.
+        cloud_services: Cloud provider names; Codex supports OpenAI only.
 
     Yields:
         AgentContext with all infrastructure ready
@@ -279,9 +287,14 @@ def _agent_context(
     if len(set(cloud_services)) > 1:
         raise RuntimeError("Only one --cloud provider can be selected at a time")
     use_cloud = bool(cloud_services)
-    if use_cloud and agent_name not in {"crush", "opencode", "pi", "omp"}:
+    if agent_name == "codex" and "vertex" in cloud_services:
         raise RuntimeError(
-            "--cloud currently supports only the crush, opencode, pi, and omp agents"
+            "Codex does not support --cloud vertex: Codex requires the Responses API, "
+            "which Vertex's OpenAI-compatible endpoint does not currently provide"
+        )
+    if use_cloud and agent_name not in {"crush", "opencode", "pi", "omp", "codex"}:
+        raise RuntimeError(
+            "--cloud currently supports only the crush, opencode, pi, omp, and codex agents"
         )
     cfg["agent"]["name"] = agent_name
     if model and not use_cloud:
@@ -581,6 +594,7 @@ def _build_sandbox_cmd(
     allow_inference: bool = True,
     extra_hosts: list[str] | None = None,
     allow_network_listeners: bool = False,
+    allow_keychain: bool = False,
 ) -> list:
     """Build the arapuca sandbox command prefix for an agent invocation.
 
@@ -595,6 +609,7 @@ def _build_sandbox_cmd(
         allow_inference: Allow the configured local inference host on Linux.
         extra_hosts: Additional HTTPS destinations permitted by the sandbox.
         allow_network_listeners: Allow sandboxed processes to bind network listeners.
+        allow_keychain: Allow access to macOS Keychain and preserve the user's HOME.
 
     Returns:
         List of command tokens ending with "--", ready for the agent command to be appended
@@ -653,6 +668,8 @@ def _build_sandbox_cmd(
         cmd += ["--allow-host", host]
     if allow_network_listeners:
         cmd += ["--allow-network-listeners"]
+    if allow_keychain:
+        cmd += ["--allow-keychain"]
 
     if platform.system() == "Linux":
         if allow_inference:
@@ -727,7 +744,7 @@ def _dispatch_agent(
             prompt,
             capture_stdout,
         )
-        if ctx.agent_name in {"crush", "opencode", "pi", "omp"}:
+        if ctx.agent_name in {"crush", "opencode", "pi", "omp", "codex"}:
             return module.start(
                 *launch_args,
                 cloud_services=ctx.cloud_services,
@@ -838,6 +855,7 @@ def cmd_agent_prompt(
     output_file: str | None = None,
     port: int | None = None,
     backend: str | None = None,
+    cloud_services: list[str] | None = None,
 ) -> None:
     """Run agent non-interactively with a prompt.
 
@@ -895,6 +913,7 @@ def cmd_agent_prompt(
         sandbox_volume=sandbox_volume,
         sandbox_environment=sandbox_environment,
         backend=backend,
+        cloud_services=cloud_services,
     ) as ctx:
         result = _dispatch_agent(ctx, prompt, capture_stdout=True)
 

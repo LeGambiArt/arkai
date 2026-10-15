@@ -435,6 +435,8 @@ arkai agent start -a crush --cloud vertex
 arkai agent start -a pi --cloud vertex
 arkai agent start -a omp --cloud vertex
 arkai agent start -a opencode --cloud vertex
+arkai agent start -a codex --cloud openai
+arkai agent prompt -a codex --cloud openai "Summarize this project"
 ```
 
 **Supported agents:** `opencode`, `crush`, `claude`, `codex`, `pi`, `omp`
@@ -445,7 +447,7 @@ arkai agent start -a opencode --cloud vertex
 |------|-------------|
 | `-a/--agent AGENT` | Override agent from config |
 | `-m/--model MODEL` | Override the local model, or select the cloud agent model with `--cloud` |
-| `--cloud SERVICE` | Use a cloud AI provider instead of local inference (`openai` or `vertex`; Crush, OpenCode, Pi, and OMP) |
+| `--cloud SERVICE` | Use a cloud AI provider instead of local inference (`openai` or `vertex`; Codex supports OpenAI only) |
 | `--no-mcp` | Skip wtmcp entirely |
 | `--no-sandbox` | Skip sandbox for this run |
 | `-s/--sandbox PROFILE` | Use a specific sandbox profile for this run |
@@ -466,7 +468,14 @@ Crush's global `crush.json`, or OpenCode's global `auth.json`). In Crush, choose
 an OpenAI model with `Ctrl+L`. In Pi, choose an OpenAI model with `/model`
 and press `Ctrl+S` in the picker to save it as the default for future launches;
 OMP uses its configured default model, and OpenCode uses its normal model
-selection and settings.
+selection and settings. Codex uses its existing Codex login/API-key setup under
+`CODEX_HOME` and selects its built-in OpenAI provider. An exported `CODEX_API_KEY`
+or `OPENAI_API_KEY` is forwarded to Codex for API-key authentication. Arkai points
+Codex's OpenAI provider at `https://api.openai.com/v1`, overriding any `openai_base_url`
+in the base Codex config for this run. For Codex,
+`-m/--model` takes the model ID Codex expects (for example, `gpt-5.6-codex`), without
+an `openai/` prefix. On macOS, sandboxed Codex OpenAI runs also request Arapuca's
+`--allow-keychain` so the CLI can access system Keychain certificate trust.
 With `--cloud vertex`, authenticate with Google Application Default Credentials
 (`gcloud auth application-default login`) or set `GOOGLE_APPLICATION_CREDENTIALS`,
 and configure the project and location. Crush reads `VERTEXAI_PROJECT` and
@@ -478,6 +487,9 @@ Sonnet, Opus, and newer catalog entries are available in `/model`; existing Pi
 models are preserved, and a cached catalog is used when refresh fails. Sandboxed
 runs mount an ADC credential file read-only when one is available and permit
 Vertex AI and OAuth endpoints.
+Codex currently does not support `--cloud vertex`: Codex custom providers require
+the Responses API, while Vertex's OpenAI-compatible endpoint currently exposes
+Chat Completions instead.
 With `--cloud`, `-m/--model` selects the model for the cloud provider and is passed
 to the agent without being treated as a local inference model (it will not be
 downloaded). Use the model identifier expected by the selected agent/provider.

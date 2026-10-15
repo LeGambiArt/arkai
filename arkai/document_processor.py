@@ -204,7 +204,7 @@ class PDFProcessor(DocumentProcessor):
     def process(self, file_path: str, chunk_size: int, overlap: int) -> list[Chunk]:
         """Parse and chunk PDF document."""
         try:
-            import fitz
+            import fitz  # Optional pymupdf extra.
         except ImportError:
             raise ImportError(
                 "pymupdf is required for PDF processing. Install with: pip install pymupdf"

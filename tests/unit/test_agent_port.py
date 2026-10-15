@@ -372,6 +372,22 @@ def test_agent_cli_accepts_vertex_cloud_provider() -> None:
     assert args.cloud == ["vertex"]
 
 
+def test_agent_prompt_cli_accepts_codex_openai_cloud() -> None:
+    """Codex prompt mode accepts the supported OpenAI cloud provider."""
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    agent.ingest_cli_options(subparsers)
+
+    args = parser.parse_args(
+        ["agent", "prompt", "--agent", "codex", "--cloud", "OpenAI", "Do the task"]
+    )
+
+    assert args.cloud == ["openai"]
+    assert args.prompt_text == ["Do the task"]
+
+
 def test_agent_cli_rejects_unknown_cloud_service() -> None:
     """Only supported cloud providers are accepted by the CLI parser."""
     import argparse
@@ -405,6 +421,23 @@ def test_cloud_agent_rejects_multiple_distinct_providers() -> None:
             raise AssertionError("Expected multiple cloud providers to be rejected")
 
 
+def test_codex_rejects_vertex_cloud_provider() -> None:
+    """Codex fails clearly for Vertex because it only accepts Responses providers."""
+    cfg = {
+        "agent": {"name": "codex", "path": "/codex", "mcp": False},
+        "inference": {},
+        "sandbox": {"disable": True},
+    }
+    with patch.object(agent.config, "load_config", return_value=cfg):
+        try:
+            with agent._agent_context("codex", cloud_services=["vertex"]):
+                pass
+        except RuntimeError as error:
+            assert "Codex does not support --cloud vertex" in str(error)
+        else:
+            raise AssertionError("Expected Codex to reject Vertex cloud mode")
+
+
 def test_agent_prompt_passes_backend_override_to_context() -> None:
     """The prompt command forwards its backend override to agent setup."""
     context = agent.AgentContext(agent_name="opencode")
@@ -417,6 +450,48 @@ def test_agent_prompt_passes_backend_override_to_context() -> None:
         agent.cmd_agent_prompt(["hello"], backend="mlx")
 
     assert agent_context.call_args.kwargs["backend"] == "mlx"
+
+
+def test_codex_cloud_context_skips_local_inference() -> None:
+    """Codex OpenAI cloud runs bypass Arkai's local inference server."""
+    cfg = {
+        "agent": {"name": "codex", "path": "/codex", "mcp": False},
+        "inference": {"model": "model.gguf"},
+        "sandbox": {"disable": True},
+    }
+
+    with (
+        patch.object(agent.config, "load_config", return_value=cfg),
+        patch.object(agent.config, "validate_config", return_value=True) as validate,
+        patch.object(agent.inference, "is_inference_running") as running,
+        patch.object(agent.inference, "cmd_inference_start") as start,
+        patch.object(agent.inference, "get_inference_model") as get_model,
+        patch.object(agent.utils, "resolve_binary", return_value="/codex"),
+    ):
+        with agent._agent_context(
+            "codex", model="gpt-5.6-codex", cloud_services=["openai"]
+        ) as context:
+            assert context.cloud_services == ["openai"]
+            assert context.cloud_model == "gpt-5.6-codex"
+
+    validate.assert_called_once_with(cfg, require_model=False, warn_missing_model=False)
+    running.assert_not_called()
+    start.assert_not_called()
+    get_model.assert_not_called()
+
+
+def test_agent_prompt_passes_cloud_provider_to_context() -> None:
+    """Prompt mode forwards the chosen cloud provider through setup."""
+    context = agent.AgentContext(agent_name="codex")
+    with (
+        patch.object(agent, "_select_agent_name", return_value="codex"),
+        patch.object(agent, "_agent_context") as agent_context,
+        patch.object(agent, "_dispatch_agent", return_value="answer"),
+    ):
+        agent_context.return_value.__enter__.return_value = context
+        agent.cmd_agent_prompt(["hello"], cloud_services=["openai"])
+
+    assert agent_context.call_args.kwargs["cloud_services"] == ["openai"]
 
 
 def test_agent_context_passes_backend_override_to_inference() -> None:
@@ -500,6 +575,21 @@ def test_crush_agent_dispatches_cloud_services() -> None:
 
     assert launcher.call_args.kwargs["cloud_services"] == ["openai"]
     assert launcher.call_args.kwargs["cloud_model"] == "openai/model-v2"
+
+
+def test_codex_agent_dispatches_openai_cloud_provider() -> None:
+    """Codex receives cloud selection and model from the shared dispatcher."""
+    ctx = agent.AgentContext(
+        agent_name="codex",
+        agent_path="/bin/codex",
+        cloud_services=["openai"],
+        cloud_model="gpt-5.6-codex",
+    )
+    with patch.object(agent_codex, "start", return_value=None) as launcher:
+        agent._dispatch_agent(ctx)
+
+    assert launcher.call_args.kwargs["cloud_services"] == ["openai"]
+    assert launcher.call_args.kwargs["cloud_model"] == "gpt-5.6-codex"
 
 
 def test_codex_agent_dispatches_to_codex_launcher() -> None:
