@@ -2,7 +2,7 @@
 
 from unittest.mock import patch
 
-from arkai import agent, agent_omp, agent_opencode, agent_pi, inference
+from arkai import agent, agent_crush, agent_omp, agent_opencode, agent_pi, inference
 
 
 def test_agent_start_passes_explicit_port_to_inference() -> None:
@@ -284,6 +284,37 @@ def test_cloud_agent_skips_local_inference_for_opencode() -> None:
     stop.assert_not_called()
 
 
+def test_cloud_agent_skips_local_inference_for_crush() -> None:
+    """Crush cloud sessions do not require the local inference service."""
+    cfg = {
+        "agent": {"name": "crush", "path": "/agent", "mcp": False},
+        "inference": {"port": 8081},
+        "sandbox": {"disable": True},
+    }
+
+    with (
+        patch.object(agent.config, "load_config", return_value=cfg),
+        patch.object(agent.config, "validate_config", return_value=True) as validate,
+        patch.object(agent.inference, "is_inference_running") as running,
+        patch.object(agent.inference, "cmd_inference_start") as start,
+        patch.object(agent.inference, "get_inference_model") as get_model,
+        patch.object(agent.inference, "cmd_inference_stop") as stop,
+        patch.object(agent.utils, "resolve_binary", return_value="/agent"),
+    ):
+        with agent._agent_context(
+            "crush", model="openai/gpt-cloud", cloud_services=["OPENAI"]
+        ) as context:
+            assert context.cloud_services == ["openai"]
+            assert context.cloud_model == "openai/gpt-cloud"
+            assert "model" not in cfg["inference"]
+
+    validate.assert_called_once_with(cfg, require_model=False, warn_missing_model=False)
+    running.assert_not_called()
+    start.assert_not_called()
+    get_model.assert_not_called()
+    stop.assert_not_called()
+
+
 def test_agent_cli_registers_port_for_start_and_prompt() -> None:
     """Both agent subcommands accept the inference port option."""
     import argparse
@@ -450,6 +481,21 @@ def test_opencode_agent_dispatches_cloud_services() -> None:
         cloud_model="openai/model-v2",
     )
     with patch.object(agent_opencode, "start", return_value=None) as launcher:
+        agent._dispatch_agent(ctx)
+
+    assert launcher.call_args.kwargs["cloud_services"] == ["openai"]
+    assert launcher.call_args.kwargs["cloud_model"] == "openai/model-v2"
+
+
+def test_crush_agent_dispatches_cloud_services() -> None:
+    """Crush receives selected cloud services and model from the shared dispatcher."""
+    ctx = agent.AgentContext(
+        agent_name="crush",
+        agent_path="/bin/crush",
+        cloud_services=["openai"],
+        cloud_model="openai/model-v2",
+    )
+    with patch.object(agent_crush, "start", return_value=None) as launcher:
         agent._dispatch_agent(ctx)
 
     assert launcher.call_args.kwargs["cloud_services"] == ["openai"]

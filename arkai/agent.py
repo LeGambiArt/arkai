@@ -119,7 +119,9 @@ def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
         type=str.lower,
         choices=("openai", "vertex"),
         metavar="SERVICE",
-        help="Use a cloud AI provider instead of the local inference engine (OpenCode/Pi/OMP)",
+        help=(
+            "Use a cloud AI provider instead of the local inference engine (Crush/OpenCode/Pi/OMP)"
+        ),
     )
     agent_start_parser.add_argument(
         "-b", "--backend", help="Override inference backend from config"
@@ -260,7 +262,7 @@ def _agent_context(
         sandbox_volume: List of volumes to mount in the sandbox
         sandbox_environment: Dict of environment variables to set in the sandbox
         backend: Override inference backend from config
-        cloud_services: Cloud provider names; supported by OpenCode, Pi, and OMP.
+        cloud_services: Cloud provider names; supported by Crush, OpenCode, Pi, and OMP.
 
     Yields:
         AgentContext with all infrastructure ready
@@ -277,8 +279,10 @@ def _agent_context(
     if len(set(cloud_services)) > 1:
         raise RuntimeError("Only one --cloud provider can be selected at a time")
     use_cloud = bool(cloud_services)
-    if use_cloud and agent_name not in {"opencode", "pi", "omp"}:
-        raise RuntimeError("--cloud currently supports only the opencode, pi, and omp agents")
+    if use_cloud and agent_name not in {"crush", "opencode", "pi", "omp"}:
+        raise RuntimeError(
+            "--cloud currently supports only the crush, opencode, pi, and omp agents"
+        )
     cfg["agent"]["name"] = agent_name
     if model and not use_cloud:
         cfg["inference"]["model"] = model
@@ -721,7 +725,7 @@ def _dispatch_agent(
             prompt,
             capture_stdout,
         )
-        if ctx.agent_name in {"opencode", "pi", "omp"}:
+        if ctx.agent_name in {"crush", "opencode", "pi", "omp"}:
             return module.start(
                 *launch_args,
                 cloud_services=ctx.cloud_services,

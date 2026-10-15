@@ -41,6 +41,69 @@ def test_vertex_sandbox_settings_preserves_cli_auth_overrides(tmp_path: Path, mo
     assert environment["GOOGLE_CLOUD_PROJECT"] == "sandbox-project"
 
 
+def test_crush_vertex_sandbox_settings_maps_google_variables_and_mounts_adc(
+    tmp_path: Path, monkeypatch
+) -> None:
+    credentials = tmp_path / "adc.json"
+    credentials.write_text("{}")
+    for name in (
+        "VERTEXAI_PROJECT",
+        "VERTEXAI_LOCATION",
+        "GOOGLE_VERTEX_PROJECT",
+        "GOOGLE_VERTEX_LOCATION",
+        "GCLOUD_PROJECT",
+        "VERTEX_LOCATION",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", str(credentials))
+
+    volumes, environment = cloud_auth.crush_vertex_sandbox_settings()
+
+    assert volumes == [f"{credentials}:ro"]
+    assert environment["VERTEXAI_PROJECT"] == "test-project"
+    assert environment["VERTEXAI_LOCATION"] == "us-central1"
+    assert environment["GOOGLE_APPLICATION_CREDENTIALS"] == str(credentials)
+
+
+def test_crush_reads_saved_openai_key(tmp_path: Path, monkeypatch) -> None:
+    config_home = tmp_path / "config"
+    config_file = config_home / "crush" / "crush.json"
+    config_file.parent.mkdir(parents=True)
+    config_file.write_text(json.dumps({"providers": {"openai": {"api_key": "saved"}}}))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    with patch.object(cloud_auth.getpass, "getpass") as prompt:
+        key = cloud_auth.ensure_openai_api_key("crush", tmp_path / "session")
+
+    assert key == "saved"
+    prompt.assert_not_called()
+
+
+def test_crush_saves_openai_key_in_global_config(tmp_path: Path, monkeypatch) -> None:
+    config_home = tmp_path / "config"
+    config_file = config_home / "crush" / "crush.json"
+    config_file.parent.mkdir(parents=True)
+    config_file.write_text(json.dumps({"options": {"debug": True}}))
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(config_home))
+    monkeypatch.setenv("OPENAI_API_KEY", "crush-secret")
+
+    key = cloud_auth.ensure_openai_api_key("crush", tmp_path / "session")
+
+    assert key == "crush-secret"
+    saved = json.loads(config_file.read_text())
+    assert saved["options"] == {"debug": True}
+    assert saved["providers"]["openai"] == {
+        "id": "openai",
+        "name": "OpenAI",
+        "type": "openai",
+        "api_key": "crush-secret",
+    }
+    assert config_file.stat().st_mode & 0o777 == 0o600
+
+
 def test_environment_key_is_persisted_for_pi_sandbox_runs(tmp_path: Path, monkeypatch) -> None:
     """A host environment key is imported into Pi's global auth instead of passed through."""
     monkeypatch.setenv("OPENAI_API_KEY", "from-environment")

@@ -405,14 +405,16 @@ Terminates the server and cleans up PID and state files.
 
 `arkai agent start` is the primary command. It auto-starts the inference server if
 not already running, starts wtmcp (unless `--no-mcp`), launches the agent, and
-tears down services on exit. OpenCode, Pi, and OMP can use a cloud provider instead
-of the local inference server with `--cloud`.
+tears down services on exit. Crush, OpenCode, Pi, and OMP can use a cloud provider
+instead of the local inference server with `--cloud`.
 
 ```bash
 arkai agent start [-a AGENT] [-m MODEL] [options]
+arkai agent start -a crush --cloud openai
 arkai agent start -a pi --cloud openai
 arkai agent start -a omp --cloud openai
 arkai agent start -a opencode --cloud openai
+arkai agent start -a crush --cloud vertex
 arkai agent start -a pi --cloud vertex
 arkai agent start -a omp --cloud vertex
 arkai agent start -a opencode --cloud vertex
@@ -426,7 +428,7 @@ arkai agent start -a opencode --cloud vertex
 |------|-------------|
 | `-a/--agent AGENT` | Override agent from config |
 | `-m/--model MODEL` | Override the local model, or select the cloud agent model with `--cloud` |
-| `--cloud SERVICE` | Use a cloud AI provider instead of local inference (`openai` or `vertex`; OpenCode, Pi, and OMP) |
+| `--cloud SERVICE` | Use a cloud AI provider instead of local inference (`openai` or `vertex`; Crush, OpenCode, Pi, and OMP) |
 | `--no-mcp` | Skip wtmcp entirely |
 | `--no-sandbox` | Skip sandbox for this run |
 | `-s/--sandbox PROFILE` | Use a specific sandbox profile for this run |
@@ -439,20 +441,21 @@ arkai agent start -a opencode --cloud vertex
 > Note: use `hf:org/model` as the model value to load a HuggingFace model.
 
 With `--cloud openai`, Arkai does not start or require the local inference
-engine. Pi and OMP use their user-level agent configuration and saved OpenAI
-credentials; OpenCode uses its configured model and native OpenAI provider. If
-no OpenAI key is configured there or in `OPENAI_API_KEY`, Arkai prompts for it
+engine. Crush, Pi, and OMP use their native OpenAI providers; OpenCode uses its
+native OpenAI provider. If no OpenAI key is configured there or in
+`OPENAI_API_KEY`, Arkai prompts for it
 once and saves it for future launches (Pi `auth.json`, OMP's global `models.yml`,
-or OpenCode's global `auth.json`). In Pi, choose an OpenAI model with `/model`
+Crush's global `crush.json`, or OpenCode's global `auth.json`). In Crush, choose
+an OpenAI model with `Ctrl+L`. In Pi, choose an OpenAI model with `/model`
 and press `Ctrl+S` in the picker to save it as the default for future launches;
 OMP uses its configured default model, and OpenCode uses its normal model
 selection and settings.
 With `--cloud vertex`, authenticate with Google Application Default Credentials
 (`gcloud auth application-default login`) or set `GOOGLE_APPLICATION_CREDENTIALS`,
-and configure `GOOGLE_CLOUD_PROJECT` plus `GOOGLE_CLOUD_LOCATION` (or the
-`GOOGLE_VERTEX_PROJECT` and `GOOGLE_VERTEX_LOCATION` aliases) as needed. Pi and
-OMP select their native Vertex providers; OpenCode uses the Vertex model
-selected in its normal model settings. Pi registers a separate `google-vertex-anthropic`
+and configure the project and location. Crush reads `VERTEXAI_PROJECT` and
+`VERTEXAI_LOCATION`; Arkai maps the Google Cloud and Google Vertex aliases to
+those names. Pi and OMP select their native Vertex providers, and OpenCode uses
+the Vertex model selected in its normal model settings. Pi registers a separate `google-vertex-anthropic`
 provider and refreshes its Claude model catalog from Models.dev daily, so Haiku,
 Sonnet, Opus, and newer catalog entries are available in `/model`; existing Pi
 models are preserved, and a cached catalog is used when refresh fails. Sandboxed
@@ -461,6 +464,8 @@ Vertex AI and OAuth endpoints.
 With `--cloud`, `-m/--model` selects the model for the cloud provider and is passed
 to the agent without being treated as a local inference model (it will not be
 downloaded). Use the model identifier expected by the selected agent/provider.
+For Crush, use `openai/MODEL` or `vertexai/MODEL`; without `-m`, choose a model
+in the Crush picker with `Ctrl+L`.
 Without `-m`, the agent's normal cloud model setting remains in effect. Pi and OMP
 use their global agent directories in the sandbox; OpenCode's OpenAI API key is
 passed through the sandbox environment. On Linux, the network deny rule remains

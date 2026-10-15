@@ -278,6 +278,162 @@ def test_crush_selects_and_registers_local_inference(tmp_path: Path, monkeypatch
             path.unlink(missing_ok=True)
 
 
+def test_crush_openai_cloud_uses_native_provider_and_key(tmp_path: Path, monkeypatch) -> None:
+    """Crush cloud runs configure OpenAI without registering local inference."""
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    monkeypatch.setattr(agent_crush, "_get_config_dir", lambda: sessions)
+
+    spec = agent_crush.build_launch_spec(
+        "/agent",
+        _cfg(),
+        None,
+        False,
+        None,
+        cloud_services=["openai"],
+        cloud_api_key="secret",
+    )
+
+    crush_config_dir = Path(spec.environment["CRUSH_GLOBAL_CONFIG"])
+    config_data = json.loads((crush_config_dir / "crush.json").read_text())
+    assert config_data["providers"]["openai"] == {
+        "id": "openai",
+        "name": "OpenAI",
+        "type": "openai",
+        "api_key": "$OPENAI_API_KEY",
+    }
+    assert "local-llm" not in config_data["providers"]
+    assert "models" not in config_data
+    assert spec.environment["OPENAI_API_KEY"] == "secret"
+    assert spec.command == ["/agent"]
+    for path in spec.cleanup_paths:
+        if path.is_dir():
+            path.rmdir()
+        else:
+            path.unlink(missing_ok=True)
+
+
+def test_crush_cloud_model_selects_large_and_small_models(tmp_path: Path, monkeypatch) -> None:
+    """A cloud -m override becomes Crush's large and small model selection."""
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    monkeypatch.setattr(agent_crush, "_get_config_dir", lambda: sessions)
+
+    spec = agent_crush.build_launch_spec(
+        "/agent",
+        _cfg(),
+        None,
+        False,
+        None,
+        cloud_services=["openai"],
+        cloud_api_key="secret",
+        cloud_model="openai/gpt-cloud",
+    )
+
+    crush_config_dir = Path(spec.environment["CRUSH_GLOBAL_CONFIG"])
+    config_data = json.loads((crush_config_dir / "crush.json").read_text())
+    assert config_data["models"] == {
+        "large": {"model": "gpt-cloud", "provider": "openai"},
+        "small": {"model": "gpt-cloud", "provider": "openai"},
+    }
+    assert config_data["providers"]["openai"]["models"] == [
+        {"id": "gpt-cloud", "name": "gpt-cloud"}
+    ]
+    for path in spec.cleanup_paths:
+        if path.is_dir():
+            path.rmdir()
+        else:
+            path.unlink(missing_ok=True)
+
+
+def test_crush_vertex_cloud_passes_adc_and_provider_environment(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Crush Vertex runs get native provider config, Vertex env aliases, and ADC mount."""
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    credentials = tmp_path / "adc.json"
+    credentials.write_text("{}")
+    monkeypatch.setattr(agent_crush, "_get_config_dir", lambda: sessions)
+    monkeypatch.setattr(agent_crush.platform, "system", lambda: "Linux")
+    for name in (
+        "VERTEXAI_PROJECT",
+        "VERTEXAI_LOCATION",
+        "GOOGLE_VERTEX_PROJECT",
+        "GOOGLE_VERTEX_LOCATION",
+        "GCLOUD_PROJECT",
+        "VERTEX_LOCATION",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    monkeypatch.setenv("GOOGLE_CLOUD_PROJECT", "test-project")
+    monkeypatch.setenv("GOOGLE_CLOUD_LOCATION", "us-central1")
+    monkeypatch.setenv("GOOGLE_APPLICATION_CREDENTIALS", str(credentials))
+    with patch.object(agent, "_build_sandbox_cmd", return_value=["arapuca", "run", "--"]) as build:
+        spec = agent_crush.build_launch_spec(
+            "/agent", _cfg(), None, True, str(tmp_path), cloud_services=["vertex"]
+        )
+
+    crush_config_dir = Path(
+        next(arg for arg in spec.command if arg.startswith("CRUSH_GLOBAL_CONFIG=")).split("=", 1)[1]
+    )
+    config_data = json.loads((crush_config_dir / "crush.json").read_text())
+    assert config_data["providers"]["vertexai"]["type"] == "google-vertex"
+    assert config_data["models"] == {
+        "large": {"model": "claude-sonnet-4-5@20250929", "provider": "vertexai"},
+        "small": {"model": "claude-haiku-4-5@20251001", "provider": "vertexai"},
+    }
+    assert {model["id"] for model in config_data["providers"]["vertexai"]["models"]} == {
+        "claude-sonnet-4-5@20250929",
+        "claude-haiku-4-5@20251001",
+    }
+    assert build.call_args.args[5] == [f"{credentials}:ro"]
+    sandbox_env = build.call_args.args[6]
+    assert sandbox_env["VERTEXAI_PROJECT"] == "test-project"
+    assert sandbox_env["VERTEXAI_LOCATION"] == "us-central1"
+    assert sandbox_env["GOOGLE_APPLICATION_CREDENTIALS"] == str(credentials)
+    assert build.call_args.kwargs["allow_inference"] is False
+    assert build.call_args.kwargs["extra_hosts"] == [
+        "*-aiplatform.googleapis.com:443",
+        "aiplatform.googleapis.com:443",
+        "oauth2.googleapis.com:443",
+    ]
+    for path in spec.cleanup_paths:
+        if path.is_dir():
+            path.rmdir()
+        else:
+            path.unlink(missing_ok=True)
+
+
+def test_crush_normalizes_vertex_claude_api_date_model_ids(tmp_path: Path, monkeypatch) -> None:
+    """Anthropic-style dated model IDs are converted to Vertex's `@` syntax."""
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    monkeypatch.setattr(agent_crush, "_get_config_dir", lambda: sessions)
+
+    spec = agent_crush.build_launch_spec(
+        "/agent",
+        _cfg(),
+        None,
+        False,
+        None,
+        cloud_services=["vertex"],
+        cloud_model="vertexai/claude-haiku-4-5-20251001",
+    )
+
+    config_data = json.loads(
+        (Path(spec.environment["CRUSH_GLOBAL_CONFIG"]) / "crush.json").read_text()
+    )
+    assert config_data["models"] == {
+        "large": {"model": "claude-haiku-4-5@20251001", "provider": "vertexai"},
+        "small": {"model": "claude-haiku-4-5@20251001", "provider": "vertexai"},
+    }
+    for path in spec.cleanup_paths:
+        if path.is_dir():
+            path.rmdir()
+        else:
+            path.unlink(missing_ok=True)
+
+
 def test_crush_prompt_runs_quietly(tmp_path: Path, monkeypatch) -> None:
     """Non-interactive Crush runs suppress their status output."""
     sessions = tmp_path / "sessions"

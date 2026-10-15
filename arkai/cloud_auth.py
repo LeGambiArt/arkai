@@ -18,6 +18,8 @@ _VERTEX_ENV_VARS = (
     "GOOGLE_CLOUD_LOCATION",
     "GOOGLE_VERTEX_PROJECT",
     "GOOGLE_VERTEX_LOCATION",
+    "VERTEXAI_PROJECT",
+    "VERTEXAI_LOCATION",
     "VERTEX_LOCATION",
     "GOOGLE_APPLICATION_CREDENTIALS",
     "CLOUDSDK_CONFIG",
@@ -57,6 +59,44 @@ def vertex_sandbox_settings(
     return sandbox_volumes, sandbox_environment
 
 
+def crush_vertex_sandbox_settings(
+    volumes: list[str] | None = None, environment: dict[str, str] | None = None
+) -> tuple[list[str], dict[str, str]]:
+    """Prepare Vertex ADC settings using Crush's expected variable names."""
+    sandbox_volumes, sandbox_environment = vertex_sandbox_settings(volumes, environment)
+    project = next(
+        (
+            sandbox_environment[name]
+            for name in (
+                "VERTEXAI_PROJECT",
+                "GOOGLE_VERTEX_PROJECT",
+                "GOOGLE_CLOUD_PROJECT",
+                "GCLOUD_PROJECT",
+            )
+            if sandbox_environment.get(name)
+        ),
+        None,
+    )
+    location = next(
+        (
+            sandbox_environment[name]
+            for name in (
+                "VERTEXAI_LOCATION",
+                "GOOGLE_VERTEX_LOCATION",
+                "GOOGLE_CLOUD_LOCATION",
+                "VERTEX_LOCATION",
+            )
+            if sandbox_environment.get(name)
+        ),
+        None,
+    )
+    if project:
+        sandbox_environment["VERTEXAI_PROJECT"] = project
+    if location:
+        sandbox_environment["VERTEXAI_LOCATION"] = location
+    return sandbox_volumes, sandbox_environment
+
+
 def _key_from_data(data: object) -> str | None:
     if isinstance(data, dict):
         key = data.get("key")
@@ -83,6 +123,13 @@ def _get_opencode_auth_path() -> Path:
     return root / "opencode" / "auth.json"
 
 
+def _get_crush_config_path() -> Path:
+    """Return Crush's global JSON config path used for saved provider credentials."""
+    xdg_config_home = os.environ.get("XDG_CONFIG_HOME")
+    root = Path(xdg_config_home) if xdg_config_home else Path.home() / ".config"
+    return root / "crush" / "crush.json"
+
+
 def _read_opencode_key() -> str | None:
     """Read an OpenAI API key saved by OpenCode's own auth flow."""
     try:
@@ -92,6 +139,29 @@ def _read_opencode_key() -> str | None:
     if not isinstance(auth_data, dict):
         return None
     return _key_from_data(auth_data.get("openai"))
+
+
+def _read_crush_key() -> str | None:
+    """Read an OpenAI API key from Crush's global provider configuration."""
+    try:
+        config_data = json.loads(_get_crush_config_path().read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(config_data, dict):
+        return None
+    providers = config_data.get("providers")
+    provider = providers.get("openai") if isinstance(providers, dict) else None
+    key = provider.get("api_key") if isinstance(provider, dict) else None
+    if not isinstance(key, str) or not key.strip():
+        return None
+    key = key.strip()
+    if key.startswith("${") and key.endswith("}"):
+        return os.environ.get(key[2:-1], "").strip() or None
+    if key.startswith("$"):
+        return os.environ.get(key[1:], "").strip() or None
+    if key.isidentifier() and key.upper() == key:
+        return os.environ.get(key, "").strip() or None
+    return key
 
 
 def _read_omp_key(agent_dir: Path) -> str | None:
@@ -217,6 +287,51 @@ def _write_opencode_key(key: str) -> None:
         raise
 
 
+def _write_crush_key(key: str) -> None:
+    """Persist an OpenAI API key in Crush's global provider configuration."""
+    config_path = _get_crush_config_path()
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        config_data = json.loads(config_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        config_data = {}
+    except json.JSONDecodeError as error:
+        raise RuntimeError(
+            f"Could not save OpenAI credentials: {config_path} is invalid JSON"
+        ) from error
+    if not isinstance(config_data, dict):
+        raise RuntimeError(
+            f"Could not save OpenAI credentials: {config_path} must contain an object"
+        )
+    providers = config_data.setdefault("providers", {})
+    if not isinstance(providers, dict):
+        raise RuntimeError(
+            f"Could not save OpenAI credentials: {config_path} has invalid providers"
+        )
+    provider = providers.setdefault("openai", {})
+    if not isinstance(provider, dict):
+        raise RuntimeError(
+            f"Could not save OpenAI credentials: {config_path} has invalid OpenAI config"
+        )
+    provider.setdefault("id", "openai")
+    provider.setdefault("name", "OpenAI")
+    provider.setdefault("type", "openai")
+    provider["api_key"] = key
+
+    descriptor, filename = tempfile.mkstemp(prefix=".arkai-crush-auth-", dir=config_path.parent)
+    temporary_path = Path(filename)
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as config_file:
+            json.dump(config_data, config_file, indent=2)
+            config_file.write("\n")
+        os.replace(temporary_path, config_path)
+        config_path.chmod(0o600)
+    except Exception:
+        temporary_path.unlink(missing_ok=True)
+        raise
+
+
 def _read_omp_cli_key(agent_path: str, agent_dir: Path) -> str | None:
     """Ask OMP's credential resolver about database, config, and dotenv credentials."""
     environment = os.environ.copy()
@@ -281,6 +396,11 @@ def ensure_openai_api_key(agent_name: str, agent_dir: Path, agent_path: str | No
         if global_key:
             return global_key
         key = os.environ.get("OPENAI_API_KEY", "").strip()
+    elif agent_name == "crush":
+        global_key = _read_crush_key()
+        if global_key:
+            return global_key
+        key = os.environ.get("OPENAI_API_KEY", "").strip()
     elif agent_name == "pi":
         global_key = _read_pi_key(agent_dir)
         if global_key:
@@ -305,7 +425,7 @@ def ensure_openai_api_key(agent_name: str, agent_dir: Path, agent_path: str | No
             else:
                 return configured_key
         key = os.environ.get("OPENAI_API_KEY", "").strip()
-    else:
+    elif agent_name == "omp":
         global_key = _read_omp_key(agent_dir)
         if global_key:
             return global_key
@@ -340,6 +460,8 @@ def ensure_openai_api_key(agent_name: str, agent_dir: Path, agent_path: str | No
 
     if agent_name == "opencode":
         _write_opencode_key(key)
+    elif agent_name == "crush":
+        _write_crush_key(key)
     elif agent_name == "pi":
         _write_pi_key(agent_dir, key)
     else:
