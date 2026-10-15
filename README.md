@@ -425,7 +425,7 @@ arkai agent start -a opencode --cloud vertex
 | Flag | Description |
 |------|-------------|
 | `-a/--agent AGENT` | Override agent from config |
-| `-m/--model MODEL` | Override model from config |
+| `-m/--model MODEL` | Override the local model, or select the cloud agent model with `--cloud` |
 | `--cloud SERVICE` | Use a cloud AI provider instead of local inference (`openai` or `vertex`; OpenCode, Pi, and OMP) |
 | `--no-mcp` | Skip wtmcp entirely |
 | `--no-sandbox` | Skip sandbox for this run |
@@ -458,12 +458,14 @@ Sonnet, Opus, and newer catalog entries are available in `/model`; existing Pi
 models are preserved, and a cached catalog is used when refresh fails. Sandboxed
 runs mount an ADC credential file read-only when one is available and permit
 Vertex AI and OAuth endpoints.
-The `-m/--model` option cannot be combined with `--cloud`; configure the cloud
-model in the agent's global settings instead. Pi and OMP use their global agent
-directories in the sandbox; OpenCode's OpenAI API key is passed through the sandbox
-environment. On Linux, the network deny rule remains enabled with provider HTTPS
-endpoints allowlisted; macOS uses Arapuca's baseline profile. Use `--no-sandbox`
-to run without those boundaries.
+With `--cloud`, `-m/--model` selects the model for the cloud provider and is passed
+to the agent without being treated as a local inference model (it will not be
+downloaded). Use the model identifier expected by the selected agent/provider.
+Without `-m`, the agent's normal cloud model setting remains in effect. Pi and OMP
+use their global agent directories in the sandbox; OpenCode's OpenAI API key is
+passed through the sandbox environment. On Linux, the network deny rule remains
+enabled with provider HTTPS endpoints allowlisted; macOS uses Arapuca's baseline
+profile. Use `--no-sandbox` to run without those boundaries.
 
 ### Lifecycle
 

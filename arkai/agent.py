@@ -161,6 +161,7 @@ class AgentContext:
     sandbox_volume: list | None = None
     sandbox_environment: dict | None = None
     cloud_services: list[str] = field(default_factory=list)
+    cloud_model: str | None = None
 
 
 @dataclass
@@ -278,13 +279,8 @@ def _agent_context(
     use_cloud = bool(cloud_services)
     if use_cloud and agent_name not in {"opencode", "pi", "omp"}:
         raise RuntimeError("--cloud currently supports only the opencode, pi, and omp agents")
-    if use_cloud and model is not None:
-        raise RuntimeError(
-            "--model cannot be used with --cloud; configure the model in the agent's global config"
-        )
-
     cfg["agent"]["name"] = agent_name
-    if model:
+    if model and not use_cloud:
         cfg["inference"]["model"] = model
     if port is not None:
         cfg["inference"]["port"] = port
@@ -390,6 +386,7 @@ def _agent_context(
             sandbox_volume=sandbox_volume,
             sandbox_environment=sandbox_environment,
             cloud_services=cloud_services,
+            cloud_model=model if use_cloud else None,
         )
 
         yield ctx  # may raise from execution
@@ -725,7 +722,11 @@ def _dispatch_agent(
             capture_stdout,
         )
         if ctx.agent_name in {"opencode", "pi", "omp"}:
-            return module.start(*launch_args, cloud_services=ctx.cloud_services)
+            return module.start(
+                *launch_args,
+                cloud_services=ctx.cloud_services,
+                cloud_model=ctx.cloud_model,
+            )
         return module.start(*launch_args)
     return None
 

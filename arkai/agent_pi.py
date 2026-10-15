@@ -500,6 +500,7 @@ def build_launch_spec(
     cli_environment: dict | None = None,
     prompt: str | None = None,
     cloud_services: list[str] | None = None,
+    cloud_model: str | None = None,
 ) -> AgentLaunchSpec:
     """Create Pi configuration and return its process launch specification."""
     from arkai import wtmcp
@@ -545,6 +546,8 @@ def build_launch_spec(
         if vertex_extension_path is not None:
             agent_args.extend(["--extension", str(vertex_extension_path)])
         agent_args.extend(["--models", model_patterns])
+        if cloud_model is not None:
+            agent_args.extend(["--model", cloud_model])
     else:
         from arkai.agent import _get_agent_model_id
 
@@ -642,6 +645,7 @@ def start(
     prompt: str | None = None,
     capture_stdout: bool = False,
     cloud_services: list[str] | None = None,
+    cloud_model: str | None = None,
 ) -> str | None:
     """Build and run Pi's launch specification."""
     if cloud_services and any(service.lower() == "openai" for service in cloud_services):
@@ -660,6 +664,7 @@ def start(
             cli_environment,
             prompt,
             cloud_services,
+            cloud_model,
         ),
         capture_stdout,
     )

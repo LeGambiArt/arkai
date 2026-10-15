@@ -68,6 +68,26 @@ def test_opencode_cloud_uses_native_openai_provider_and_api_key(
     config_path.unlink()
 
 
+def test_opencode_cloud_model_overrides_agent_model(tmp_path: Path, monkeypatch) -> None:
+    """A cloud model override is written to OpenCode config, not local inference config."""
+    sessions = tmp_path / "sessions"
+    monkeypatch.setattr(agent_opencode.os.path, "expanduser", lambda _: str(sessions))
+
+    spec = agent_opencode.build_launch_spec(
+        "/agent",
+        _cfg(),
+        None,
+        False,
+        None,
+        cloud_services=["openai"],
+        cloud_model="openai/cloud-only-model",
+    )
+
+    config_path = Path(spec.environment["OPENCODE_CONFIG"])
+    assert json.loads(config_path.read_text())["model"] == "openai/cloud-only-model"
+    config_path.unlink()
+
+
 def test_opencode_cloud_sandbox_allows_openai_only(tmp_path: Path, monkeypatch) -> None:
     """Cloud sandbox allows OpenAI endpoints but does not grant local inference access."""
     sessions = tmp_path / "sessions"
@@ -386,6 +406,29 @@ def test_pi_cloud_uses_global_auth_and_openai_provider(tmp_path: Path, monkeypat
     assert settings_file.read_text() == '{"defaultProvider":"openai","defaultModel":"gpt-model"}'
 
 
+def test_pi_cloud_model_override_is_passed_to_agent(tmp_path: Path, monkeypatch) -> None:
+    """Pi receives an explicit provider model without changing the local model config."""
+    monkeypatch.setattr(agent_pi, "get_global_agent_dir", lambda: tmp_path / "pi-agent")
+    with patch("arkai.wtmcp.is_wtmcp_running", return_value=False):
+        spec = agent_pi.build_launch_spec(
+            "/bin/pi",
+            _cfg(),
+            None,
+            False,
+            str(tmp_path),
+            cloud_services=["openai"],
+            cloud_model="openai/cloud-only-model",
+        )
+
+    assert spec.command == [
+        "/bin/pi",
+        "--models",
+        "openai/*",
+        "--model",
+        "openai/cloud-only-model",
+    ]
+
+
 def test_pi_vertex_cloud_registers_anthropic_catalog_and_scopes_picker(
     tmp_path: Path, monkeypatch
 ) -> None:
@@ -646,6 +689,24 @@ def test_omp_vertex_cloud_selects_google_vertex_provider(tmp_path: Path, monkeyp
 
     assert spec.command[spec.command.index("--provider") + 1] == "google-vertex"
     assert "--model" not in spec.command
+
+
+def test_omp_cloud_model_override_is_passed_to_agent(tmp_path: Path, monkeypatch) -> None:
+    """OMP receives the requested cloud model alongside its native provider selection."""
+    monkeypatch.setattr(agent_omp, "get_global_agent_dir", lambda: tmp_path / "omp-agent")
+
+    spec = agent_omp.build_launch_spec(
+        "/bin/omp",
+        _cfg(),
+        None,
+        False,
+        str(tmp_path),
+        cloud_services=["vertex"],
+        cloud_model="google-vertex/gemini-cloud-only",
+    )
+
+    assert spec.command[spec.command.index("--provider") + 1] == "google-vertex"
+    assert spec.command[spec.command.index("--model") + 1] == "google-vertex/gemini-cloud-only"
 
 
 def test_sandbox_mounts_read_write_paths_without_rw_suffix(tmp_path: Path, monkeypatch) -> None:

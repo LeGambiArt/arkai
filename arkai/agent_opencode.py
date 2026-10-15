@@ -66,6 +66,7 @@ def build_launch_spec(
     prompt: str | None = None,
     cloud_services: list[str] | None = None,
     cloud_api_key: str | None = None,
+    cloud_model: str | None = None,
 ) -> AgentLaunchSpec:
     """Create OpenCode configuration and return its process launch specification."""
     from arkai.agent import _build_sandbox_cmd, _get_agent_model_id, _get_model_name
@@ -77,6 +78,8 @@ def build_launch_spec(
     from arkai.agent import _cloud_provider
 
     cloud_provider = _cloud_provider(cloud_services)
+    if is_cloud and cloud_model is not None:
+        config_data["model"] = cloud_model
     if not is_cloud:
         inference_port = config.get_config_value(cfg, "inference.port", 8081)
         inference_backend = config.get_config_value(cfg, "inference.backend", "llama-cpp")
@@ -198,6 +201,7 @@ def start(
     prompt: str | None = None,
     capture_stdout: bool = False,
     cloud_services: list[str] | None = None,
+    cloud_model: str | None = None,
 ) -> str | None:
     """Build and run OpenCode's launch specification."""
     cloud_api_key = (
@@ -218,6 +222,7 @@ def start(
             prompt,
             cloud_services,
             cloud_api_key,
+            cloud_model,
         ),
         capture_stdout,
     )

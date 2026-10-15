@@ -145,6 +145,7 @@ def build_launch_spec(
     cli_environment: dict | None = None,
     prompt: str | None = None,
     cloud_services: list[str] | None = None,
+    cloud_model: str | None = None,
 ) -> AgentLaunchSpec:
     """Create OMP configuration and return its process launch specification."""
     from arkai.agent import _build_sandbox_cmd
@@ -235,6 +236,8 @@ def build_launch_spec(
     if is_cloud:
         provider_name = "google-vertex" if cloud_provider == "vertex" else "openai"
         command.extend(["--provider", provider_name])
+        if cloud_model is not None:
+            command.extend(["--model", cloud_model])
     else:
         from arkai.agent import _get_agent_model_id
 
@@ -258,6 +261,7 @@ def start(
     prompt: str | None = None,
     capture_stdout: bool = False,
     cloud_services: list[str] | None = None,
+    cloud_model: str | None = None,
 ) -> str | None:
     """Build and run OMP's launch specification."""
     if cloud_services and any(service.lower() == "openai" for service in cloud_services):
@@ -274,6 +278,7 @@ def start(
             cli_environment,
             prompt,
             cloud_services,
+            cloud_model,
         ),
         capture_stdout,
     )

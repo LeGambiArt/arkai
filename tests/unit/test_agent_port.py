@@ -240,8 +240,12 @@ def test_cloud_agent_skips_local_inference_engine() -> None:
         patch.object(agent.inference, "cmd_inference_stop") as stop,
         patch.object(agent.utils, "resolve_binary", return_value="/agent"),
     ):
-        with agent._agent_context("pi", cloud_services=["OPENAI"]) as context:
+        with agent._agent_context(
+            "pi", model="openai/cloud-only-model", cloud_services=["OPENAI"]
+        ) as context:
             assert context.cloud_services == ["openai"]
+            assert context.cloud_model == "openai/cloud-only-model"
+            assert "model" not in cfg["inference"]
 
     validate.assert_called_once_with(cfg, require_model=False, warn_missing_model=False)
     running.assert_not_called()
@@ -409,28 +413,44 @@ def test_agent_context_passes_backend_override_to_inference() -> None:
 
 def test_pi_agent_dispatches_to_pi_launcher() -> None:
     """Pi agent sessions are dispatched to the Pi launcher."""
-    ctx = agent.AgentContext(agent_name="pi", agent_path="/bin/pi", cloud_services=["openai"])
+    ctx = agent.AgentContext(
+        agent_name="pi",
+        agent_path="/bin/pi",
+        cloud_services=["openai"],
+        cloud_model="openai/model-v2",
+    )
     with patch.object(agent_pi, "start", return_value=None) as launcher:
         agent._dispatch_agent(ctx)
 
     assert launcher.call_args.kwargs["cloud_services"] == ["openai"]
+    assert launcher.call_args.kwargs["cloud_model"] == "openai/model-v2"
 
 
 def test_omp_agent_dispatches_to_omp_launcher() -> None:
     """OMP agent sessions are dispatched to the OMP launcher."""
-    ctx = agent.AgentContext(agent_name="omp", agent_path="/bin/omp", cloud_services=["openai"])
+    ctx = agent.AgentContext(
+        agent_name="omp",
+        agent_path="/bin/omp",
+        cloud_services=["openai"],
+        cloud_model="openai/model-v2",
+    )
     with patch.object(agent_omp, "start", return_value=None) as launcher:
         agent._dispatch_agent(ctx)
 
     assert launcher.call_args.kwargs["cloud_services"] == ["openai"]
+    assert launcher.call_args.kwargs["cloud_model"] == "openai/model-v2"
 
 
 def test_opencode_agent_dispatches_cloud_services() -> None:
     """OpenCode receives the selected cloud providers from the shared dispatcher."""
     ctx = agent.AgentContext(
-        agent_name="opencode", agent_path="/bin/opencode", cloud_services=["openai"]
+        agent_name="opencode",
+        agent_path="/bin/opencode",
+        cloud_services=["openai"],
+        cloud_model="openai/model-v2",
     )
     with patch.object(agent_opencode, "start", return_value=None) as launcher:
         agent._dispatch_agent(ctx)
 
     assert launcher.call_args.kwargs["cloud_services"] == ["openai"]
+    assert launcher.call_args.kwargs["cloud_model"] == "openai/model-v2"
