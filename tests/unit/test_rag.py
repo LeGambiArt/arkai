@@ -69,8 +69,8 @@ def test_ask_cli_dispatches_all_options() -> None:
 @pytest.fixture
 def rag_services():
     cfg = {
-        "rag": {"max_search_results": 10, "embedding_model": None},
-        "inference": {"port": 8081, "context_size": 8192},
+        "rag": {"max_search_results": 15, "embedding_model": None},
+        "inference": {"port": 8081, "context_size": 65536},
     }
     collection = MagicMock(status_code=200)
     collection.json.return_value = [{"id": "coll-id", "name": "manuals"}]
@@ -110,7 +110,7 @@ def test_ask_retrieves_and_sends_cited_context(rag_services, capsys) -> None:
     assert post.call_args_list[1].args[0] == "http://127.0.0.1:8081/v1/chat/completions"
     payload = post.call_args_list[1].kwargs["json"]
     assert payload["model"] == "running-model"
-    assert payload["max_tokens"] == 512
+    assert payload["max_tokens"] == 8192
     assert "untrusted" in payload["messages"][0]["content"]
     assert 'Source: "guide.pdf, page 3, chunk 0"' in payload["messages"][1]["content"]
     assert "What is the answer?" in payload["messages"][1]["content"]
@@ -130,12 +130,22 @@ def test_ask_uses_selected_inference_port(rag_services) -> None:
     assert post.call_args_list[1].args[0] == "http://127.0.0.1:9090/v1/chat/completions"
 
 
+def test_ask_uses_larger_default_retrieval_and_context_budgets(rag_services) -> None:
+    with patch.object(rag, "_build_context", wraps=rag._build_context) as build_context:
+        rag.cmd_rag_ask("manuals", "Question")
+
+    search_payload = rag_services[4].call_args_list[0].kwargs["json"]
+    assert rag.config.DEFAULTS["rag"]["max_search_results"] == 15
+    assert search_payload["n_results"] == 15
+    assert build_context.call_args.args[1] == 32768
+
+
 def test_ask_uses_running_default_instance_port(rag_services) -> None:
     with (
         patch.object(rag.inference, "is_inference_running", return_value=True),
         patch.object(rag.utils, "load_yaml", return_value={"port": 9091, "context_size": 1200}),
     ):
-        rag.cmd_rag_ask("manuals", "Question")
+        rag.cmd_rag_ask("manuals", "Question", max_output_tokens=512)
     assert rag_services[3].call_args_list[0].args[0] == "http://127.0.0.1:9091/v1/models"
     user_message = rag_services[4].call_args_list[1].kwargs["json"]["messages"][1]["content"]
     assert "[1] Source:" in user_message
@@ -148,13 +158,13 @@ def test_ask_disables_splash_reasoning_by_default(rag_services) -> None:
         patch.object(
             rag.utils,
             "load_yaml",
-            return_value={"port": 8081, "context_size": 8192, "backend": "splash"},
+            return_value={"port": 8081, "context_size": 65536, "backend": "splash"},
         ),
     ):
         rag.cmd_rag_ask("manuals", "Question")
     payload = rag_services[4].call_args_list[1].kwargs["json"]
     assert payload["reasoning_effort"] == "none"
-    assert payload["max_tokens"] == 512
+    assert payload["max_tokens"] == 8192
 
 
 def test_ask_can_override_splash_reasoning_and_output_budget(rag_services) -> None:
@@ -219,7 +229,7 @@ def test_ask_explains_reasoning_only_inference_response(rag_services) -> None:
             }
         ]
     }
-    with pytest.raises(RuntimeError, match="used all 512 output tokens on reasoning") as error:
+    with pytest.raises(RuntimeError, match="used all 8192 output tokens on reasoning") as error:
         rag.cmd_rag_ask("manuals", "Question")
     assert "--reasoning-effort none" in str(error.value)
     assert "private thinking" not in str(error.value)

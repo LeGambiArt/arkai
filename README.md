@@ -445,21 +445,23 @@ the answer is printed. Embedding-library progress and notices are hidden for
 it. Redirected output contains only the answer, sources, and any warnings.
 
 ```bash
-arkai rag ask manuals "What changed?" -k 5 --max-context-tokens 2048
+arkai rag ask manuals "What changed?" -k 20 --max-context-tokens 49152
 arkai rag ask manuals "What changed?" --inference-port 9090 --show-context
-arkai rag ask manuals "What changed?" --max-output-tokens 1024
+arkai rag ask manuals "What changed?" --max-output-tokens 16384
 arkai rag query manuals "What changed?"  # retrieval only; no generation
 ```
 
-`-k/--results` defaults to `rag.max_search_results` (10).
+`-k/--results` defaults to `rag.max_search_results` (15).
 `--max-context-tokens` limits the **estimated** size of the retrieved passages
-(default 4096, capped by the configured inference context window with room for
+(default 32768, capped by the configured inference context window with room for
 the question and answer). Token counting is an approximation, not a strict
 model-token guarantee. `--show-context` prints the exact passages sent to the
 model. By default the command connects to the configured inference port, or
 the port of Arkai's running default inference instance; it does not start or
 stop either server. Use `--inference-port` for a different running instance.
-`--max-output-tokens` defaults to 512 and is reserved when budgeting context.
+`--max-output-tokens` defaults to 8192 and is reserved when budgeting context.
+For models with smaller context windows, lower it explicitly if the question and
+output budget exceed the available context.
 For Splash, `rag ask` defaults to `--reasoning-effort none` so a thinking model
 does not spend its entire output budget reasoning without producing an answer.
 Use `--reasoning-effort low|medium|high` (or other Splash-supported efforts) if

@@ -45,7 +45,7 @@ DEFAULTS = {
         "chunk_size": 512,
         "chunk_overlap": 50,
         "embedding_model": None,
-        "max_search_results": 10,
+        "max_search_results": 15,
     },
 }
 

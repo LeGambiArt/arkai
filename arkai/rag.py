@@ -147,18 +147,20 @@ def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
     rag_ask_parser = rag_subparsers.add_parser("ask", help="Ask the inference server using RAG")
     rag_ask_parser.add_argument("db_name", help="Collection name")
     rag_ask_parser.add_argument("question", help="Question to answer")
-    rag_ask_parser.add_argument("-k", "--results", type=int, help="Number of passages to retrieve")
+    rag_ask_parser.add_argument(
+        "-k", "--results", type=int, help="Number of passages (default: rag.max_search_results, 15)"
+    )
     rag_ask_parser.add_argument(
         "--inference-port", type=int, help="Port of running inference server"
     )
     rag_ask_parser.add_argument(
-        "--max-context-tokens", type=int, help="Approximate token budget for retrieved passages"
+        "--max-context-tokens", type=int, help="Approximate passage budget (default: 32768 tokens)"
     )
     rag_ask_parser.add_argument(
         "--show-context", action="store_true", help="Print the passages sent to inference"
     )
     rag_ask_parser.add_argument(
-        "--max-output-tokens", type=int, help="Maximum tokens for the answer (default: 512)"
+        "--max-output-tokens", type=int, help="Maximum tokens for the answer (default: 8192)"
     )
     rag_ask_parser.add_argument(
         "--reasoning-effort",
@@ -300,7 +302,7 @@ def _search_documents(
         raise RuntimeError("Invalid configuration")
 
     if k is None:
-        k = config.get_config_value(cfg, "rag.max_search_results", 10)
+        k = config.get_config_value(cfg, "rag.max_search_results", 15)
     if not isinstance(k, int) or isinstance(k, bool) or k <= 0:
         raise RuntimeError("Number of results must be a positive integer")
 
@@ -441,7 +443,7 @@ def cmd_rag_ask(
         raise RuntimeError("--max-context-tokens must be positive")
     if max_output_tokens is not None and max_output_tokens <= 0:
         raise RuntimeError("--max-output-tokens must be positive")
-    output_tokens = max_output_tokens if max_output_tokens is not None else 512
+    output_tokens = max_output_tokens if max_output_tokens is not None else 8192
 
     port = inference_port or config.get_config_value(cfg, "inference.port", 8081)
     window = config.get_config_value(cfg, "inference.context_size", 65536)
@@ -475,7 +477,7 @@ def cmd_rag_ask(
     available = window - output_tokens - 512 - _estimated_tokens(_ASK_SYSTEM_PROMPT + question)
     if available <= 0:
         raise RuntimeError("Question and output budget exceed the inference context window")
-    budget = min(max_context_tokens if max_context_tokens is not None else 4096, available)
+    budget = min(max_context_tokens if max_context_tokens is not None else 32768, available)
     context, cited = _build_context(results, budget)
     if not cited or not context:
         raise RuntimeError("Context budget is too small for a retrieved passage")
