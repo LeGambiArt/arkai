@@ -38,7 +38,7 @@ When you run `arkai agent start`, it starts `llama-server` (loading your GGUF mo
 
 **Common development and CLI tools**
 
-- `Python`
+- `Python` 3.10–3.14 (the RAG embedding dependency, PyTorch, has no Python 3.15 wheel yet)
 - `pip`
 - `git`
 - `shasum`
@@ -66,7 +66,7 @@ When you run `arkai agent start`, it starts `llama-server` (loading your GGUF mo
 2. Create and activate a Python virtual environment:
 
    ```bash
-   python3 -m venv venv
+   python3.14 -m venv venv
    source venv/bin/activate
    ```
 
@@ -421,6 +421,12 @@ Terminates the server and cleans up PID and state files.
 
 Install the optional RAG dependencies and ensure the Chroma (`chroma`) CLI is
 available, then start the vector database and inference server:
+
+Use a Python 3.10–3.14 virtual environment for `.[rag]`. All supported
+`sentence-transformers` releases require PyTorch; changing its version cannot
+make RAG install on Python 3.15 until PyTorch publishes a compatible wheel.
+If your current environment uses Python 3.15, create a new one with a supported
+interpreter (for example, `python3.14 -m venv venv`) before installing.
 
 ```bash
 pip install -e '.[rag]'
