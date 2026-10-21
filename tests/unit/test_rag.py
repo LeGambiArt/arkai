@@ -143,7 +143,7 @@ def test_ask_uses_larger_default_retrieval_and_context_budgets(rag_services) -> 
 def test_ask_uses_running_default_instance_port(rag_services) -> None:
     with (
         patch.object(rag.inference, "is_inference_running", return_value=True),
-        patch.object(rag.utils, "load_yaml", return_value={"port": 9091, "context_size": 1200}),
+        patch.object(rag.utils, "load_yaml", return_value={"port": 9091, "context_size": 1230}),
     ):
         rag.cmd_rag_ask("manuals", "Question", max_output_tokens=512)
     assert rag_services[3].call_args_list[0].args[0] == "http://127.0.0.1:9091/v1/models"
