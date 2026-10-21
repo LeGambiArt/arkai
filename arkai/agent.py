@@ -181,6 +181,7 @@ class AgentLaunchSpec:
     command: list[str]
     environment: dict[str, str]
     cleanup_paths: list[Path] = field(default_factory=list)
+    suppress_stderr_prefixes: tuple[str, ...] = ()
 
 
 def _cloud_provider(cloud_services: list[str] | None) -> str | None:
@@ -195,17 +196,28 @@ def _cloud_provider(cloud_services: list[str] | None) -> str | None:
 
 def run_launch_spec(spec: AgentLaunchSpec, capture_stdout: bool = False) -> str | None:
     """Run an agent launch specification and clean up its temporary paths."""
+    capture_stderr = capture_stdout and bool(spec.suppress_stderr_prefixes)
     try:
+        # Arkai has already consumed prompt input; don't expose the caller's TTY to the agent.
         process = subprocess.Popen(
             spec.command,
-            stdin=sys.stdin,
+            stdin=subprocess.DEVNULL if capture_stdout else sys.stdin,
             stdout=subprocess.PIPE if capture_stdout else None,
-            stderr=None,
+            stderr=subprocess.PIPE if capture_stderr else None,
             env=spec.environment,
         )
         if capture_stdout:
-            stdout_data, _ = process.communicate()
+            stdout_data, stderr_data = process.communicate()
             return_code = process.returncode
+            if stderr_data:
+                stderr_text = stderr_data.decode("utf-8", errors="replace")
+                visible_stderr = "".join(
+                    line
+                    for line in stderr_text.splitlines(keepends=True)
+                    if not any(line.startswith(prefix) for prefix in spec.suppress_stderr_prefixes)
+                )
+                if visible_stderr:
+                    sys.stderr.write(visible_stderr)
         else:
             return_code = process.wait()
             stdout_data = None
@@ -926,5 +938,5 @@ def cmd_agent_prompt(
         utils.info(f"Output written to {output_file}")
     else:
         print("====== Answer ======", file=sys.stderr)
-        print(answer)
+        print(answer, flush=True)
         print("====================", file=sys.stderr)

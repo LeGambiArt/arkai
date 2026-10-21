@@ -171,13 +171,35 @@ def test_run_launch_spec_owns_popen_and_cleanup(tmp_path: Path) -> None:
     assert result == "answer\n"
     popen.assert_called_once_with(
         ["/agent"],
-        stdin=agent.sys.stdin,
+        stdin=agent.subprocess.DEVNULL,
         stdout=agent.subprocess.PIPE,
         stderr=None,
         env={"PATH": "/bin"},
     )
     assert not temporary.exists()
     assert not temporary_dir.exists()
+
+
+def test_run_launch_spec_suppresses_selected_stderr_prefixes(capsys) -> None:
+    """Selected child warnings are suppressed while other diagnostics are retained."""
+    spec = agent.AgentLaunchSpec(
+        ["/agent"],
+        {"PATH": "/bin"},
+        suppress_stderr_prefixes=("MCP: Project servers blocked:",),
+    )
+    process = MagicMock()
+    process.communicate.return_value = (
+        b"answer\n",
+        b"MCP: Project servers blocked: wtmcp (blocked)\nOther diagnostic\n",
+    )
+    process.returncode = 0
+
+    with patch.object(agent.subprocess, "Popen", return_value=process) as popen:
+        result = agent.run_launch_spec(spec, capture_stdout=True)
+
+    assert result == "answer\n"
+    assert capsys.readouterr().err == "Other diagnostic\n"
+    assert popen.call_args.kwargs["stderr"] == agent.subprocess.PIPE
 
 
 def test_run_launch_spec_reports_nonzero_exit_and_cleans_up(tmp_path: Path) -> None:
@@ -745,6 +767,91 @@ def test_pi_cloud_model_override_is_passed_to_agent(tmp_path: Path, monkeypatch)
         "--model",
         "openai/cloud-only-model",
     ]
+
+
+def test_pi_cloud_mcp_config_allows_project_servers(tmp_path: Path, monkeypatch) -> None:
+    """Cloud Pi runs put the project-server policy in their selected MCP config."""
+    agent_dir = tmp_path / "pi-agent"
+    monkeypatch.setattr(agent_pi, "get_global_agent_dir", lambda: agent_dir)
+
+    with patch("arkai.wtmcp.is_wtmcp_running", return_value=True):
+        spec = agent_pi.build_launch_spec(
+            "/bin/pi", _cfg(), 8080, False, str(tmp_path), cloud_services=["openai"]
+        )
+
+    mcp_config_path = Path(spec.command[spec.command.index("--mcp-config") + 1])
+    assert json.loads(mcp_config_path.read_text()) == {
+        "settings": {"projectServers": "allow"},
+        "mcpServers": {"wtmcp": {"url": "http://127.0.0.1:8080/mcp"}},
+    }
+    for path in spec.cleanup_paths:
+        path.unlink(missing_ok=True)
+
+
+def test_pi_no_mcp_prompt_omits_config_and_suppresses_project_warning(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """No-MCP prompts neither pass Arkai MCP config nor show Pi's discovery warning."""
+    agent_dir = tmp_path / "pi-agent"
+    monkeypatch.setattr(agent_pi, "get_agent_dir", lambda: agent_dir)
+
+    spec = agent_pi.build_launch_spec("/bin/pi", _cfg(), None, False, str(tmp_path), prompt="hello")
+
+    assert "--mcp-config" not in spec.command
+    assert spec.suppress_stderr_prefixes == ("MCP: Project servers blocked:",)
+    assert not (agent_dir / "mcp.json").exists()
+
+
+def test_pi_sandbox_allows_active_wtmcp_port(tmp_path: Path, monkeypatch) -> None:
+    """Pi's sandbox configuration receives the active host MCP port."""
+    agent_dir = tmp_path / "pi-agent"
+    monkeypatch.setattr(agent_pi, "get_agent_dir", lambda: agent_dir)
+    node_path = tmp_path / "node"
+    node_path.touch()
+
+    with (
+        patch("arkai.wtmcp.is_wtmcp_running", return_value=True),
+        patch.object(agent_pi, "_resolve_node_path", return_value=str(node_path)),
+        patch.object(agent.utils, "resolve_binary", return_value="/bin/arapuca"),
+        patch.object(agent.platform, "system", return_value="Linux"),
+    ):
+        spec = agent_pi.build_launch_spec(
+            "/bin/pi", _cfg(), 8080, True, str(tmp_path), prompt="use MCP"
+        )
+
+    allow_hosts = [
+        spec.command[index + 1]
+        for index, argument in enumerate(spec.command[:-1])
+        if argument == "--allow-host"
+    ]
+    assert allow_hosts == ["127.0.0.1:8123", "127.0.0.1:8080"]
+    assert "PI_MCP_CONFIG_MODE=exclusive" in spec.command
+    assert "--mcp-config" in spec.command
+    for path in spec.cleanup_paths:
+        path.unlink(missing_ok=True)
+
+
+def test_pi_sandbox_no_mcp_does_not_set_exclusive_mcp_mode(tmp_path: Path, monkeypatch) -> None:
+    """No-MCP prompt launches leave Pi's normal MCP settings untouched."""
+    agent_dir = tmp_path / "pi-agent"
+    monkeypatch.setattr(agent_pi, "get_agent_dir", lambda: agent_dir)
+    node_path = tmp_path / "node"
+    node_path.touch()
+
+    with (
+        patch.object(agent_pi, "_resolve_node_path", return_value=str(node_path)),
+        patch.object(
+            agent, "_build_sandbox_cmd", return_value=["arapuca", "run", "--"]
+        ) as build_sandbox,
+    ):
+        spec = agent_pi.build_launch_spec(
+            "/bin/pi", _cfg(), None, True, str(tmp_path), prompt="hello"
+        )
+
+    assert "PI_MCP_CONFIG_MODE" not in build_sandbox.call_args.args[6]
+    assert "--mcp-config" not in spec.command
+    for path in spec.cleanup_paths:
+        path.unlink(missing_ok=True)
 
 
 def test_pi_vertex_cloud_registers_anthropic_catalog_and_scopes_picker(

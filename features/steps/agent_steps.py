@@ -1,12 +1,24 @@
 """Step definitions for agent execution."""
 
+import json
+import os
+import pty
+import shutil
+import subprocess
 import sys
+import tempfile
+import threading
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import StringIO
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from behave import given, then, when
 
 from arkai import agent, agent_opencode, inference, utils, wtmcp
+
+_PI_NODE_AVAILABLE = shutil.which("node") is not None
+_POSIX_PTY_AVAILABLE = os.name == "posix"
 
 
 @when("I cancel the pi agent installation")  # ty: ignore[call-non-callable]
@@ -214,3 +226,156 @@ def step_run_agent_piped(context):
         sys.stderr = old_stderr
         context.stdout = stdout_capture.getvalue()
         context.stderr = stderr_capture.getvalue()
+
+
+@given("a fake Pi agent and local inference server for prompt testing")  # ty: ignore[call-non-callable]
+def step_prepare_pi_prompt_test(context):
+    """Prepare isolated files and a local inference endpoint for the prompt subprocess."""
+    if not _PI_NODE_AVAILABLE or not _POSIX_PTY_AVAILABLE:
+        context.scenario.skip("Pi prompt behavior requires Node.js and a POSIX pseudo-terminal")
+
+    # This scenario uses real temporary files and child processes rather than the
+    # in-process filesystem/service mocks installed by features/environment.py.
+    for patch_name in (
+        "exists_patch",
+        "open_patch",
+        "makedirs_patch",
+        "mkdir_patch",
+        "path_mkdir_patch",
+    ):
+        fixture_patch = getattr(context, patch_name, None)
+        if fixture_patch:
+            fixture_patch.stop()
+            setattr(context, patch_name, None)
+
+    temporary_directory = tempfile.TemporaryDirectory(prefix="arkai-pi-prompt-")
+    context.pi_prompt_tempdir = temporary_directory
+    root = Path(temporary_directory.name)
+    home = root / "home"
+    workdir = root / "work"
+    home.mkdir()
+    workdir.mkdir()
+
+    agent_path = root / "fake-pi.js"
+    agent_path.write_text(
+        "#!/usr/bin/env node\n"
+        "const args = process.argv.slice(2);\n"
+        "console.error('MCP: Project servers blocked: wtmcp (blocked: "
+        "project server approval required)');\n"
+        "const answer = 'The speed of light in a vacuum is exactly **299,792,458 "
+        "meters per second** (approximately $3 \\u00d7 10^8 m/s).';\n"
+        "if (process.stdin.isTTY || !args.includes('--system-prompt')) "
+        "process.stdout.write('<|thought');\n"
+        "else { process.stdout.write(answer.slice(0, -1)); "
+        "setTimeout(() => process.stdout.write(answer.slice(-1)), 20); }\n",
+        encoding="utf-8",
+    )
+    agent_path.chmod(0o755)
+
+    class InferenceHandler(BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            response = json.dumps({"data": [{"id": "test-model"}]}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(response)))
+            self.end_headers()
+            self.wfile.write(response)
+
+        def log_message(self, format: str, *args: object) -> None:
+            pass
+
+    inference_server = ThreadingHTTPServer(("127.0.0.1", 0), InferenceHandler)
+    server_thread = threading.Thread(target=inference_server.serve_forever, daemon=True)
+    server_thread.start()
+
+    pid_dir = home / ".local" / "state" / "arkai"
+    pid_dir.mkdir(parents=True)
+    (pid_dir / "inference.pid").write_text(f"{os.getpid()}\n", encoding="utf-8")
+    (workdir / ".arkai.yaml").write_text(
+        json.dumps(
+            {
+                "agent": {"name": "pi", "path": str(agent_path), "mcp": True},
+                "inference": {
+                    "model": "test.gguf",
+                    "port": inference_server.server_address[1],
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    environment = os.environ.copy()
+    environment["HOME"] = str(home)
+    environment["XDG_CONFIG_HOME"] = str(home / ".config")
+    repository_root = str(Path(__file__).resolve().parents[2])
+    environment["PYTHONPATH"] = os.pathsep.join(
+        value for value in (repository_root, environment.get("PYTHONPATH")) if value
+    )
+
+    context.pi_prompt_agent = agent_path
+    context.pi_prompt_environment = environment
+    context.pi_prompt_inference_server = inference_server
+    context.pi_prompt_server_thread = server_thread
+    context.pi_prompt_workdir = workdir
+    context.pi_prompt_answer = (
+        "The speed of light in a vacuum is exactly **299,792,458 meters per second** "
+        "(approximately $3 × 10^8 m/s)."
+    )
+
+
+@when("I run a Pi prompt from a TTY with MCP disabled")  # ty: ignore[call-non-callable]
+def step_run_pi_prompt_from_tty(context):
+    """Run the real Arkai prompt CLI around a fake Pi process in a pseudo-terminal."""
+    master_fd, slave_fd = pty.openpty()
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "from arkai.cli import main; main()",
+                "agent",
+                "prompt",
+                "-a",
+                "pi",
+                "-I",
+                "-M",
+                "--no-sandbox",
+                "What is the speed of light?",
+            ],
+            cwd=context.pi_prompt_workdir,
+            env=context.pi_prompt_environment,
+            stdin=slave_fd,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            timeout=30,
+            check=False,
+        )
+        context.pi_prompt_exit_code = result.returncode
+        context.pi_prompt_output = result.stdout
+    finally:
+        os.close(master_fd)
+        os.close(slave_fd)
+        context.pi_prompt_inference_server.shutdown()
+        context.pi_prompt_server_thread.join(timeout=5)
+        context.pi_prompt_inference_server.server_close()
+        context.pi_prompt_tempdir.cleanup()
+
+
+@then("the Pi prompt exits successfully")  # ty: ignore[call-non-callable]
+def step_pi_prompt_exits_successfully(context):
+    """Assert the Pi prompt subprocess completed without an error."""
+    assert context.pi_prompt_exit_code == 0, context.pi_prompt_output
+
+
+@then("the prompt output contains the complete final answer")  # ty: ignore[call-non-callable]
+def step_prompt_output_contains_complete_answer(context):
+    """Assert Arkai captured and printed Pi's full response, not a partial thought token."""
+    assert context.pi_prompt_answer in context.pi_prompt_output
+    assert "<|thought" not in context.pi_prompt_output
+
+
+@then("the blocked project MCP warning is not displayed")  # ty: ignore[call-non-callable]
+def step_project_mcp_warning_is_not_displayed(context):
+    """Assert the no-MCP prompt suppresses Pi's expected project-server warning."""
+    assert "MCP: Project servers blocked:" not in context.pi_prompt_output

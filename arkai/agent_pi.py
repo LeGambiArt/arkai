@@ -20,6 +20,10 @@ PI_PACKAGES = ("pi-mcp-adapter", "pi-web-access", "pi-subagents")
 VERTEX_ANTHROPIC_PROVIDER = "google-vertex-anthropic"
 MODELS_DEV_API_URL = "https://models.dev/api.json"
 VERTEX_MODEL_CACHE_SECONDS = 24 * 60 * 60
+_PROMPT_SYSTEM_INSTRUCTION = (
+    "You are an expert coding assistant. Use available tools only when needed. "
+    "Answer factual questions directly and provide only the final answer."
+)
 
 
 def get_install_dir() -> Path:
@@ -57,7 +61,10 @@ def _write_run_mcp_config(agent_dir: str, port: int) -> Path:
     try:
         with os.fdopen(descriptor, "w", encoding="utf-8") as config_file:
             json.dump(
-                {"mcpServers": {"wtmcp": {"url": f"http://127.0.0.1:{port}/mcp"}}},
+                {
+                    "settings": {"projectServers": "allow"},
+                    "mcpServers": {"wtmcp": {"url": f"http://127.0.0.1:{port}/mcp"}},
+                },
                 config_file,
                 indent=2,
             )
@@ -480,7 +487,10 @@ def _prepare_agent_dir(cfg: dict, wtmcp_port: int | None) -> str:
     if wtmcp_port is not None:
         Path(agent_dir, "mcp.json").write_text(
             json.dumps(
-                {"mcpServers": {"wtmcp": {"url": f"http://127.0.0.1:{wtmcp_port}/mcp"}}},
+                {
+                    "settings": {"projectServers": "allow"},
+                    "mcpServers": {"wtmcp": {"url": f"http://127.0.0.1:{wtmcp_port}/mcp"}},
+                },
                 indent=2,
             )
         )
@@ -558,6 +568,7 @@ def build_launch_spec(
     if mcp_available:
         agent_args.extend(["--mcp-config", str(mcp_config)])
     if prompt is not None:
+        agent_args.extend(["--system-prompt", _PROMPT_SYSTEM_INSTRUCTION])
         agent_args.extend(["-p", prompt])
 
     cleanup_paths = [mcp_config] if is_cloud and mcp_config is not None else []
@@ -581,6 +592,10 @@ def build_launch_spec(
                     runtime_volumes.append(f"{pi_package_dir}:ro")
             sandbox_environment = dict(cli_environment or {})
             sandbox_environment["PI_CODING_AGENT_DIR"] = str(agent_dir)
+            if mcp_available:
+                # Prevent project .mcp.json from replacing Arkai's host HTTP server
+                # with a stdio WTMCP process running inside the agent sandbox.
+                sandbox_environment["PI_MCP_CONFIG_MODE"] = "exclusive"
             if cloud_provider == "vertex":
                 runtime_volumes, sandbox_environment = cloud_auth.vertex_sandbox_settings(
                     runtime_volumes, sandbox_environment
@@ -591,7 +606,7 @@ def build_launch_spec(
                 cfg,
                 workdir,
                 str(agent_dir),
-                None,
+                wtmcp_port if mcp_available else None,
                 sandbox_profile,
                 runtime_volumes,
                 sandbox_environment,
@@ -630,7 +645,15 @@ def build_launch_spec(
 
     cmd.extend(agent_args)
 
-    return AgentLaunchSpec(cmd, env, cleanup_paths)
+    suppressed_stderr_prefixes = (
+        ("MCP: Project servers blocked:",) if prompt is not None and not mcp_available else ()
+    )
+    return AgentLaunchSpec(
+        cmd,
+        env,
+        cleanup_paths,
+        suppress_stderr_prefixes=suppressed_stderr_prefixes,
+    )
 
 
 def start(

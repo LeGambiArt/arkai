@@ -359,8 +359,14 @@ def test_pi_runtime_volumes_preserve_npm_bin_symlink_location(tmp_path: Path, mo
     ]
 
 
-def test_pi_passes_mcp_config_when_wtmcp_is_running(tmp_path: Path, monkeypatch) -> None:
-    """Pi receives its MCP configuration only when wtmcp is available."""
+@pytest.mark.parametrize(
+    ("prompt", "prompt_args"),
+    [(None, []), ("hello", ["-p", "hello"])],
+)
+def test_pi_allows_project_mcp_servers_when_wtmcp_is_running(
+    tmp_path: Path, monkeypatch, prompt: str | None, prompt_args: list[str]
+) -> None:
+    """Pi admits project MCP servers for both interactive and prompt launches."""
     agent_dir = tmp_path / "pi-agent"
     monkeypatch.setattr(agent_pi, "get_agent_dir", lambda: agent_dir)
     cfg = {"inference": {"model": "test.gguf", "port": 8123}}
@@ -369,18 +375,22 @@ def test_pi_passes_mcp_config_when_wtmcp_is_running(tmp_path: Path, monkeypatch)
         patch("arkai.wtmcp.is_wtmcp_running", return_value=True),
         patch.object(agent.subprocess, "Popen") as popen,
     ):
-        agent_pi.start("/bin/pi", cfg, 8080, False, None)
+        agent_pi.start("/bin/pi", cfg, 8080, False, None, prompt=prompt)
 
     command = popen.call_args.args[0]
-    assert command == [
-        "/bin/pi",
+    expected_args = [
         "--model",
         "local-llm/test",
         "--mcp-config",
         str(agent_dir / "mcp.json"),
     ]
+    if prompt is not None:
+        expected_args.extend(["--system-prompt", agent_pi._PROMPT_SYSTEM_INSTRUCTION])
+    expected_args.extend(prompt_args)
+    assert command == ["/bin/pi", *expected_args]
     assert json.loads((agent_dir / "mcp.json").read_text()) == {
-        "mcpServers": {"wtmcp": {"url": "http://127.0.0.1:8080/mcp"}}
+        "settings": {"projectServers": "allow"},
+        "mcpServers": {"wtmcp": {"url": "http://127.0.0.1:8080/mcp"}},
     }
 
 

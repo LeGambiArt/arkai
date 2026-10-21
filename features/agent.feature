@@ -37,3 +37,10 @@ Feature: Agent Execution
   Scenario: Pi installation can be cancelled
     When I cancel the pi agent installation
     Then the pi agent installation was not run
+
+  Scenario: Pi prompt returns the complete answer when launched from a TTY
+    Given a fake Pi agent and local inference server for prompt testing
+    When I run a Pi prompt from a TTY with MCP disabled
+    Then the Pi prompt exits successfully
+    And the prompt output contains the complete final answer
+    And the blocked project MCP warning is not displayed
