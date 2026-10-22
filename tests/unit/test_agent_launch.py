@@ -163,7 +163,9 @@ def test_run_launch_spec_owns_popen_and_cleanup(tmp_path: Path) -> None:
     process = MagicMock()
     process.communicate.return_value = (b"answer\n", None)
     process.returncode = 0
-    spec = agent.AgentLaunchSpec(["/agent"], {"PATH": "/bin"}, [temporary, temporary_dir])
+    spec = agent.AgentLaunchSpec(
+        ["/agent"], {"PATH": "/bin"}, [temporary, temporary_dir], working_directory=str(tmp_path)
+    )
 
     with patch.object(agent.subprocess, "Popen", return_value=process) as popen:
         result = agent.run_launch_spec(spec, capture_stdout=True)
@@ -174,6 +176,7 @@ def test_run_launch_spec_owns_popen_and_cleanup(tmp_path: Path) -> None:
         stdin=agent.subprocess.DEVNULL,
         stdout=agent.subprocess.PIPE,
         stderr=None,
+        cwd=str(tmp_path),
         env={"PATH": "/bin"},
     )
     assert not temporary.exists()
@@ -1157,6 +1160,198 @@ def test_sandbox_mounts_read_write_paths_without_rw_suffix(tmp_path: Path, monke
     assert f"{workdir}:rw" not in command
     assert f"{config_dir}:rw" not in command
     assert "--allow-network-listeners" in command
+
+
+def test_opencode_session_uses_persistent_data_home_and_continues(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """OpenCode stores each Arkai session separately and resumes its last thread."""
+    config_dir = tmp_path / "arkai-config"
+    native_dir = tmp_path / "native"
+
+    def get_config_dir() -> Path:
+        config_dir.mkdir(parents=True, exist_ok=True)
+        return config_dir
+
+    monkeypatch.setattr(agent_opencode, "_get_config_dir", get_config_dir)
+    monkeypatch.setattr(agent_opencode, "_prepare_tui_config", lambda *_: None)
+
+    spec = agent_opencode.build_launch_spec(
+        "/agent",
+        _cfg(),
+        None,
+        False,
+        str(tmp_path),
+        session_dir=str(native_dir),
+        resume_session=True,
+    )
+
+    assert spec.environment["XDG_DATA_HOME"] == str(native_dir)
+    assert spec.command == ["/agent", "--continue", "--standalone"]
+    assert native_dir.is_dir()
+    assert native_dir not in spec.cleanup_paths
+    for path in spec.cleanup_paths:
+        path.unlink(missing_ok=True)
+
+
+def test_claude_uses_stable_native_id_for_start_and_resume() -> None:
+    """Claude receives the Arkai UUID on creation and its native resume flag later."""
+    session_id = "550e8400-e29b-41d4-a716-446655440000"
+    new_spec = agent_claude.build_launch_spec(
+        "/claude", _cfg(), None, False, None, native_session_id=session_id
+    )
+    resumed_spec = agent_claude.build_launch_spec(
+        "/claude",
+        _cfg(),
+        None,
+        False,
+        None,
+        native_session_id=session_id,
+        resume_session=True,
+    )
+
+    assert new_spec.command[:3] == ["/claude", "--session-id", session_id]
+    assert resumed_spec.command[:3] == ["/claude", "--resume", session_id]
+
+
+def test_crush_keeps_session_data_and_resumes_native_session(tmp_path: Path, monkeypatch) -> None:
+    """Crush's persisted native data survives while its generated config is temporary."""
+    monkeypatch.setattr(agent_crush, "_get_config_dir", lambda: tmp_path / "arkai-config")
+    native_dir = tmp_path / "native"
+    native_id = "crush-session-123"
+
+    spec = agent_crush.build_launch_spec(
+        "/crush",
+        _cfg(),
+        None,
+        False,
+        str(tmp_path),
+        session_dir=str(native_dir),
+        resume_session=True,
+        native_session_id=native_id,
+    )
+
+    crush_data = native_dir / "crush"
+    assert spec.environment["CRUSH_GLOBAL_DATA"] == str(crush_data)
+    assert spec.command[-2:] == ["--session", native_id]
+    assert crush_data.is_dir()
+    assert crush_data not in spec.cleanup_paths
+    assert all(path.name != "crush" for path in spec.cleanup_paths)
+    for path in spec.cleanup_paths:
+        path.unlink(missing_ok=True)
+
+
+def test_codex_uses_session_home_and_reuses_user_auth(tmp_path: Path, monkeypatch) -> None:
+    """Codex session files are isolated while the user auth file remains shared."""
+    global_home = tmp_path / "codex-home"
+    global_home.mkdir()
+    auth = global_home / "auth.json"
+    auth.write_text('{"auth": true}')
+    user_config = global_home / "config.toml"
+    user_config.write_text('model = "user-model"\n')
+    monkeypatch.setenv("CODEX_HOME", str(global_home))
+    native_dir = tmp_path / "native"
+    session_id = "550e8400-e29b-41d4-a716-446655440000"
+
+    spec = agent_codex.build_launch_spec(
+        "/codex",
+        _cfg(),
+        None,
+        False,
+        str(tmp_path),
+        session_dir=str(native_dir),
+        resume_session=True,
+        session_id=session_id,
+    )
+
+    session_home = native_dir / "codex-home"
+    assert spec.environment["CODEX_HOME"] == str(session_home)
+    assert (session_home / "auth.json").is_symlink()
+    assert (session_home / "auth.json").resolve() == auth.resolve()
+    assert (session_home / "config.toml").is_symlink()
+    assert (session_home / "config.toml").resolve() == user_config.resolve()
+    assert spec.command[-2:] == ["resume", "--last"]
+    assert spec.working_directory == str(tmp_path)
+    for path in spec.cleanup_paths:
+        path.unlink(missing_ok=True)
+
+
+def test_pi_and_omp_resume_from_persistent_session_directories(tmp_path: Path, monkeypatch) -> None:
+    """Pi-family agents receive isolated native storage and their resume controls."""
+    native_dir = tmp_path / "native"
+    monkeypatch.setattr(agent_pi, "get_agent_dir", lambda: tmp_path / "pi-agent")
+    pi_spec = agent_pi.build_launch_spec(
+        "/pi", _cfg(), None, False, str(tmp_path), session_dir=str(native_dir), resume_session=True
+    )
+    assert pi_spec.command[pi_spec.command.index("--session-dir") + 1] == str(
+        native_dir / "pi-sessions"
+    )
+    assert "--continue" in pi_spec.command
+    assert (native_dir / "pi-sessions").is_dir()
+
+    omp_agent_dir = tmp_path / "omp-agent"
+    monkeypatch.setattr(agent_omp, "get_agent_dir", lambda: omp_agent_dir)
+    omp_spec = agent_omp.build_launch_spec(
+        "/omp",
+        _cfg(),
+        None,
+        False,
+        str(tmp_path),
+        session_dir=str(native_dir),
+        resume_session=True,
+        native_session_id="omp-native-id",
+    )
+    assert omp_spec.command[omp_spec.command.index("--session-dir") + 1] == str(
+        native_dir / "omp-sessions"
+    )
+    assert "--resume" in omp_spec.command
+    assert omp_spec.command[omp_spec.command.index("--resume") + 1] == "omp-native-id"
+    assert (native_dir / "omp-sessions").is_dir()
+
+
+def test_omp_captures_native_session_id_after_interactive_exit(tmp_path: Path, monkeypatch) -> None:
+    """The Arkai record keeps OMP's generated ID for an exact later resume."""
+    native_dir = tmp_path / "native"
+    omp_agent_dir = tmp_path / "omp-agent"
+    monkeypatch.setattr(agent_omp, "get_agent_dir", lambda: omp_agent_dir)
+    session_record: dict = {}
+
+    def finish_session(spec, capture_stdout=False):
+        session_dir = Path(spec.command[spec.command.index("--session-dir") + 1])
+        bucket = session_dir / "project"
+        bucket.mkdir(parents=True)
+        (bucket / "2026-10-22T00-00-00_omp-native-id.jsonl").write_text(
+            '{"type":"session","id":"omp-native-id"}\n'
+        )
+        return None
+
+    with patch.object(agent_omp, "run_launch_spec", side_effect=finish_session):
+        agent_omp.start(
+            "/omp",
+            _cfg(),
+            None,
+            False,
+            str(tmp_path),
+            session_dir=str(native_dir),
+            session_record=session_record,
+        )
+
+    assert session_record["native_session_id"] == "omp-native-id"
+
+    with patch.object(agent_omp, "run_launch_spec", return_value=None) as run:
+        agent_omp.start(
+            "/omp",
+            _cfg(),
+            None,
+            False,
+            str(tmp_path),
+            session_dir=str(native_dir),
+            resume_session=True,
+            session_record=session_record,
+        )
+
+    resumed_command = run.call_args.args[0].command
+    assert resumed_command[resumed_command.index("--resume") + 1] == "omp-native-id"
 
 
 def test_other_agents_only_build_launch_specs() -> None:

@@ -146,6 +146,9 @@ def build_launch_spec(
     prompt: str | None = None,
     cloud_services: list[str] | None = None,
     cloud_model: str | None = None,
+    session_dir: str | None = None,
+    resume_session: bool = False,
+    native_session_id: str | None = None,
 ) -> AgentLaunchSpec:
     """Create OMP configuration and return its process launch specification."""
     from arkai.agent import _build_sandbox_cmd
@@ -155,6 +158,10 @@ def build_launch_spec(
     from arkai.agent import _cloud_provider
 
     cloud_provider = _cloud_provider(cloud_services)
+    native_session_dir = Path(session_dir) / "omp-sessions" if session_dir else None
+    if native_session_dir is not None:
+        native_session_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        native_session_dir.chmod(0o700)
     if is_cloud:
         agent_dir = get_global_agent_dir()
         agent_dir.mkdir(parents=True, exist_ok=True)
@@ -176,6 +183,8 @@ def build_launch_spec(
         resolved_agent_path = str(Path(agent_path).resolve())
         binary_dir = str(Path(resolved_agent_path).parent)
         volumes = list(cli_volumes or [])
+        if native_session_dir is not None:
+            volumes.append(str(native_session_dir))
         binary_volume = f"{binary_dir}:ro"
         if binary_volume not in volumes:
             volumes.append(binary_volume)
@@ -231,6 +240,12 @@ def build_launch_spec(
     else:
         command = [str(Path(agent_path).resolve())]
 
+    if native_session_dir is not None:
+        command.extend(["--session-dir", str(native_session_dir)])
+        if resume_session:
+            command.append("--resume")
+            if native_session_id:
+                command.append(native_session_id)
     command.append("--profile")
     command.append("default")
     if is_cloud:
@@ -246,7 +261,18 @@ def build_launch_spec(
         command.extend(["-p", "--no-session", "--mode", "text", prompt])
 
     cleanup_paths = [mcp_config] if mcp_config is not None else []
-    return AgentLaunchSpec(command, environment, cleanup_paths)
+    return AgentLaunchSpec(command, environment, cleanup_paths, working_directory=workdir)
+
+
+def _latest_native_session_id(session_dir: Path) -> str | None:
+    """Return the newest OMP session ID stored in an Arkai-isolated directory."""
+    try:
+        session_files = [path for path in session_dir.rglob("*.jsonl") if path.is_file()]
+        session_file = max(session_files, key=lambda path: path.stat().st_mtime_ns)
+    except (OSError, ValueError):
+        return None
+    _, separator, session_id = session_file.stem.rpartition("_")
+    return session_id if separator and session_id else None
 
 
 def start(
@@ -262,11 +288,23 @@ def start(
     capture_stdout: bool = False,
     cloud_services: list[str] | None = None,
     cloud_model: str | None = None,
+    session_dir: str | None = None,
+    resume_session: bool = False,
+    native_session_id: str | None = None,
+    session_record: dict | None = None,
 ) -> str | None:
     """Build and run OMP's launch specification."""
     if cloud_services and any(service.lower() == "openai" for service in cloud_services):
         cloud_auth.ensure_openai_api_key("omp", get_global_agent_dir(), agent_path)
-    return run_launch_spec(
+    native_session_dir = Path(session_dir) / "omp-sessions" if session_dir else None
+    if native_session_dir is not None:
+        native_session_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        native_session_dir.chmod(0o700)
+        if resume_session and not native_session_id:
+            native_session_id = _latest_native_session_id(native_session_dir)
+            if native_session_id and session_record is not None:
+                session_record["native_session_id"] = native_session_id
+    result = run_launch_spec(
         build_launch_spec(
             agent_path,
             cfg,
@@ -279,9 +317,17 @@ def start(
             prompt,
             cloud_services,
             cloud_model,
+            session_dir,
+            resume_session,
+            native_session_id,
         ),
         capture_stdout,
     )
+    if native_session_dir is not None and not resume_session:
+        native_session_id = _latest_native_session_id(native_session_dir)
+        if native_session_id and session_record is not None:
+            session_record["native_session_id"] = native_session_id
+    return result
 
 
 def install() -> None:

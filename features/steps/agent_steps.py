@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+from contextlib import contextmanager
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import StringIO
 from pathlib import Path
@@ -15,7 +16,7 @@ from unittest.mock import MagicMock, patch
 
 from behave import given, then, when
 
-from arkai import agent, agent_opencode, inference, utils, wtmcp
+from arkai import agent, agent_opencode, agent_session, inference, utils, wtmcp
 
 _PI_NODE_AVAILABLE = shutil.which("node") is not None
 _POSIX_PTY_AVAILABLE = os.name == "posix"
@@ -81,6 +82,15 @@ def _run_agent_in_tty(
 
     config_dir = "/tmp/mock-opencode-sessions"
     config_path = f"{config_dir}/opencode-config.json"
+    session_record = {
+        "id": "550e8400-e29b-41d4-a716-446655440000",
+        "name": None,
+        "agent": "opencode",
+        "working_directory": os.getcwd(),
+        "native_session_id": None,
+        "launch_options": {},
+        "status": "starting",
+    }
 
     popen_cmd: list = []
 
@@ -102,6 +112,10 @@ def _run_agent_in_tty(
         ) as mkstemp,
         patch.object(agent_opencode.os, "close") as close,
         patch.object(agent_opencode.Path, "write_text") as write_text,
+        patch.object(agent_opencode.Path, "chmod"),
+        patch.object(agent_session, "create_session", return_value=session_record),
+        patch.object(agent_session, "save_session"),
+        patch.object(agent_session, "get_session_dir", return_value=Path(config_dir)),
     ):
         try:
             agent.cmd_agent(
@@ -191,6 +205,86 @@ def step_wtmcp_not_started(context):
 def step_agent_not_sandboxed(context):
     """Assert that the agent was launched without arapuca."""
     assert not context.sandbox_used, "Agent was launched in sandbox but should not have been"
+
+
+@given('a saved Arkai agent session named "{name}"')  # ty: ignore[call-non-callable]
+def step_saved_arkai_session(context, name):
+    """Provide a saved session record without touching the user's session store."""
+    context.saved_agent_session = {
+        "id": "550e8400-e29b-41d4-a716-446655440000",
+        "name": name,
+        "agent": "opencode",
+        "working_directory": os.getcwd(),
+        "created_at": "2026-10-22T00:00:00+00:00",
+        "updated_at": "2026-10-22T00:00:00+00:00",
+        "status": "paused",
+        "native_session_id": None,
+        "launch_options": {
+            "no_mcp": True,
+            "no_sandbox": True,
+            "cloud_services": [],
+            "environment_keys": [],
+        },
+    }
+
+
+@when("I list Arkai agent sessions")  # ty: ignore[call-non-callable]
+def step_list_arkai_sessions(context):
+    """Run the public list option through argparse without starting services."""
+    infrastructure_calls = []
+    with (
+        patch.object(
+            agent_session,
+            "list_sessions",
+            return_value=[context.saved_agent_session],
+        ),
+        patch.object(
+            agent,
+            "_agent_context",
+            side_effect=lambda **_: infrastructure_calls.append(1),
+        ),
+    ):
+        context.run_command(["arkai", "agent", "start", "--list-session"])
+    context.infrastructure_calls = infrastructure_calls
+
+
+@then("listing does not start agent infrastructure")  # ty: ignore[call-non-callable]
+def step_listing_does_not_start_infrastructure(context):
+    """The list flag must exit before agent or inference initialization."""
+    assert not context.infrastructure_calls
+
+
+@when('I resume the Arkai session "{name}" in a TTY')  # ty: ignore[call-non-callable]
+def step_resume_arkai_session(context, name):
+    """Run a named resume through the CLI while faking only native execution."""
+
+    @contextmanager
+    def fake_agent_context(**kwargs):
+        yield agent.AgentContext(
+            agent_name=kwargs["agent_name"],
+            workdir=kwargs["sandbox_cwd"],
+        )
+
+    with (
+        patch.object(sys.stdin, "isatty", return_value=True),
+        patch.object(agent_session, "find_session", return_value=context.saved_agent_session),
+        patch.object(agent_session, "save_session"),
+        patch.object(agent, "_agent_context", side_effect=fake_agent_context),
+        patch.object(agent, "_dispatch_agent") as dispatch,
+    ):
+        context.run_command(["arkai", "agent", "start", "--session", name])
+    context.resumed_session_call = dispatch.call_args
+
+
+@then("the named Arkai session was resumed")  # ty: ignore[call-non-callable]
+def step_named_arkai_session_resumed(context):
+    """The CLI resolves the name and dispatches the existing session as a resume."""
+    assert context.resumed_session_call is not None
+    assert context.resumed_session_call.kwargs["resume_session"] is True
+    assert (
+        context.resumed_session_call.kwargs["session"]["name"]
+        == context.saved_agent_session["name"]
+    )
 
 
 @when('I run "arkai agent start" with stdin piped')  # ty: ignore[call-non-callable]

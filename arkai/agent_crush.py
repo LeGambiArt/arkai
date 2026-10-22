@@ -3,6 +3,7 @@
 import json
 import os
 import platform
+import subprocess
 import tempfile
 from pathlib import Path
 
@@ -63,6 +64,9 @@ def build_launch_spec(
     cloud_services: list[str] | None = None,
     cloud_api_key: str | None = None,
     cloud_model: str | None = None,
+    session_dir: str | None = None,
+    resume_session: bool = False,
+    native_session_id: str | None = None,
 ) -> AgentLaunchSpec:
     """Create Crush configuration and return its process launch specification."""
     from arkai.agent import _build_sandbox_cmd, _cloud_provider, _get_agent_model_id
@@ -75,7 +79,12 @@ def build_launch_spec(
         _cloud_model_reference(provider_id, cloud_model)[1] if is_cloud and cloud_model else None
     )
     sessions_dir = _get_config_dir()
-    crush_config_dir = Path(tempfile.mkdtemp(prefix="crush-", dir=sessions_dir))
+    if session_dir:
+        crush_config_dir = Path(session_dir) / "crush"
+        crush_config_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        crush_config_dir.chmod(0o700)
+    else:
+        crush_config_dir = Path(tempfile.mkdtemp(prefix="crush-", dir=sessions_dir))
     config_file = crush_config_dir / "crush.json"
 
     if is_cloud:
@@ -158,7 +167,8 @@ def build_launch_spec(
         config_file.write_text(json.dumps(config_data, indent=2))
     except Exception:
         config_file.unlink(missing_ok=True)
-        crush_config_dir.rmdir()
+        if not session_dir:
+            crush_config_dir.rmdir()
         raise
 
     environment = os.environ.copy()
@@ -201,7 +211,8 @@ def build_launch_spec(
             )
         except Exception:
             config_file.unlink(missing_ok=True)
-            crush_config_dir.rmdir()
+            if not session_dir:
+                crush_config_dir.rmdir()
             raise
         command = sandbox_prefix + [
             "env",
@@ -214,9 +225,52 @@ def build_launch_spec(
         environment["CRUSH_GLOBAL_DATA"] = str(crush_config_dir)
         command = [agent_path]
 
+    if resume_session:
+        command.extend(["--session", native_session_id]) if native_session_id else command.append(
+            "--continue"
+        )
+
     if prompt is not None:
         command.extend(["run", "--quiet", prompt])
-    return AgentLaunchSpec(command, environment, [config_file, crush_config_dir])
+    cleanup_paths = [config_file]
+    if not session_dir:
+        cleanup_paths.append(crush_config_dir)
+    return AgentLaunchSpec(command, environment, cleanup_paths, working_directory=workdir)
+
+
+def _native_session_ids(agent_path: str, session_dir: str, workdir: str | None) -> list[str]:
+    """Read session IDs from the isolated Crush data directory."""
+    crush_dir = Path(session_dir) / "crush"
+    environment = os.environ.copy()
+    environment["CRUSH_GLOBAL_CONFIG"] = str(crush_dir)
+    environment["CRUSH_GLOBAL_DATA"] = str(crush_dir)
+    try:
+        result = subprocess.run(
+            [agent_path, "session", "list", "--json"],
+            capture_output=True,
+            text=True,
+            timeout=15,
+            env=environment,
+            cwd=workdir,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if result.returncode != 0:
+        return []
+    try:
+        sessions = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(sessions, list):
+        return []
+    return [
+        session_id
+        for entry in sessions
+        if isinstance(entry, dict)
+        and isinstance((session_id := entry.get("uuid") or entry.get("id")), str)
+        and session_id
+    ]
 
 
 def start(
@@ -232,6 +286,10 @@ def start(
     capture_stdout: bool = False,
     cloud_services: list[str] | None = None,
     cloud_model: str | None = None,
+    session_dir: str | None = None,
+    resume_session: bool = False,
+    native_session_id: str | None = None,
+    session_record: dict | None = None,
 ) -> str | None:
     """Build and run Crush's launch specification."""
     cloud_api_key = (
@@ -239,7 +297,12 @@ def start(
         if cloud_services and any(service.lower() == "openai" for service in cloud_services)
         else None
     )
-    return run_launch_spec(
+    before_ids = (
+        set(_native_session_ids(agent_path, session_dir, workdir))
+        if session_dir and not resume_session
+        else set()
+    )
+    result = run_launch_spec(
         build_launch_spec(
             agent_path,
             cfg,
@@ -253,6 +316,14 @@ def start(
             cloud_services,
             cloud_api_key,
             cloud_model,
+            session_dir,
+            resume_session,
+            native_session_id,
         ),
         capture_stdout,
     )
+    if session_dir and session_record is not None and not resume_session:
+        new_ids = set(_native_session_ids(agent_path, session_dir, workdir)) - before_ids
+        if len(new_ids) == 1:
+            session_record["native_session_id"] = new_ids.pop()
+    return result

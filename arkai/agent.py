@@ -6,15 +6,16 @@ import platform
 import shutil
 import subprocess
 import sys
+import uuid
 from collections.abc import Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from arkai import config, inference, utils
+from arkai import agent_session, config, inference, utils
 
 
-def exec_cmd(args: dict | None = None) -> None:
+def exec_cmd(args: argparse.Namespace | None = None) -> None:
     """Select 'agent' command to execute."""
     agent_env = (
         {k: v for e in getattr(args, "environment", None) or [] for k, _, v in [e.partition("=")]}
@@ -23,6 +24,9 @@ def exec_cmd(args: dict | None = None) -> None:
     )
     match args.agent_cmd:  # ty: ignore[unresolved-attribute]
         case "start":
+            if args.list_session:  # ty: ignore[unresolved-attribute]
+                cmd_agent_list_sessions(args.agent, args.cwd)  # ty: ignore[unresolved-attribute]
+                return
             cmd_agent(
                 args.agent,  # ty: ignore[unresolved-attribute]
                 args.model,  # ty: ignore[unresolved-attribute]
@@ -36,6 +40,7 @@ def exec_cmd(args: dict | None = None) -> None:
                 args.port,  # ty: ignore[unresolved-attribute]
                 args.backend,  # ty: ignore[unresolved-attribute]
                 getattr(args, "cloud", None),
+                session_name=args.session_name,  # ty: ignore[unresolved-attribute]
             )
         case "prompt":
             cmd_agent_prompt(
@@ -113,6 +118,20 @@ def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
     agent_subparsers = agent_parser.add_subparsers(dest="agent_cmd", required=True)
     agent_start_parser = agent_subparsers.add_parser("start", help="Start interactive agent")
     _add_agent_common_args(agent_start_parser)
+    session_options = agent_start_parser.add_mutually_exclusive_group()
+    session_options.add_argument(
+        "--list-session",
+        action="store_true",
+        help="List Arkai-managed sessions and exit",
+    )
+    session_options.add_argument(
+        "--session",
+        nargs="?",
+        const="",
+        dest="session_name",
+        metavar="NAME",
+        help="Resume a session by name/ID, create it if NAME is new, or choose one if omitted",
+    )
     agent_start_parser.add_argument(
         "--cloud",
         nargs="+",
@@ -182,6 +201,7 @@ class AgentLaunchSpec:
     environment: dict[str, str]
     cleanup_paths: list[Path] = field(default_factory=list)
     suppress_stderr_prefixes: tuple[str, ...] = ()
+    working_directory: str | None = None
 
 
 def _cloud_provider(cloud_services: list[str] | None) -> str | None:
@@ -204,6 +224,7 @@ def run_launch_spec(spec: AgentLaunchSpec, capture_stdout: bool = False) -> str 
             stdin=subprocess.DEVNULL if capture_stdout else sys.stdin,
             stdout=subprocess.PIPE if capture_stdout else None,
             stderr=subprocess.PIPE if capture_stderr else None,
+            cwd=spec.working_directory,
             env=spec.environment,
         )
         if capture_stdout:
@@ -325,6 +346,11 @@ def _agent_context(
             else inference.is_inference_running()
         )
     )
+    inference_port = (
+        port if port is not None else config.get_config_value(cfg, "inference.port", 8081)
+    )
+    if not use_cloud and not inference_running:
+        inference_running = inference.is_inference_server_available(inference_port)
     require_model = not use_cloud and not inference_running
     config.validate_config(
         cfg,
@@ -393,7 +419,6 @@ def _agent_context(
                 engine_started = True
 
         if not use_cloud:
-            inference_port = config.get_config_value(cfg, "inference.port", 8081)
             active_model = inference.get_inference_model(inference_port)
             cfg.setdefault("inference", {})["model"] = active_model
             _sync_running_inference_backend(cfg, port)
@@ -722,6 +747,8 @@ def _dispatch_agent(
     ctx: AgentContext,
     prompt: str | None = None,
     capture_stdout: bool = False,
+    session: dict | None = None,
+    resume_session: bool = False,
 ) -> str | None:
     """Dispatch to the appropriate agent start function.
 
@@ -761,8 +788,26 @@ def _dispatch_agent(
                 *launch_args,
                 cloud_services=ctx.cloud_services,
                 cloud_model=ctx.cloud_model,
+                session_dir=(
+                    str(agent_session.get_session_dir(session["id"]) / "native")
+                    if session is not None
+                    else None
+                ),
+                resume_session=resume_session,
+                native_session_id=session.get("native_session_id") if session else None,
+                session_record=session,
             )
-        return module.start(*launch_args)
+        return module.start(
+            *launch_args,
+            session_dir=(
+                str(agent_session.get_session_dir(session["id"]) / "native")
+                if session is not None
+                else None
+            ),
+            resume_session=resume_session,
+            native_session_id=session.get("native_session_id") if session else None,
+            session_record=session,
+        )
     return None
 
 
@@ -812,6 +857,7 @@ def cmd_agent(
     port: int | None = None,
     backend: str | None = None,
     cloud_services: list[str] | None = None,
+    session_name: str | None = None,
 ) -> None:
     """Start interactive agent session (requires TTY).
 
@@ -835,22 +881,187 @@ def cmd_agent(
         utils.error("agent start requires a TTY (interactive terminal)", 1)
         sys.exit(1)
 
-    selected_agent_name = _select_agent_name(agent_name)
-    with _agent_context(
-        agent_name=selected_agent_name,
-        model=model,
-        port=port,
-        no_start_inference=no_start_inference,
-        no_mcp=no_mcp,
-        no_sandbox=no_sandbox,
-        sandbox_cwd=sandbox_cwd,
-        sandbox_profile=sandbox_profile,
-        sandbox_volume=sandbox_volume,
-        sandbox_environment=sandbox_environment,
-        backend=backend,
-        cloud_services=cloud_services,
-    ) as ctx:
-        _dispatch_agent(ctx)
+    initial_workdir = os.path.abspath(sandbox_cwd or os.getcwd())
+    session: dict | None = None
+    resume_session = False
+    requested_name = session_name
+    if requested_name == "":
+        session = _choose_session(initial_workdir, agent_name)
+        resume_session = session is not None
+    elif requested_name:
+        session = agent_session.find_session(
+            requested_name,
+            agent=agent_name,
+            working_directory=initial_workdir,
+        )
+        if session is None and agent_name:
+            session_for_other_agent = agent_session.find_session(
+                requested_name,
+                working_directory=initial_workdir,
+            )
+            if session_for_other_agent is not None:
+                raise RuntimeError(
+                    f"Session {requested_name!r} belongs to agent "
+                    f"{session_for_other_agent.get('agent')}; cannot resume it with {agent_name}"
+                )
+        resume_session = session is not None
+
+    if resume_session and session is not None:
+        if agent_name and agent_name != session.get("agent"):
+            raise RuntimeError(
+                f"Session {requested_name!r} belongs to agent {session.get('agent')}; "
+                f"cannot resume it with {agent_name}"
+            )
+        selected_agent_name = session["agent"]
+        saved_options = session.get("launch_options", {})
+        no_start_inference = no_start_inference or saved_options.get("no_start_inference", False)
+        no_mcp = no_mcp or saved_options.get("no_mcp", False)
+        no_sandbox = no_sandbox or saved_options.get("no_sandbox", False)
+        saved_workdir = session.get("working_directory")
+        if not isinstance(saved_workdir, str):
+            raise RuntimeError("Session metadata is missing its working directory")
+        if sandbox_cwd and os.path.realpath(sandbox_cwd) != os.path.realpath(saved_workdir):
+            raise RuntimeError(
+                f"Session belongs to {saved_workdir}; omit --cwd to resume in its original "
+                "directory"
+            )
+        sandbox_cwd = saved_workdir
+        sandbox_profile = sandbox_profile or saved_options.get("sandbox_profile")
+        sandbox_volume = sandbox_volume or saved_options.get("sandbox_volume")
+        cloud_services = cloud_services or saved_options.get("cloud_services")
+        recorded_environment = set(saved_options.get("environment_keys", []))
+        provided_environment = set(sandbox_environment or {})
+        missing_environment = sorted(recorded_environment - provided_environment)
+        if missing_environment:
+            utils.warn(
+                "This session used sandbox environment overrides that were not saved. "
+                "Re-supply them with --env: " + ", ".join(missing_environment)
+            )
+    else:
+        selected_agent_name = _select_agent_name(agent_name)
+        if requested_name and _looks_like_session_id(requested_name):
+            raise RuntimeError(f"Arkai session not found: {requested_name}")
+        workdir = initial_workdir
+        session = agent_session.create_session(
+            selected_agent_name,
+            requested_name or None,
+            workdir,
+            {
+                "model": model,
+                "no_start_inference": no_start_inference,
+                "no_mcp": no_mcp,
+                "no_sandbox": no_sandbox,
+                "sandbox_profile": sandbox_profile,
+                "sandbox_volume": sandbox_volume,
+                "port": port,
+                "backend": backend,
+                "cloud_services": cloud_services,
+                "environment_keys": sorted((sandbox_environment or {}).keys()),
+            },
+        )
+
+    assert session is not None
+    session["status"] = "starting"
+    agent_session.save_session(session)
+    try:
+        with _agent_context(
+            agent_name=selected_agent_name,
+            model=model,
+            port=port,
+            no_start_inference=no_start_inference,
+            no_mcp=no_mcp,
+            no_sandbox=no_sandbox,
+            sandbox_cwd=sandbox_cwd,
+            sandbox_profile=sandbox_profile,
+            sandbox_volume=sandbox_volume,
+            sandbox_environment=sandbox_environment,
+            backend=backend,
+            cloud_services=cloud_services,
+        ) as ctx:
+            launch_options = session.setdefault("launch_options", {})
+            launch_options["no_mcp"] = no_mcp or not ctx.use_mcp
+            launch_options["no_sandbox"] = no_sandbox or not ctx.use_sandbox
+            launch_options["cloud_services"] = list(ctx.cloud_services)
+            launch_options["sandbox_profile"] = sandbox_profile or config.get_config_value(
+                ctx.cfg, "sandbox.active_profile"
+            )
+            session["status"] = "active"
+            agent_session.save_session(session)
+            _dispatch_agent(ctx, session=session, resume_session=resume_session)
+    except BaseException:
+        session["status"] = "interrupted"
+        agent_session.save_session(session)
+        raise
+    session["status"] = "paused"
+    agent_session.save_session(session)
+
+
+def _looks_like_session_id(value: str) -> bool:
+    """Return whether a reference has the form of a UUID session ID."""
+    try:
+        uuid.UUID(value)
+    except ValueError:
+        return False
+    return True
+
+
+def _format_sessions(sessions: list[dict]) -> str:
+    """Format session catalog rows for terminal output."""
+    if not sessions:
+        return "No Arkai-managed sessions found."
+    rows = [
+        "ID                                   NAME                 AGENT     STATUS    "
+        "UPDATED              DIRECTORY"
+    ]
+    for session in sessions:
+        updated = str(session.get("updated_at", "")).replace("T", " ")[:19]
+        name = session.get("name") or "-"
+        directory = session.get("working_directory", "")
+        rows.append(
+            f"{session['id']}  {name[:20]:20} {session.get('agent', ''):9} "
+            f"{session.get('status', ''):9} {updated:20} {directory}"
+        )
+    return "\n".join(rows)
+
+
+def cmd_agent_list_sessions(agent_name: str | None = None, cwd: str | None = None) -> None:
+    """List Arkai-managed sessions without starting agent infrastructure."""
+    sessions = agent_session.list_sessions(
+        agent=agent_name,
+        working_directory=os.path.abspath(cwd) if cwd else None,
+    )
+    print(_format_sessions(sessions))
+
+
+def _choose_session(working_directory: str, agent_name: str | None = None) -> dict | None:
+    """Prompt for an existing project session; return None when there are none."""
+    sessions = agent_session.list_sessions(
+        agent=agent_name,
+        working_directory=working_directory,
+    )
+    if not sessions:
+        utils.info("No saved sessions for this directory; starting a new session.")
+        return None
+    print("Saved sessions:")
+    for index, session in enumerate(sessions, start=1):
+        label = session.get("name") or session["id"][:8]
+        print(f"{index}. {label} ({session.get('agent')}) [{session['id']}]")
+    try:
+        selection = input("Resume session by number or full ID: ").strip()
+    except EOFError as error:
+        raise RuntimeError("An interactive terminal is required to choose a session") from error
+    if not selection:
+        raise RuntimeError("No session selected")
+    if selection.isdigit() and 1 <= int(selection) <= len(sessions):
+        return sessions[int(selection) - 1]
+    session = agent_session.find_session(
+        selection,
+        agent=agent_name,
+        working_directory=working_directory,
+    )
+    if session is None:
+        raise RuntimeError(f"Session not found: {selection}")
+    return session
 
 
 def cmd_agent_prompt(

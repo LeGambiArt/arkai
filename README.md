@@ -483,6 +483,8 @@ inference profile by default.
 
 ```bash
 arkai agent start [-a AGENT] [-m MODEL] [options]
+arkai agent start --list-session [-a AGENT]
+arkai agent start --session [NAME]
 arkai agent start -a crush --cloud openai
 arkai agent start -a pi --cloud openai
 arkai agent start -a omp --cloud openai
@@ -512,8 +514,32 @@ arkai agent prompt -a codex --cloud openai "Summarize this project"
 | `-v/--volume PATH` | Mount extra volume in sandbox (repeatable) |
 | `-e/--env KEY=VALUE` | Set env var in sandbox (repeatable) |
 | `--cwd PATH` | Override directory mounted as cwd in sandbox |
+| `--list-session` | List Arkai-managed interactive sessions and exit; `-a/--agent` filters the list |
+| `--session [NAME]` | Resume a session by its name or ID; create a named session if NAME is new. With no name, choose from sessions in the current directory |
 
 > Note: use `hf:org/model` as the model value to load a HuggingFace model.
+
+Interactive sessions started with `agent start` are registered by Arkai and can
+be listed or resumed later:
+
+```bash
+arkai agent start --list-session
+arkai agent start --session refactor-auth
+arkai agent start --session
+```
+
+When resuming, Arkai restores the working directory and sandbox/MCP settings. It
+uses a healthy inference server already available on the configured port, even
+if Arkai did not start it; otherwise it uses the current config and CLI options
+to start one. A session is not pinned to the model or inference server from its
+first launch. Sandbox environment values are not saved; pass the required
+`--env KEY=VALUE` options again. Session transcripts remain in each agent's
+native session store.
+Arkai keeps private session metadata and agent-specific state under
+`~/.local/state/arkai/agent-sessions/`.
+The unified list contains sessions launched through Arkai, not sessions started
+directly in an agent. Names are project-scoped; use the full ID from the list
+to resume a session from another directory.
 
 With `--cloud openai`, Arkai does not start or require the local inference
 engine. Crush, Pi, and OMP use their native OpenAI providers; OpenCode uses its

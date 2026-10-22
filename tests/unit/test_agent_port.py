@@ -17,6 +17,7 @@ def test_agent_start_passes_explicit_port_to_inference() -> None:
         patch.object(agent.config, "load_config", return_value=cfg),
         patch.object(agent.config, "validate_config", return_value=True),
         patch.object(agent.inference, "is_inference_running", return_value=False) as running,
+        patch.object(agent.inference, "is_inference_server_available", return_value=False),
         patch.object(agent.inference, "cmd_inference_start") as start,
         patch.object(agent.inference, "get_inference_model", return_value="active.gguf"),
         patch.object(agent.inference, "cmd_inference_stop"),
@@ -42,6 +43,7 @@ def test_agent_start_passes_quantized_model_to_inference() -> None:
         patch.object(agent.config, "load_config", return_value=cfg),
         patch.object(agent.config, "validate_config", return_value=True),
         patch.object(agent.inference, "is_inference_running", return_value=False),
+        patch.object(agent.inference, "is_inference_server_available", return_value=False),
         patch.object(agent.inference, "cmd_inference_start") as start,
         patch.object(agent.inference, "get_inference_model", return_value="active.gguf"),
         patch.object(agent.inference, "cmd_inference_stop"),
@@ -51,6 +53,35 @@ def test_agent_start_passes_quantized_model_to_inference() -> None:
             pass
 
     start.assert_called_once_with(model=model)
+
+
+def test_agent_context_reuses_healthy_untracked_inference_server() -> None:
+    """A responsive inference server is reused even without Arkai's PID file."""
+    cfg = {
+        "agent": {"name": "opencode", "path": "/agent", "mcp": False},
+        "inference": {"model": "saved-model.gguf", "port": 8081},
+        "sandbox": {"disable": True},
+    }
+
+    with (
+        patch.object(agent.config, "load_config", return_value=cfg),
+        patch.object(agent.config, "validate_config", return_value=True),
+        patch.object(agent.inference, "is_inference_running", return_value=False),
+        patch.object(
+            agent.inference, "is_inference_server_available", return_value=True
+        ) as available,
+        patch.object(agent.inference, "cmd_inference_start") as start,
+        patch.object(agent.inference, "get_inference_model", return_value="active-model"),
+        patch.object(agent.inference, "cmd_inference_stop") as stop,
+        patch.object(agent, "_sync_running_inference_backend"),
+        patch.object(agent.utils, "resolve_binary", return_value="/agent"),
+    ):
+        with agent._agent_context("opencode", model="old-session-model") as context:
+            assert context.cfg["inference"]["model"] == "active-model"
+
+    available.assert_called_once_with(8081)
+    start.assert_not_called()
+    stop.assert_not_called()
 
 
 def test_inference_paths_are_unique_for_explicit_ports() -> None:
@@ -506,6 +537,7 @@ def test_agent_context_passes_backend_override_to_inference() -> None:
         patch.object(agent.config, "load_config", return_value=cfg),
         patch.object(agent.config, "validate_config", return_value=True),
         patch.object(agent.inference, "is_inference_running", return_value=False),
+        patch.object(agent.inference, "is_inference_server_available", return_value=False),
         patch.object(agent.inference, "cmd_inference_start") as start,
         patch.object(agent.inference, "get_inference_model", return_value="active.gguf"),
         patch.object(agent.inference, "cmd_inference_stop"),

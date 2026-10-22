@@ -31,6 +31,8 @@ def build_launch_spec(
     cli_volumes: list | None = None,
     cli_environment: dict | None = None,
     prompt: str | None = None,
+    native_session_id: str | None = None,
+    resume_session: bool = False,
 ) -> AgentLaunchSpec:
     """Create Claude configuration and return its process launch specification."""
     from arkai.agent import _build_sandbox_cmd, _get_agent_model_id
@@ -55,6 +57,11 @@ def build_launch_spec(
         "CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT": "1",
     }
     command = [agent_path]
+    if native_session_id:
+        if resume_session:
+            command.extend(["--resume", native_session_id])
+        else:
+            command.extend(["--session-id", native_session_id])
     if prompt is not None:
         command.extend(["-p", prompt, "--model", model_name])
     else:
@@ -114,7 +121,7 @@ def build_launch_spec(
             environment.pop(var, None)
         environment.update(anthropic_env)
 
-    return AgentLaunchSpec(command, environment, cleanup_paths)
+    return AgentLaunchSpec(command, environment, cleanup_paths, working_directory=workdir)
 
 
 def start(
@@ -128,6 +135,10 @@ def start(
     cli_environment: dict | None = None,
     prompt: str | None = None,
     capture_stdout: bool = False,
+    session_dir: str | None = None,
+    resume_session: bool = False,
+    native_session_id: str | None = None,
+    session_record: dict | None = None,
 ) -> str | None:
     """Build and run Claude's launch specification."""
     return run_launch_spec(
@@ -141,6 +152,8 @@ def start(
             cli_volumes,
             cli_environment,
             prompt,
+            native_session_id,
+            resume_session,
         ),
         capture_stdout,
     )

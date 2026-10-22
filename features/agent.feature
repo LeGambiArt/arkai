@@ -34,6 +34,19 @@ Feature: Agent Execution
     When I run "arkai agent start" with "-m test-model.gguf" in a TTY
     Then the exit code is 0
 
+  Scenario: Agent lists Arkai sessions without starting agent infrastructure
+    Given a saved Arkai agent session named "session-to-list"
+    When I list Arkai agent sessions
+    Then the exit code is 0
+    And the output contains "session-to-list"
+    And listing does not start agent infrastructure
+
+  Scenario: Agent resumes a named Arkai session
+    Given a saved Arkai agent session named "session-to-resume"
+    When I resume the Arkai session "session-to-resume" in a TTY
+    Then the exit code is 0
+    And the named Arkai session was resumed
+
   Scenario: Pi installation can be cancelled
     When I cancel the pi agent installation
     Then the pi agent installation was not run

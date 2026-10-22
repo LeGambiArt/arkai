@@ -67,11 +67,17 @@ def build_launch_spec(
     cloud_services: list[str] | None = None,
     cloud_api_key: str | None = None,
     cloud_model: str | None = None,
+    session_dir: str | None = None,
+    resume_session: bool = False,
 ) -> AgentLaunchSpec:
     """Create OpenCode configuration and return its process launch specification."""
     from arkai.agent import _build_sandbox_cmd, _get_agent_model_id, _get_model_name
 
     config_dir = _get_config_dir()
+    session_data_home = Path(session_dir) if session_dir else None
+    if session_data_home is not None:
+        session_data_home.mkdir(parents=True, exist_ok=True, mode=0o700)
+        session_data_home.chmod(0o700)
     cloud_services = list(dict.fromkeys(service.lower() for service in cloud_services or []))
     is_cloud = bool(cloud_services)
     config_data: dict = {"$schema": "https://opencode.ai/config.json"}
@@ -138,6 +144,8 @@ def build_launch_spec(
         )
     if use_sandbox:
         try:
+            if session_data_home is not None:
+                sandbox_volumes.append(str(session_data_home))
             sandbox_prefix = _build_sandbox_cmd(
                 cfg,
                 workdir,
@@ -167,6 +175,8 @@ def build_launch_spec(
                 path.unlink(missing_ok=True)
             raise
         env_args = ["env", f"OPENCODE_CONFIG={config_file}"]
+        if session_data_home is not None:
+            env_args.append(f"XDG_DATA_HOME={session_data_home}")
         # OpenCode's project discovery walks above the mounted workspace. The
         # sandbox intentionally grants only metadata traversal there, which
         # Bun's discovery path cannot use reliably. Arkai also supplies the
@@ -178,6 +188,8 @@ def build_launch_spec(
         command = sandbox_prefix + env_args + [agent_path]
     else:
         environment["OPENCODE_CONFIG"] = str(config_file)
+        if session_data_home is not None:
+            environment["XDG_DATA_HOME"] = str(session_data_home)
         if tui_file is not None:
             environment["OPENCODE_TUI_CONFIG"] = tui_file
         command = [agent_path]
@@ -185,8 +197,10 @@ def build_launch_spec(
     if prompt is not None:
         command.extend(["run", "--standalone", prompt])
     else:
+        if resume_session:
+            command.append("--continue")
         command.append("--standalone")
-    return AgentLaunchSpec(command, environment, cleanup_paths)
+    return AgentLaunchSpec(command, environment, cleanup_paths, working_directory=workdir)
 
 
 def start(
@@ -202,6 +216,10 @@ def start(
     capture_stdout: bool = False,
     cloud_services: list[str] | None = None,
     cloud_model: str | None = None,
+    session_dir: str | None = None,
+    resume_session: bool = False,
+    native_session_id: str | None = None,
+    session_record: dict | None = None,
 ) -> str | None:
     """Build and run OpenCode's launch specification."""
     cloud_api_key = (
@@ -223,6 +241,8 @@ def start(
             cloud_services,
             cloud_api_key,
             cloud_model,
+            session_dir,
+            resume_session,
         ),
         capture_stdout,
     )

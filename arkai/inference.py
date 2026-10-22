@@ -126,6 +126,15 @@ def _is_inference_server_healthy(port: int, path: str = "/v1/models") -> bool:
         return False
 
 
+def is_inference_server_available(port: int) -> bool:
+    """Check whether any compatible inference server is serving on ``port``.
+
+    Unlike :func:`is_inference_running`, this does not require Arkai to own the
+    process or have a PID file for it.
+    """
+    return _is_inference_server_healthy(port)
+
+
 def _display_startup_output(log_file) -> None:
     """Forward newly written server output while Arkai waits for readiness."""
     output = log_file.read()

@@ -11,10 +11,32 @@ from arkai import config, utils
 from arkai.agent import AgentLaunchSpec, run_launch_spec
 
 
-def _get_codex_home() -> Path:
+def _get_codex_home(session_dir: str | None = None) -> Path:
     """Resolve Codex's config/auth directory without changing the user's setting."""
+    if session_dir:
+        return Path(session_dir) / "codex-home"
     configured_home = os.environ.get("CODEX_HOME")
     return Path(configured_home or "~/.codex").expanduser().resolve()
+
+
+def _prepare_codex_home(session_dir: str | None) -> tuple[Path, list[Path]]:
+    """Create an isolated Codex session home while reusing user config and auth."""
+    codex_home = _get_codex_home(session_dir)
+    codex_home.mkdir(parents=True, exist_ok=True, mode=0o700)
+    codex_home.chmod(0o700)
+    shared_paths: list[Path] = []
+    if session_dir:
+        global_home = _get_codex_home()
+        for filename in ("auth.json", "config.toml"):
+            global_path = global_home / filename
+            if not global_path.is_file():
+                continue
+            source = global_path.resolve()
+            link = codex_home / filename
+            if not link.exists() and not link.is_symlink():
+                link.symlink_to(source)
+            shared_paths.append(source)
+    return codex_home, shared_paths
 
 
 def _is_git_repository(path: str | None) -> bool:
@@ -39,13 +61,15 @@ def _create_profile(
     use_sandbox: bool,
     cloud_provider: str | None,
     cloud_model: str | None,
+    codex_home: Path | None = None,
+    profile_name: str | None = None,
 ) -> tuple[Path, str]:
     """Write a unique temporary profile for Arkai local inference or OpenAI cloud."""
     from arkai.agent import _get_agent_model_id
 
-    codex_home = _get_codex_home()
+    codex_home = codex_home or _get_codex_home()
     codex_home.mkdir(parents=True, exist_ok=True)
-    profile_name = f"arkai-{uuid.uuid4().hex}"
+    profile_name = profile_name or f"arkai-{uuid.uuid4().hex}"
     profile_path = codex_home / f"{profile_name}.config.toml"
     profile_lines: list[str] = []
     if cloud_provider == "openai":
@@ -111,6 +135,9 @@ def build_launch_spec(
     prompt: str | None = None,
     cloud_services: list[str] | None = None,
     cloud_model: str | None = None,
+    session_dir: str | None = None,
+    resume_session: bool = False,
+    session_id: str | None = None,
 ) -> AgentLaunchSpec:
     """Create a temporary Codex profile and return its process launch specification."""
     from arkai.agent import _build_sandbox_cmd, _cloud_provider
@@ -121,11 +148,14 @@ def build_launch_spec(
             "Codex does not support Vertex: its custom providers require the Responses API, "
             "which Vertex's OpenAI-compatible endpoint does not currently provide"
         )
+    codex_home, shared_paths = _prepare_codex_home(session_dir)
+    profile_name = f"arkai-{session_id.replace('-', '')}" if session_id else None
     profile_path, profile_name = _create_profile(
-        cfg, wtmcp_port, use_sandbox, cloud_provider, cloud_model
+        cfg, wtmcp_port, use_sandbox, cloud_provider, cloud_model, codex_home, profile_name
     )
-    codex_home = profile_path.parent
     command = [agent_path, "--no-daemon", "--profile", profile_name]
+    if resume_session:
+        command.extend(["resume", "--last"])
     if prompt is not None:
         command.append("exec")
         if not _is_git_repository(workdir):
@@ -142,6 +172,10 @@ def build_launch_spec(
         sandbox_environment["CODEX_HOME"] = str(codex_home)
         sandbox_volumes = list(cli_volumes or [])
         mounted_paths = {volume.rsplit(":", 1)[0] for volume in sandbox_volumes}
+        for shared_path in shared_paths:
+            if str(shared_path) not in mounted_paths:
+                sandbox_volumes.append(str(shared_path))
+                mounted_paths.add(str(shared_path))
         for variable in ("CODEX_CA_CERTIFICATE", "SSL_CERT_FILE"):
             certificate = sandbox_environment.get(variable) or os.environ.get(variable)
             if not certificate:
@@ -184,7 +218,7 @@ def build_launch_spec(
             raise
         command = sandbox_prefix + command
 
-    return AgentLaunchSpec(command, environment, [profile_path])
+    return AgentLaunchSpec(command, environment, [profile_path], working_directory=workdir)
 
 
 def start(
@@ -200,6 +234,10 @@ def start(
     capture_stdout: bool = False,
     cloud_services: list[str] | None = None,
     cloud_model: str | None = None,
+    session_dir: str | None = None,
+    resume_session: bool = False,
+    native_session_id: str | None = None,
+    session_record: dict | None = None,
 ) -> str | None:
     """Build and run Codex's launch specification."""
     return run_launch_spec(
@@ -215,6 +253,9 @@ def start(
             prompt,
             cloud_services,
             cloud_model,
+            session_dir,
+            resume_session,
+            session_record.get("id") if session_record else None,
         ),
         capture_stdout,
     )

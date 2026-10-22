@@ -511,6 +511,8 @@ def build_launch_spec(
     prompt: str | None = None,
     cloud_services: list[str] | None = None,
     cloud_model: str | None = None,
+    session_dir: str | None = None,
+    resume_session: bool = False,
 ) -> AgentLaunchSpec:
     """Create Pi configuration and return its process launch specification."""
     from arkai import wtmcp
@@ -565,6 +567,13 @@ def build_launch_spec(
     theme = config.get_config_value(cfg, "agent.theme")
     if theme is not None:
         agent_args.extend(["--use-theme", theme])
+    if session_dir:
+        native_session_dir = Path(session_dir) / "pi-sessions"
+        native_session_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+        native_session_dir.chmod(0o700)
+        agent_args.extend(["--session-dir", str(native_session_dir)])
+        if resume_session:
+            agent_args.append("--continue")
     if mcp_available:
         agent_args.extend(["--mcp-config", str(mcp_config)])
     if prompt is not None:
@@ -577,6 +586,8 @@ def build_launch_spec(
             node_path = _resolve_node_path()
             runtime_volumes = list(cli_volumes or [])
             runtime_volumes.extend(get_runtime_volumes(agent_path, node_path))
+            if session_dir:
+                runtime_volumes.append(str(native_session_dir))
             if pi_package_json is not None:
                 pi_package_dir = Path(pi_package_json).parent.resolve()
                 package_is_mounted = False
@@ -653,6 +664,7 @@ def build_launch_spec(
         env,
         cleanup_paths,
         suppress_stderr_prefixes=suppressed_stderr_prefixes,
+        working_directory=workdir,
     )
 
 
@@ -669,6 +681,10 @@ def start(
     capture_stdout: bool = False,
     cloud_services: list[str] | None = None,
     cloud_model: str | None = None,
+    session_dir: str | None = None,
+    resume_session: bool = False,
+    native_session_id: str | None = None,
+    session_record: dict | None = None,
 ) -> str | None:
     """Build and run Pi's launch specification."""
     if cloud_services and any(service.lower() == "openai" for service in cloud_services):
@@ -688,6 +704,8 @@ def start(
             prompt,
             cloud_services,
             cloud_model,
+            session_dir,
+            resume_session,
         ),
         capture_stdout,
     )
