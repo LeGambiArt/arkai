@@ -60,6 +60,23 @@ def step_valid_config_with_backend(context, backend):
     }
 
 
+@given("a valid Strata inference config")  # ty: ignore[call-non-callable]
+def step_valid_strata_inference_config(context):
+    """Configure a Strata catalog model on a dedicated local test port."""
+    context.config_file = ".arkai.yaml"
+    context.config_data = {
+        "agent": {"name": "opencode"},
+        "inference": {
+            "backend": "strata",
+            "model": "q2_0",
+            "port": 9090,
+            "context_size": 4096,
+            "gpu_layers": -1,
+            "startup_timeout": 1,
+        },
+    }
+
+
 @given("a valid .arkai.yaml file with inference profiles")  # ty: ignore[call-non-callable]
 def step_valid_config_with_multiple_models(context):
     """Create a config containing named model profiles and sampling settings."""

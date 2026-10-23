@@ -62,3 +62,37 @@ Feature: Inference Engine Management
     Given a valid .arkai.yaml file with inference profiles
     When I run "arkai config validate"
     Then the exit code is 0
+
+  Scenario: Validate a Strata inference configuration
+    Given a valid Strata inference config
+    When I run "arkai config validate"
+    Then the exit code is 0
+
+  Scenario: Require approval before Strata downloads model files
+    Given a valid Strata inference config
+    And Arkai-managed Strata is installed for inference
+    And the Strata launch plan requires model downloads
+    When I run "arkai inference start"
+    Then the exit code is 1
+    And the error contains "arkai inference start --allow-provisioning"
+    And no Strata launch was started
+
+  Scenario: Approve Strata model provisioning explicitly
+    Given a valid Strata inference config
+    And Arkai-managed Strata is installed for inference
+    And the Strata launch plan requires model downloads
+    When I run "arkai inference start --allow-provisioning"
+    Then the exit code is 0
+    And the Strata launch used Arkai's managed executable
+    And Strata received download approval
+
+  Scenario: Reuse a running Strata profile without taking ownership
+    Given a valid Strata inference config
+    And Arkai-managed Strata is installed for inference
+    And Strata reports an identical profile already running
+    When I run "arkai inference start"
+    Then the exit code is 0
+    And Arkai records the Strata profile as reused
+    When I run "arkai inference stop"
+    Then the exit code is 0
+    And Arkai did not stop the reused Strata profile

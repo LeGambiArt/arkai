@@ -34,6 +34,12 @@ Feature: Agent Execution
     When I run "arkai agent start" with "-m test-model.gguf" in a TTY
     Then the exit code is 0
 
+  Scenario: Agent uses the Strata model when its model list is empty
+    Given a valid Strata inference config
+    When I run "arkai agent start" against Strata with an empty model list in a TTY
+    Then the exit code is 0
+    And the agent config uses Strata model "q2_0"
+
   Scenario: Agent lists Arkai sessions without starting agent infrastructure
     Given a saved Arkai agent session named "session-to-list"
     When I list Arkai agent sessions

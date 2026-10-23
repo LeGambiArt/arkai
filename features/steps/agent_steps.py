@@ -8,7 +8,7 @@ import subprocess
 import sys
 import tempfile
 import threading
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import StringIO
 from pathlib import Path
@@ -65,6 +65,8 @@ def _run_agent_in_tty(
     no_sandbox: bool = False,
     model: str | None = None,
     agent_name: str | None = None,
+    no_start_inference: bool = False,
+    strata_empty_model_list: bool = False,
 ) -> None:
     """Run agent with a mocked TTY and capture output."""
     old_stdout = sys.stdout
@@ -94,6 +96,25 @@ def _run_agent_in_tty(
 
     popen_cmd: list = []
 
+    if strata_empty_model_list:
+        model_response = MagicMock()
+        model_response.json.return_value = {"object": "list", "data": []}
+        state_path = inference.get_inference_state_path()
+        strata_state = {"backend": "strata", "model": "q2_0", "port": 9090}
+
+        def load_strata_state(path):
+            if str(path) == state_path:
+                return strata_state
+            raise FileNotFoundError(path)
+
+        model_lookup_patch = patch.object(inference.requests, "get", return_value=model_response)
+        state_load_patch = patch.object(utils, "load_yaml", side_effect=load_strata_state)
+    else:
+        model_lookup_patch = patch.object(
+            inference, "get_inference_model", return_value="test.gguf"
+        )
+        state_load_patch = nullcontext()
+
     def capture_popen(cmd, **kwargs):
         popen_cmd.extend(cmd)
         return mock_proc
@@ -101,7 +122,8 @@ def _run_agent_in_tty(
     with (
         patch.object(sys.stdin, "isatty", return_value=True),
         patch.object(inference, "is_inference_running", return_value=True),
-        patch.object(inference, "get_inference_model", return_value="test.gguf"),
+        model_lookup_patch,
+        state_load_patch,
         patch.object(wtmcp, "is_wtmcp_running", return_value=False),
         patch.object(wtmcp, "cmd_wtmcp_start") as mock_wtmcp_start,
         patch.object(utils, "resolve_binary", return_value="/usr/bin/fake-agent"),
@@ -119,7 +141,11 @@ def _run_agent_in_tty(
     ):
         try:
             agent.cmd_agent(
-                no_mcp=no_mcp, no_sandbox=no_sandbox, model=model, agent_name=agent_name
+                no_mcp=no_mcp,
+                no_sandbox=no_sandbox,
+                model=model,
+                agent_name=agent_name,
+                no_start_inference=no_start_inference,
             )
         except SystemExit as e:
             context.exit_code = e.code if e.code else 1
@@ -130,6 +156,7 @@ def _run_agent_in_tty(
             context.wtmcp_start_called = mock_wtmcp_start.called
             # sandbox was used if the command starts with the arapuca prefix ("fake-agent run ...")
             context.sandbox_used = len(popen_cmd) >= 2 and popen_cmd[1] == "run"
+            context.agent_config_text = write_text.call_args.args[0]
 
             mkstemp.assert_called_once_with(
                 prefix="opencode-", suffix=".json", dir=agent_opencode.Path(config_dir)
@@ -191,6 +218,25 @@ def step_run_agent_no_sandbox_flag(context):
 def step_run_agent_tty(context):
     """Run arkai agent start in a TTY."""
     _run_agent_in_tty(context)
+
+
+@when('I run "arkai agent start" against Strata with an empty model list in a TTY')  # ty: ignore[call-non-callable]
+def step_run_agent_with_strata_empty_models(context):
+    """Run an agent against Strata's valid but empty ``/v1/models`` response."""
+    _run_agent_in_tty(
+        context,
+        no_mcp=True,
+        no_sandbox=True,
+        agent_name="opencode",
+        no_start_inference=True,
+        strata_empty_model_list=True,
+    )
+
+
+@then('the agent config uses Strata model "{model}"')  # ty: ignore[call-non-callable]
+def step_agent_config_uses_strata_model(context, model):
+    """The empty model listing falls back to the model selected for Strata."""
+    assert model in context.agent_config_text
 
 
 @then("wtmcp was not started")  # ty: ignore[call-non-callable]

@@ -136,6 +136,51 @@ class TestBenchmarkRunner:
             timeout=300,
         )
 
+    def test_strata_completion_uses_chat_api(self):
+        """Strata exposes Chat Completions rather than the legacy completions route."""
+        runner = benchmark.BenchmarkRunner(
+            benchmark.BenchmarkConfig(
+                model="Q2_0",
+                port=8081,
+                iterations=1,
+                warmup=False,
+                token_limit=1,
+                temperature=0.0,
+                seed=42,
+                prompts=[],
+                backend="strata",
+            )
+        )
+        response = type(
+            "Response",
+            (),
+            {
+                "json": lambda self: {"usage": {"prompt_tokens": 10, "completion_tokens": 1}},
+                "raise_for_status": lambda self: None,
+            },
+        )()
+
+        with (
+            patch.object(benchmark.requests, "post", return_value=response) as post,
+            patch.object(benchmark.time, "time", side_effect=[100.0, 101.0]),
+        ):
+            data, prefill_ms, generation_ms, total_ms = runner._send_completion_request(
+                "test prompt"
+            )
+
+        assert data["usage"]["completion_tokens"] == 1
+        assert total_ms == prefill_ms == generation_ms == 1000.0
+        post.assert_called_once_with(
+            "http://127.0.0.1:8081/v1/chat/completions",
+            json={
+                "messages": [{"role": "user", "content": "test prompt"}],
+                "max_tokens": 1,
+                "temperature": 0.0,
+                "seed": 42,
+            },
+            timeout=300,
+        )
+
     def test_reports_running_server_model(self, capsys):
         """Test that the benchmark reports the model served by inference."""
         runner = benchmark.BenchmarkRunner(
@@ -270,6 +315,110 @@ class TestBenchmarkRunner:
             context_size=65536,
             port=None,
         )
+
+    def test_no_inference_adopts_borrowed_strata_without_stopping_it(self):
+        """-I benchmarks a reused Strata profile instead of detaching it as a mismatch."""
+        runner = benchmark.BenchmarkRunner(
+            benchmark.BenchmarkConfig(
+                model="configured-model",
+                port=8081,
+                iterations=1,
+                warmup=False,
+                token_limit=1,
+                temperature=0.0,
+                seed=42,
+                prompts=[],
+                backend="llama-cpp",
+                no_inference=True,
+            )
+        )
+        state = {
+            "backend": "strata",
+            "model": "Q2_0",
+            "context_size": 131072,
+            "gpu_layers": "managed by Strata",
+            "strata_owned": False,
+        }
+
+        with (
+            patch.object(benchmark.inference, "is_inference_running", return_value=True),
+            patch.object(benchmark.utils, "load_yaml", return_value=state),
+            patch.object(benchmark.inference, "cmd_inference_stop") as stop,
+            patch.object(benchmark.inference, "cmd_inference_start") as start,
+        ):
+            runner._ensure_server_running()
+
+        stop.assert_not_called()
+        start.assert_not_called()
+        assert runner.config.backend == "strata"
+        assert runner.config.model == "Q2_0"
+        assert runner.config.context_size == 131072
+        assert runner.config.gpu_layers == -1
+
+    def test_no_inference_mismatch_does_not_stop_a_running_server(self):
+        """An explicit mismatch with -I is reported without stopping the live service."""
+        runner = benchmark.BenchmarkRunner(
+            benchmark.BenchmarkConfig(
+                model="requested-model",
+                port=8081,
+                iterations=1,
+                warmup=False,
+                token_limit=1,
+                temperature=0.0,
+                seed=42,
+                prompts=[],
+                backend="llama-cpp",
+                no_inference=True,
+                explicit_backend=True,
+            )
+        )
+        state = {"backend": "strata", "model": "Q2_0", "strata_owned": False}
+
+        with (
+            patch.object(benchmark.inference, "is_inference_running", return_value=True),
+            patch.object(benchmark.utils, "load_yaml", return_value=state),
+            patch.object(benchmark.inference, "cmd_inference_stop") as stop,
+            pytest.raises(RuntimeError, match="Arkai will leave it running"),
+        ):
+            runner._ensure_server_running()
+
+        stop.assert_not_called()
+
+    def test_no_inference_discovers_strata_after_state_was_detached(self):
+        """A live borrowed Strata profile is adopted even without an Arkai state file."""
+        runner = benchmark.BenchmarkRunner(
+            benchmark.BenchmarkConfig(
+                model="configured-model",
+                port=8081,
+                iterations=1,
+                warmup=False,
+                token_limit=1,
+                temperature=0.0,
+                seed=42,
+                prompts=[],
+                no_inference=True,
+            )
+        )
+        state = {
+            "backend": "strata",
+            "model": "qwen3.8-flash-next-q2_0",
+            "context_size": 131072,
+            "strata_owned": False,
+        }
+
+        with (
+            patch.object(benchmark.inference, "is_inference_running", return_value=True),
+            patch.object(benchmark.utils, "load_yaml", side_effect=FileNotFoundError),
+            patch.object(benchmark.inference, "get_live_strata_state", return_value=state),
+            patch.object(benchmark.inference, "cmd_inference_stop") as stop,
+            patch.object(benchmark.inference, "cmd_inference_start") as start,
+        ):
+            runner._ensure_server_running()
+
+        stop.assert_not_called()
+        start.assert_not_called()
+        assert runner.config.backend == "strata"
+        assert runner.config.model == "qwen3.8-flash-next-q2_0"
 
     def test_explicit_port_is_used_for_start_and_cleanup(self):
         """An explicitly selected port uses the same instance for start and stop."""

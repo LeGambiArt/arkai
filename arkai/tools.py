@@ -111,6 +111,11 @@ def _is_managed_strata_installed() -> bool:
     return binary.is_file() and os.access(binary, os.X_OK)
 
 
+def get_managed_strata_binary() -> Path | None:
+    """Return Arkai's Strata executable when its managed install is valid."""
+    return get_strata_binary() if _is_managed_strata_installed() else None
+
+
 def _ensure_install_root() -> Path:
     """Create private Strata directories and reject symlinks that could redirect writes."""
     root = get_strata_root()
@@ -366,7 +371,8 @@ def _install_or_update_strata(action: str) -> None:
 
     version = _strata_version()
     utils.info(f"Strata {action} complete ({version}): {get_strata_binary()}")
-    utils.info("Set inference.path to this executable to use it with Arkai's Strata backend.")
+    utils.info("Arkai will use this executable automatically for inference.backend: strata.")
+    utils.info("Set inference.path to override it with another Strata installation.")
 
 
 def _strata_version() -> str:

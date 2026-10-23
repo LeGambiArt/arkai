@@ -66,6 +66,22 @@ def test_tools_install_without_name_lists_supported_tools(capsys) -> None:
     assert "strata" in capsys.readouterr().out
 
 
+def test_managed_strata_binary_is_available_to_inference(tmp_path: Path, monkeypatch) -> None:
+    """Only a verified Arkai-owned Strata installation is auto-discovered."""
+    root = tmp_path / "strata"
+    binary = _create_strata_install(root)
+    monkeypatch.setattr(tools, "get_strata_root", lambda: root)
+
+    assert tools.get_managed_strata_binary() == binary
+
+
+def test_managed_strata_binary_is_none_when_not_installed(tmp_path: Path, monkeypatch) -> None:
+    """A missing managed install leaves normal PATH discovery available."""
+    monkeypatch.setattr(tools, "get_strata_root", lambda: tmp_path / "strata")
+
+    assert tools.get_managed_strata_binary() is None
+
+
 def test_sandbox_path_contains_only_command_directories(tmp_path: Path, monkeypatch) -> None:
     command_dir = tmp_path / "bin"
     monkeypatch.setattr(tools.platform, "system", lambda: "Darwin")

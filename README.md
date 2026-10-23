@@ -266,11 +266,11 @@ The server runs in the background and stays running between agent sessions.
 ### Start
 
 ```bash
-arkai inference start [--model NAME] [--gpu-layers N] [--context N] [--port N]
+arkai inference start [--model NAME] [--gpu-layers N] [--context N] [--port N] [--allow-provisioning]
 ```
 
-Starts `llama-server` on `localhost:8081` (default). CLI flags override the
-config values for that run only.
+Starts the configured inference backend on `localhost:8081` (default). CLI
+flags override the config values for that run only.
 
 | Flag | Description |
 |------|-------------|
@@ -278,12 +278,15 @@ config values for that run only.
 | `--gpu-layers N` | Override number of GPU layers (`-1` = all) |
 | `--context N` | Override context window size in tokens |
 | `--port N` | Override port from config |
+| `--allow-provisioning` | (Strata only) Allow model downloads or engine install/update |
 
-> Note: use `hf:org/model` as the model value to load a HuggingFace model.
+> Note: use `hf:org/model` for Hugging Face models on llama.cpp/MLX/Splash;
+> Strata uses its own catalog IDs.
 
-**GPU detection:** arkai auto-detects Metal (Apple Silicon), CUDA (NVIDIA),
-ROCm (AMD), or falls back to CPU. Setting `gpu_layers: -1` in config offloads
-all layers to GPU.
+**GPU detection:** for Arkai-managed backends, Arkai auto-detects Metal (Apple
+Silicon), CUDA (NVIDIA), ROCm (AMD), or falls back to CPU. Setting
+`gpu_layers: -1` in config offloads all layers to GPU. Strata selects its own
+supported GPU automatically.
 
 The inference server exposes an OpenAI-compatible API at `http://127.0.0.1:<port>/v1`.
 
@@ -324,9 +327,9 @@ Arkai installs the Strata Terminal under
 `~/.local/state/arkai/tools/strata/` without changing your global `PATH` or
 removing a separately installed copy. Install, update, version checks, and
 removal run through the configured Arapuca sandbox; install and update need
-network access inside the sandbox. To use Arkai's managed copy, set
-`inference.path` to the executable path printed after installation. You can
-also configure a separately installed `strata` executable as before. Removal
+network access inside the sandbox. Arkai automatically discovers and uses its
+verified managed executable for `inference.backend: strata`; set
+`inference.path` only to override it with another `strata` executable. Removal
 deletes only Arkai's managed Terminal files and does not touch separate Strata
 model or engine data.
 
@@ -347,7 +350,7 @@ uses for WTMCP.
 
 Before starting, Arkai runs Strata's side-effect-free launch plan. If Strata
 needs model downloads or an engine install/update, Arkai refuses by default;
-rerun with `--yes` to approve that provisioning. Strata downloads may be very
+rerun with `--allow-provisioning` to approve that provisioning. Strata downloads may be very
 large. `arkai tools install` manages the Strata Terminal only; it does not
 download a model or GPU engine.
 The startup timeout covers Arkai's API readiness check after `strata launch`
@@ -355,8 +358,9 @@ returns; Strata's own setup/download phase may take longer.
 
 Arkai tracks the Strata launch profile it starts and stops only that profile.
 If Strata reports that an identical service was already running, Arkai reuses
-it but `arkai inference stop` only detaches Arkai's tracking and leaves that
-service running. A different service already using the port is not restarted.
+it but does not claim ownership. `arkai inference stop` detaches Arkai's
+tracking and leaves that service running. A different service already using
+the port is not restarted.
 See Strata's [launch guide](https://github.com/Niko1221/Strata/blob/main/docs/TERMINAL_LAUNCH.md)
 for model setup and supported hardware.
 
@@ -456,19 +460,21 @@ is unchanged by this model-management integration.
 ### Status
 
 ```bash
-arkai inference status
+arkai inference status [--port N]
 ```
 
-Shows: running/stopped, PID, model, port, GPU layers, context size, health,
-and detected GPU type.
+Shows: running/stopped, PID or Strata profile, model, port, GPU layers, context
+size, health, and detected GPU type.
 
 ### Stop
 
 ```bash
-arkai inference stop
+arkai inference stop [--port N]
 ```
 
-Terminates the server and cleans up PID and state files.
+Stops the server and cleans up PID and state files. For Strata, Arkai stops
+only a profile it owns; a reused profile is left running and Arkai's tracking
+is detached.
 
 ## Ask Questions over Local Documents
 
@@ -806,29 +812,29 @@ arkai config validate --file PATH  # validate a specific file
 
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
-| `inference.model` | string | — | Local model filename, or `hf:<repo>` for a HuggingFace model |
+| `inference.model` | string | — | Backend-specific model: local path/`hf:<repo>` for llama.cpp or MLX, `hf:<repo>` for Splash, Strata catalog ID such as `q2_0` for Strata |
 | `inference.profiles` | mapping | — | Named model profiles; each profile has `model` and optional sampling settings |
-| `inference.backend` | string | `llama-cpp` | `llama-cpp`, optional `mlx`, or `splash` |
-| `inference.path` | string | backend-dependent | Path to `llama-server`, `mlx_lm.server`, or `splash` |
+| `inference.backend` | string | `llama-cpp` | `llama-cpp`, optional `mlx`, `splash`, or `strata` |
+| `inference.path` | string | backend-dependent | Path to `llama-server`, `mlx_lm.server`, `splash`, or the `strata` CLI |
 | `inference.port` | int | `8081` | Port for inference server (1024–65535) |
-| `inference.gpu_layers` | int | `-1` | GPU layers to offload (`-1` = all) |
+| `inference.gpu_layers` | int | `-1` | GPU layers to offload (`-1` = all); Strata selects GPU execution automatically and requires `-1` |
 | `inference.context_size` | int | `65536` | Context window size in tokens |
-| `inference.startup_timeout` | int | `600` | Maximum seconds to wait for the server to become ready |
+| `inference.startup_timeout` | int | `600` | Maximum seconds for Arkai's API readiness check; Strata's setup/download can take longer |
 
 The sampling settings can also be placed directly under `inference` to provide
-defaults for the selected model: `temperature`, `top_p`, `top_k`, `min_p`,
+defaults for supported backends: `temperature`, `top_p`, `top_k`, `min_p`,
 `presence_penalty`, `frequency_penalty`, and `repetition_penalty`. Profile values
 override these defaults.
 
 Model sampling settings are `temperature`, `top_p`, `top_k`, `min_p`,
 `presence_penalty`, `frequency_penalty`, and `repetition_penalty`. They are
-translated to the corresponding `llama-server` or `mlx_lm.server` CLI options.
+translated to the corresponding `llama-server` or `mlx_lm.server` CLI options;
+Strata rejects these Arkai defaults rather than silently ignoring them.
 
-Inference backends are registered command builders. The manager supplies the
-common model, port, GPU-layer, and context settings, then handles the process
-lifecycle and OpenAI-compatible REST API. Add a backend by implementing
-`InferenceBackend.build_command()` and registering it with
-`register_backend()`.
+Inference backends are registered in Arkai's backend registry. Most build a
+server command and use Arkai's process lifecycle; Strata is managed through its
+own CLI because it launches a background service. Its profile ownership is
+tracked separately so Arkai only stops services it started.
 
 ### `wtmcp`
 

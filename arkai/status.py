@@ -30,14 +30,27 @@ def cmd_status() -> None:
     inference_running = inference_module.is_inference_running()
     if inference_running:
         pid = utils.read_pid(inference_module.get_inference_pid_path())
-        utils.info(f"✓ Inference: running (PID {pid})")
         try:
             state = utils.load_yaml(inference_module.get_inference_state_path())
+        except Exception:
+            state = None
+
+        if not isinstance(state, dict) or state.get("backend") != "strata":
+            state = inference_module.get_live_strata_state() or state
+
+        if isinstance(state, dict) and state.get("backend") == "strata":
+            profile = state.get("strata_profile", "unknown")
+            ownership = "Arkai-owned" if state.get("strata_owned") else "reused"
+            utils.info(f"✓ Inference: running (Strata profile {profile}; {ownership})")
+        else:
+            utils.info(f"✓ Inference: running (PID {pid})")
+
+        if isinstance(state, dict):
             port = state.get("port", 8081)
             model = state.get("model", "unknown")
             utils.info(f"  Model: {model}")
             utils.info(f"  Port: {port}\n")
-        except Exception:
+        else:
             utils.info("  (state file error)\n")
     else:
         utils.info("✗ Inference: stopped\n")

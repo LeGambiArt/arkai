@@ -137,7 +137,7 @@ def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
         "-I",
         "--no-inference",
         action="store_true",
-        help="Do not start inference engine server",
+        help="Use an existing inference server without starting or stopping it",
     )
     benchmark_parser.add_argument("-M", "--no-mcp", action="store_true", help="Skip wtmcp init")
     benchmark_parser.add_argument(
@@ -207,6 +207,8 @@ def exec_cmd(args: argparse.Namespace) -> None:
         backend=backend,
         no_inference=args.no_inference,
         explicit_port=args.port is not None,
+        explicit_model=args.model is not None,
+        explicit_backend=args.backend is not None,
     )
 
     # Run benchmark
@@ -345,6 +347,8 @@ class BenchmarkConfig:
     backend: str = "llama-cpp"
     no_inference: bool = False
     explicit_port: bool = False
+    explicit_model: bool = False
+    explicit_backend: bool = False
 
 
 class BenchmarkRunner:
@@ -365,14 +369,41 @@ class BenchmarkRunner:
 
     def _running_server_matches_request(self) -> bool:
         """Return whether the running server was started for this benchmark."""
-        try:
-            state = utils.load_yaml(inference.get_inference_state_path(self._instance_port()))
-        except (FileNotFoundError, TypeError):
+        state = self._load_running_state()
+        if not state:
             return True
 
         return (
             state.get("model") == self.config.model and state.get("backend") == self.config.backend
         )
+
+    def _load_running_state(self) -> dict:
+        """Load Arkai state or discover a live borrowed Strata profile."""
+        try:
+            state = utils.load_yaml(inference.get_inference_state_path(self._instance_port()))
+        except (FileNotFoundError, TypeError):
+            state = {}
+        if state:
+            return state
+        return inference.get_live_strata_state(self._instance_port()) or {}
+
+    def _adopt_borrowed_strata(self, state: dict) -> bool:
+        """Use a running borrowed Strata profile when CLI flags do not request another model."""
+        model = state.get("model")
+        if not isinstance(model, str) or not model:
+            return False
+        if self.config.explicit_model and self.config.model != model:
+            return False
+        if self.config.explicit_backend and self.config.backend != "strata":
+            return False
+
+        self.config.model = model
+        self.config.backend = "strata"
+        self.config.gpu_layers = -1
+        context_size = state.get("context_size")
+        if isinstance(context_size, int) and context_size > 0:
+            self.config.context_size = context_size
+        return True
 
     def _ensure_server_running(self) -> None:
         """Check if inference server is running, start if needed."""
@@ -380,6 +411,22 @@ class BenchmarkRunner:
         if inference.is_inference_running(instance_port):
             if self._running_server_matches_request():
                 return
+
+            state = self._load_running_state()
+            if state.get("backend") == "strata" and state.get("strata_owned") is not True:
+                if self._adopt_borrowed_strata(state):
+                    utils.info("Using the already-running Strata service for this benchmark")
+                    return
+                raise RuntimeError(
+                    "A reused Strata service is running with different benchmark settings; "
+                    "Arkai will leave it running. Match its model/backend or stop it with Strata."
+                )
+
+            if self.config.no_inference:
+                raise RuntimeError(
+                    "The running inference server does not match the benchmark settings; "
+                    "because --no-inference was given, Arkai left it running."
+                )
             utils.info("Inference server model or backend differs; restarting it")
             inference.cmd_inference_stop(instance_port)
 
@@ -409,13 +456,22 @@ class BenchmarkRunner:
         Returns:
             Tuple of (response_dict, prefill_time_ms, generation_time_ms, total_time_ms)
         """
-        url = f"http://127.0.0.1:{self.config.port}/v1/completions"
-        payload = {
-            "prompt": prompt,
-            "max_tokens": self.config.token_limit,
-            "temperature": self.config.temperature,
-            "seed": self.config.seed,
-        }
+        if self.config.backend == "strata":
+            url = f"http://127.0.0.1:{self.config.port}/v1/chat/completions"
+            payload = {
+                "messages": [{"role": "user", "content": prompt}],
+                "max_tokens": self.config.token_limit,
+                "temperature": self.config.temperature,
+                "seed": self.config.seed,
+            }
+        else:
+            url = f"http://127.0.0.1:{self.config.port}/v1/completions"
+            payload = {
+                "prompt": prompt,
+                "max_tokens": self.config.token_limit,
+                "temperature": self.config.temperature,
+                "seed": self.config.seed,
+            }
 
         start_time = time.time()
         response = requests.post(url, json=payload, timeout=300)
@@ -594,7 +650,7 @@ class BenchmarkRunner:
             # Keep the displayed model consistent with `arkai status`, which uses
             # the configured model recorded in the inference state file.
             inference.get_inference_model(self.config.port)
-            state = utils.load_yaml(inference.get_inference_state_path(self._instance_port()))
+            state = self._load_running_state()
             running_model = state.get("model", "unknown")
             utils.info(f"Model being evaluated: {running_model}")
 

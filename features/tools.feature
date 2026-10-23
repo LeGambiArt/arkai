@@ -29,9 +29,18 @@ Feature: Third-party tool management
     When I run the tools command with confirmation "yes" for "install strata"
     Then the exit code is 0
     And the output contains "Strata install complete (Strata 0.2.3)"
+    And the output contains "Arkai will use this executable automatically"
     And the installer script bootstrap was requested
     And the external installer ran inside Arapuca
     And the sandbox allowed network access
+
+  Scenario: Use the Arkai-managed Strata executable for inference
+    Given a valid Strata inference config
+    And Arkai-managed Strata is installed for inference
+    When I run "arkai inference start"
+    Then the exit code is 0
+    And the Strata launch used Arkai's managed executable
+    And Arkai records the Strata profile as owned
 
   Scenario: Update an installed Strata tool in Arapuca
     Given Arkai-managed Strata is installed

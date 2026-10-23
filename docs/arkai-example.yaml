@@ -11,13 +11,17 @@ agent:
 
 inference:
   backend: llama-cpp
-  # Use a local model path, or prefix a HuggingFace model with hf:
+  # llama.cpp/MLX accept local paths or provider references; Splash requires hf:.
+  # For Strata, use a Strata catalog ID (for example q2_0) and backend: strata.
   model: "/path/to/model.gguf"
   # model: "hf:mistralai/Mistral-7B-Instruct-v0.1"
+  # backend: strata
+  # model: q2_0
   port: 8081
-  gpu_layers: -1  # -1 = all layers
+  gpu_layers: -1  # -1 = all layers; Strata selects GPU execution automatically
   context_size: 65536
-  # Sampling defaults apply to the selected model unless a profile overrides them.
+  # Sampling defaults apply to supported backends unless a profile overrides them.
+  # Strata currently rejects Arkai sampling defaults.
   # temperature: 0.7
   # top_p: 0.9
   # top_k: 40

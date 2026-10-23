@@ -58,3 +58,9 @@ Feature: LLM Model Benchmarking
     And the output contains "MEDIUM"
     And the output contains "LONG"
     And the output contains "Rust"
+
+  Scenario: No-inference benchmark reuses a borrowed Strata profile
+    Given a valid .arkai.yaml file
+    When I run benchmark command "-IM --iterations 1 --no-warmup --prompts ai:short" with a reused Strata service
+    Then the exit code is 0
+    And the benchmark kept using the borrowed Strata service

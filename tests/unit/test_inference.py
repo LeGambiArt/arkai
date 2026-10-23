@@ -73,6 +73,10 @@ def test_inference_cli_registers_backend_override() -> None:
     args = parser.parse_args(["inference", "start", "--backend", "mlx"])
     assert args.backend == "mlx"
 
+    args = parser.parse_args(["inference", "start", "--backend", "strata", "--allow-provisioning"])
+    assert args.allow_provisioning is True
+    assert parser.parse_args(["inference", "stop", "--port", "9090"]).port == 9090
+
 
 def test_inference_log_path_is_separate_for_explicit_ports(tmp_path: Path) -> None:
     """Each explicitly selected server port gets its own diagnostic log."""
