@@ -219,6 +219,8 @@ def _cloud_provider(cloud_services: list[str] | None) -> str | None:
 
 def run_launch_spec(spec: AgentLaunchSpec, capture_stdout: bool = False) -> str | None:
     """Run an agent launch specification and clean up its temporary paths."""
+    if os.environ.get("EDITOR"):
+        spec.environment["EDITOR"] = "arapuca"
     capture_stderr = capture_stdout and bool(spec.suppress_stderr_prefixes)
     try:
         # Arkai has already consumed prompt input; don't expose the caller's TTY to the agent.

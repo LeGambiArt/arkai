@@ -158,7 +158,7 @@ def build_launch_spec(
         command.extend(["resume", "--last"])
     if prompt is not None:
         command.append("exec")
-        if not _is_git_repository(workdir):
+        if workdir and not _is_git_repository(workdir):
             command.append("--skip-git-repo-check")
         command.append(prompt)
 
