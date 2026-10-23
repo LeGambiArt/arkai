@@ -39,3 +39,4 @@ workdir/
 inference.log
 *.swp
 /.arkai.session
+.omp
