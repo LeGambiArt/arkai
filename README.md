@@ -50,6 +50,7 @@ When you run `arkai agent start`, it starts `llama-server` (loading your GGUF mo
 - `llama.cpp` (`llama-server` and `llama-quantize`)
 - `mlx-lm` (`pip install -e '.[mlx]'`, optional; Apple Silicon)
 - `wtmcp` — for MCP tool integration with agents *(optional)*
+- `strata` — optional inference backend; can be managed with `arkai tools`
 - `arapuca` — for sandboxed agent execution *(optional)*
 - Agent binary: `opencode`, `crush`, `claude`, `codex`, `pi`, or `omp` — at least one required
 
@@ -306,6 +307,58 @@ inference:
 Arkai resolves `hf:` models from its local provider cache before starting
 MLX-LM, so the server does not download an already cached model. `gpu_layers`
 and `context_size` are llama.cpp-specific settings and are not passed to MLX-LM.
+
+### Strata backend
+
+Install Strata with Arkai's tool manager or use its
+[official instructions](https://github.com/Niko1221/Strata):
+
+```bash
+arkai tools install strata
+arkai tools list
+arkai tools update strata
+arkai tools remove strata
+```
+
+Arkai installs the Strata Terminal under
+`~/.local/state/arkai/tools/strata/` without changing your global `PATH` or
+removing a separately installed copy. Install, update, version checks, and
+removal run through the configured Arapuca sandbox; install and update need
+network access inside the sandbox. To use Arkai's managed copy, set
+`inference.path` to the executable path printed after installation. You can
+also configure a separately installed `strata` executable as before. Removal
+deletes only Arkai's managed Terminal files and does not touch separate Strata
+model or engine data.
+
+Then select a Strata catalog model:
+
+```bash
+arkai inference start --backend strata --model q2_0
+```
+
+Arkai starts Strata through its supported `strata launch` CLI and serves the
+OpenAI-compatible API on Arkai's configured port (8081 by default). Strata's
+model catalog IDs (for example `q2_0`) are not Arkai/Hugging Face model
+references. The configured context is passed to Strata; Strata chooses GPU
+execution automatically. Non-default `gpu_layers` and Arkai sampling defaults
+are rejected rather than ignored.
+Arkai's 8081 default also avoids Strata's standalone 8080 default, which Arkai
+uses for WTMCP.
+
+Before starting, Arkai runs Strata's side-effect-free launch plan. If Strata
+needs model downloads or an engine install/update, Arkai refuses by default;
+rerun with `--yes` to approve that provisioning. Strata downloads may be very
+large. `arkai tools install` manages the Strata Terminal only; it does not
+download a model or GPU engine.
+The startup timeout covers Arkai's API readiness check after `strata launch`
+returns; Strata's own setup/download phase may take longer.
+
+Arkai tracks the Strata launch profile it starts and stops only that profile.
+If Strata reports that an identical service was already running, Arkai reuses
+it but `arkai inference stop` only detaches Arkai's tracking and leaves that
+service running. A different service already using the port is not restarted.
+See Strata's [launch guide](https://github.com/Niko1221/Strata/blob/main/docs/TERMINAL_LAUNCH.md)
+for model setup and supported hardware.
 
 ### Splash inference server
 

@@ -11,6 +11,7 @@ Feature: CLI argument handling
       | command   |
       | agent     |
       | config    |
+      | tools     |
       | inference |
       | model     |
       | rag       |

@@ -31,6 +31,7 @@ def main():
     modules = [
         "status",
         "config",
+        "tools",
         "agent",
         "inference",
         "model",
