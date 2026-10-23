@@ -16,7 +16,7 @@ from unittest.mock import MagicMock, patch
 
 from behave import given, then, when
 
-from arkai import agent, agent_opencode, agent_session, inference, utils, wtmcp
+from arkai import agent, agent_opencode, agent_session, inference, tools, utils, wtmcp
 
 _PI_NODE_AVAILABLE = shutil.which("node") is not None
 _POSIX_PTY_AVAILABLE = os.name == "posix"
@@ -27,6 +27,7 @@ def step_cancel_pi_installation(context):
     """Decline the Pi installation warning."""
     with (
         patch("builtins.input", return_value="n"),
+        patch.object(tools, "_is_tool_installed", return_value=False),
         patch.object(agent.utils, "run_command") as run_command,
     ):
         agent.cmd_agent_install("pi")

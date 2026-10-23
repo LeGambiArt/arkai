@@ -1,6 +1,7 @@
 """Tests for third-party tool management."""
 
 import argparse
+import json
 import shutil
 from pathlib import Path
 from unittest.mock import patch
@@ -24,8 +25,41 @@ def _create_strata_install(root: Path, version: str = "0.2.3") -> Path:
     return stable
 
 
+def _create_pi_install(root: Path, version: str = "1.2.3") -> Path:
+    package_dir = root / "core" / "lib" / "node_modules" / "@earendil-works" / "pi-coding-agent"
+    entrypoint = package_dir / "dist" / "bundle" / "cli.js"
+    entrypoint.parent.mkdir(parents=True, exist_ok=True)
+    entrypoint.write_text("#!/usr/bin/env node\n")
+    entrypoint.chmod(0o755)
+    package_dir.mkdir(parents=True, exist_ok=True)
+    (package_dir / "package.json").write_text(
+        json.dumps({"name": "@earendil-works/pi-coding-agent", "version": version})
+    )
+    binary = root / "core" / "bin" / "pi"
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    binary.symlink_to(entrypoint)
+    (root / "agent").mkdir(parents=True, exist_ok=True)
+    return binary
+
+
+def _create_omp_install(root: Path, version: str = "omp test-version") -> Path:
+    binary = root / "bin" / "omp"
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+    (root / "agent").mkdir(parents=True, exist_ok=True)
+    return binary
+
+
 def _fake_sandbox_builder(calls: list[dict]):
-    def build(root, command_names, *, allow_network, read_only_root=False):
+    def build(
+        root,
+        command_names,
+        *,
+        allow_network,
+        read_only_root=False,
+        child_environment=None,
+    ):
         calls.append(
             {
                 "root": root,
@@ -37,7 +71,7 @@ def _fake_sandbox_builder(calls: list[dict]):
         return (
             ["/usr/bin/arapuca", "run", "--"],
             {name: f"/usr/bin/{name}" for name in command_names},
-            tools._sandbox_environment(root, "/usr/bin"),
+            {"PATH": "/usr/bin", **(child_environment or {})},
         )
 
     return build
@@ -82,6 +116,44 @@ def test_managed_strata_binary_is_none_when_not_installed(tmp_path: Path, monkey
     assert tools.get_managed_strata_binary() is None
 
 
+def test_pi_version_comes_from_arkai_managed_package_metadata(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "pi"
+    _create_pi_install(root, "1.2.3")
+    from arkai import agent_pi
+
+    monkeypatch.setattr(agent_pi, "get_install_dir", lambda: root)
+
+    assert tools._is_tool_installed("pi")
+    assert tools._tool_version("pi") == "1.2.3"
+
+
+def test_omp_version_is_executed_inside_arapuca(tmp_path: Path, monkeypatch) -> None:
+    root = tmp_path / "omp"
+    binary = _create_omp_install(root)
+    from arkai import agent_omp
+
+    monkeypatch.setattr(agent_omp, "get_install_dir", lambda: root)
+    sandbox_calls: list[dict] = []
+
+    with (
+        patch.object(
+            tools, "_build_sandbox_prefix", side_effect=_fake_sandbox_builder(sandbox_calls)
+        ),
+        patch.object(tools.utils, "run_command", return_value=(0, "omp 2.0\n", "")) as run,
+    ):
+        assert tools._tool_version("omp") == "omp 2.0"
+
+    command = run.call_args.args[0]
+    assert command[:2] == ["/usr/bin/arapuca", "run"]
+    assert command[command.index("--") + 1 :] == [
+        "/usr/bin/env",
+        "PATH=/usr/bin",
+        str(binary),
+        "--version",
+    ]
+    assert sandbox_calls[0]["allow_network"] is False
+
+
 def test_sandbox_path_contains_only_command_directories(tmp_path: Path, monkeypatch) -> None:
     command_dir = tmp_path / "bin"
     monkeypatch.setattr(tools.platform, "system", lambda: "Darwin")
@@ -90,6 +162,32 @@ def test_sandbox_path_contains_only_command_directories(tmp_path: Path, monkeypa
 
     assert f"{command_dir}:ro" in volumes
     assert path == str(command_dir)
+
+
+def test_sandbox_mounts_complete_npm_runtime_but_keeps_its_bin_on_path(
+    tmp_path: Path, monkeypatch
+) -> None:
+    npm_root = tmp_path / "nvm" / "lib" / "node_modules" / "npm"
+    npm_bin = npm_root / "bin"
+    npm_bin.mkdir(parents=True)
+    (npm_root / "package.json").write_text(json.dumps({"name": "npm"}))
+    npm = npm_bin / "npm-cli.js"
+    npm.touch()
+    node_bin = tmp_path / "nvm" / "bin"
+    node_bin.mkdir()
+    (tmp_path / "nvm" / "lib").mkdir(exist_ok=True)
+    node = node_bin / "node"
+    node.touch()
+    env_bin = Path("/usr/bin/env")
+    monkeypatch.setattr(tools.platform, "system", lambda: "Darwin")
+
+    volumes, path = tools._sandbox_paths({"npm": str(npm), "node": str(node), "env": str(env_bin)})
+
+    assert f"{tmp_path / 'nvm'}:ro" in volumes
+    assert f"{npm_bin}:ro" not in volumes
+    assert f"{node_bin}:ro" not in volumes
+    assert str(npm_bin) in path
+    assert str(node_bin) in path
 
 
 def test_sandbox_environment_leaves_managed_variables_to_arapuca(tmp_path: Path) -> None:
@@ -183,6 +281,7 @@ def test_tools_list_reports_managed_strata_version(tmp_path: Path, monkeypatch, 
     sandbox_calls: list[dict] = []
 
     with (
+        patch.object(tools, "_is_tool_installed", side_effect=lambda name: name == "strata"),
         patch.object(
             tools, "_build_sandbox_prefix", side_effect=_fake_sandbox_builder(sandbox_calls)
         ),
@@ -203,10 +302,37 @@ def test_tools_list_reports_managed_strata_version(tmp_path: Path, monkeypatch, 
 
 
 def test_tools_list_reports_empty_managed_installations(capsys) -> None:
-    with patch.object(tools, "_is_managed_strata_installed", return_value=False):
+    with patch.object(tools, "_is_tool_installed", return_value=False):
         tools.cmd_tools_list()
 
     assert "No Arkai-managed tools installed" in capsys.readouterr().out
+
+
+def test_tools_list_shows_versions_for_each_managed_tool(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    from arkai import agent_omp, agent_pi
+
+    strata_root = tmp_path / "strata"
+    _create_strata_install(strata_root)
+    pi_root = tmp_path / "pi"
+    _create_pi_install(pi_root, "1.2.3")
+    omp_root = tmp_path / "omp"
+    _create_omp_install(omp_root)
+    monkeypatch.setattr(tools, "get_strata_root", lambda: strata_root)
+    monkeypatch.setattr(agent_pi, "get_install_dir", lambda: pi_root)
+    monkeypatch.setattr(agent_omp, "get_install_dir", lambda: omp_root)
+
+    with (
+        patch.object(tools, "_strata_version", return_value="Strata 0.2.3"),
+        patch.object(tools, "_omp_version", return_value="OMP 2.0"),
+    ):
+        tools.cmd_tools_list()
+
+    output = capsys.readouterr().out
+    assert "strata: Strata 0.2.3" in output
+    assert "pi: 1.2.3" in output
+    assert "omp: OMP 2.0" in output
 
 
 def test_strata_install_downloads_and_runs_official_installer_in_sandbox(
@@ -316,6 +442,146 @@ def test_strata_update_reuses_sandboxed_official_installer(tmp_path: Path, monke
     assert tools._is_managed_strata_installed()
 
 
+def test_pi_install_and_update_commands_run_inside_network_sandbox(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from arkai import agent_pi
+
+    root = tmp_path / "pi"
+    monkeypatch.setattr(agent_pi, "get_install_dir", lambda: root)
+    monkeypatch.setattr(tools.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(
+        tools.shutil,
+        "which",
+        lambda name: {"npm": "/node/bin/npm", "node": "/node/bin/node"}.get(name, f"/bin/{name}"),
+    )
+    sandbox_calls: list[dict] = []
+    commands: list[tuple[list[str], list[str], dict]] = []
+
+    def run_sandboxed(prefix: list[str], command: list[str], **kwargs) -> tuple[int, str, str]:
+        commands.append((prefix, command, kwargs))
+        if command[0] == "/usr/bin/npm":
+            _create_pi_install(root)
+        return 0, "", ""
+
+    with (
+        patch("builtins.input", return_value="yes"),
+        patch.object(
+            tools, "_build_sandbox_prefix", side_effect=_fake_sandbox_builder(sandbox_calls)
+        ),
+        patch.object(tools, "_run_sandboxed", side_effect=run_sandboxed),
+    ):
+        tools.cmd_tools_install("pi")
+
+    assert len(commands) == 4
+    assert commands[0][1] == [
+        "/usr/bin/npm",
+        "install",
+        "--prefix",
+        str(root / "core"),
+        "-g",
+        "--ignore-scripts",
+        agent_pi.PI_CORE_PACKAGE,
+    ]
+    assert [command[1][1:] for command in commands[1:]] == [
+        ["install", "npm:pi-mcp-adapter"],
+        ["install", "npm:pi-web-access"],
+        ["install", "npm:pi-subagents"],
+    ]
+    assert all(call["allow_network"] is True for call in sandbox_calls)
+    assert all(prefix[:2] == ["/usr/bin/arapuca", "run"] for prefix, _, _ in commands)
+    assert all("PI_CODING_AGENT_DIR" in kwargs["environment"] for _, _, kwargs in commands)
+    assert tools._is_tool_installed("pi")
+
+
+def test_pi_update_uses_pi_package_manager_for_outdated_extensions(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from arkai import agent_pi
+
+    root = tmp_path / "pi"
+    _create_pi_install(root)
+    monkeypatch.setattr(agent_pi, "get_install_dir", lambda: root)
+    monkeypatch.setattr(tools.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(
+        tools.shutil,
+        "which",
+        lambda name: {"npm": "/node/bin/npm", "node": "/node/bin/node"}.get(name, f"/bin/{name}"),
+    )
+    sandbox_calls: list[dict] = []
+    commands: list[tuple[list[str], list[str], dict]] = []
+    updates = [
+        {"source": "npm:pi-mcp-adapter", "displayName": "pi-mcp-adapter"},
+        {"source": "npm:pi-subagents", "displayName": "pi-subagents"},
+        {"source": "npm:unmanaged-package", "displayName": "unmanaged-package"},
+    ]
+
+    def run_sandboxed(prefix: list[str], command: list[str], **kwargs) -> tuple[int, str, str]:
+        commands.append((prefix, command, kwargs))
+        return 0, "", ""
+
+    with (
+        patch("builtins.input", return_value="yes"),
+        patch.object(agent_pi, "_check_for_package_updates", return_value=updates),
+        patch.object(
+            tools, "_build_sandbox_prefix", side_effect=_fake_sandbox_builder(sandbox_calls)
+        ),
+        patch.object(tools, "_run_sandboxed", side_effect=run_sandboxed),
+    ):
+        tools.cmd_tools_update("pi")
+
+    assert commands[0][1][0] == "/usr/bin/npm"
+    assert [command[1] for command in commands[1:]] == [
+        [str(root / "core" / "bin" / "pi"), "update", "--extension", "npm:pi-mcp-adapter"],
+        [str(root / "core" / "bin" / "pi"), "update", "--extension", "npm:pi-subagents"],
+    ]
+    assert all(call["allow_network"] is True for call in sandbox_calls)
+    assert all(prefix[:2] == ["/usr/bin/arapuca", "run"] for prefix, _, _ in commands)
+
+
+def test_omp_install_downloads_and_runs_official_script_in_sandbox(
+    tmp_path: Path, monkeypatch
+) -> None:
+    from arkai import agent_omp
+
+    root = tmp_path / "omp"
+    monkeypatch.setattr(agent_omp, "get_install_dir", lambda: root)
+    monkeypatch.setattr(tools.platform, "system", lambda: "Linux")
+    sandbox_calls: list[dict] = []
+    commands: list[tuple[list[str], list[str], dict]] = []
+
+    def run_sandboxed(prefix: list[str], command: list[str], **kwargs) -> tuple[int, str, str]:
+        commands.append((prefix, command, kwargs))
+        if command[0] == "/usr/bin/curl":
+            Path(command[-1]).write_text("#!/bin/sh\n# official OMP installer\n")
+        elif command[0] == "/usr/bin/sh":
+            _create_omp_install(root)
+        elif command[0] == str(root / "bin" / "omp"):
+            return 0, "omp 2.0\n", ""
+        return 0, "", ""
+
+    with (
+        patch("builtins.input", return_value="yes"),
+        patch.object(
+            tools, "_build_sandbox_prefix", side_effect=_fake_sandbox_builder(sandbox_calls)
+        ),
+        patch.object(tools, "_run_sandboxed", side_effect=run_sandboxed),
+    ):
+        tools.cmd_tools_install("omp")
+
+    assert commands[0][1] == [
+        "/usr/bin/curl",
+        "-fsSL",
+        agent_omp.OMP_INSTALLER_URL,
+        "-o",
+        str(root / "tmp" / "install.sh"),
+    ]
+    assert commands[1][1] == ["/usr/bin/sh", str(root / "tmp" / "install.sh"), "--binary"]
+    assert all(prefix[:2] == ["/usr/bin/arapuca", "run"] for prefix, _, _ in commands)
+    assert sandbox_calls[0]["allow_network"] is True
+    assert tools._is_tool_installed("omp")
+
+
 def test_strata_remove_executes_rm_inside_sandbox(tmp_path: Path, monkeypatch) -> None:
     root = tmp_path / "strata"
     _create_strata_install(root)
@@ -324,8 +590,10 @@ def test_strata_remove_executes_rm_inside_sandbox(tmp_path: Path, monkeypatch) -
 
     def run_command(command: list[str], **kwargs) -> tuple[int, str, str]:
         external = command[command.index("--") + 1 :]
-        assert external[:2] == ["/usr/bin/rm", "-rf"]
-        for entry in external[2:]:
+        assert external[:2] == ["/usr/bin/env", "PATH=/usr/bin"]
+        assert external[2].endswith("/rm")
+        assert external[3] == "-rf"
+        for entry in external[4:]:
             path = root / entry
             if path.is_dir() and not path.is_symlink():
                 shutil.rmtree(path)
@@ -353,6 +621,6 @@ def test_tools_commands_reject_unsupported_tool() -> None:
 
 
 def test_update_requires_an_arkai_managed_install() -> None:
-    with patch.object(tools, "_is_managed_strata_installed", return_value=False):
+    with patch.object(tools, "_is_tool_installed", return_value=False):
         with pytest.raises(RuntimeError, match="arkai tools install strata"):
             tools.cmd_tools_update("strata")

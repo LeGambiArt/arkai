@@ -2,7 +2,6 @@
 
 import json
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -20,54 +19,15 @@ def test_omp_is_a_valid_agent() -> None:
     assert "omp" in config.VALID_AGENTS
 
 
-def test_install_pi_declines_before_running_commands(capsys) -> None:
-    """Declining the warning does not invoke npm or Pi."""
-    with (
-        patch("builtins.input", return_value="n"),
-        patch.object(agent.utils, "run_command") as run_command,
-    ):
+def test_agent_install_is_a_deprecated_alias_for_tools(capsys) -> None:
+    """The old command delegates to the unified third-party tool manager."""
+    from arkai import tools
+
+    with patch.object(tools, "cmd_tools_install") as install:
         agent.cmd_agent_install("pi")
 
-    run_command.assert_not_called()
-    assert "cancelled" in capsys.readouterr().out.lower()
-
-
-def test_install_pi_installs_core_and_packages() -> None:
-    """The installer installs Pi and its supported package extensions."""
-    commands = []
-
-    def capture_command(command: list, **kwargs) -> tuple[int, str, str]:
-        commands.append((command, kwargs))
-        return 0, "", ""
-
-    core_dir = Path("/arkai-state/pi/core")
-    agent_dir = Path("/arkai-state/pi/agent")
-    with (
-        patch("builtins.input", return_value="yes"),
-        patch.object(agent_pi.shutil, "which", side_effect=lambda name: f"/bin/{name}"),
-        patch.object(agent.utils, "run_command", side_effect=capture_command),
-        patch.object(agent_pi, "get_core_dir", return_value=core_dir),
-        patch.object(agent_pi, "get_agent_dir", return_value=agent_dir),
-    ):
-        agent.cmd_agent_install("pi")
-
-    assert commands[0][0] == [
-        "/bin/npm",
-        "install",
-        "--prefix",
-        str(core_dir),
-        "-g",
-        "--ignore-scripts",
-        agent_pi.PI_CORE_PACKAGE,
-    ]
-    assert commands[0][1] == {"timeout": None, "env": None}
-    assert [command for command, _ in commands[1:]] == [
-        [str(core_dir / "bin" / "pi"), "install", "npm:pi-mcp-adapter"],
-        [str(core_dir / "bin" / "pi"), "install", "npm:pi-web-access"],
-        [str(core_dir / "bin" / "pi"), "install", "npm:pi-subagents"],
-    ]
-    for _, kwargs in commands[1:]:
-        assert kwargs["env"]["PI_CODING_AGENT_DIR"] == str(agent_dir)
+    install.assert_called_once_with("pi")
+    assert "deprecated" in capsys.readouterr().err.lower()
 
 
 def test_pi_default_binary_is_arkai_local(tmp_path: Path, monkeypatch) -> None:
@@ -91,22 +51,6 @@ def test_pi_default_binary_is_arkai_local(tmp_path: Path, monkeypatch) -> None:
     resolve.assert_called_once_with(str(core_dir / "bin" / "pi"))
 
 
-def test_install_pi_reports_each_package(capsys) -> None:
-    """The installer reports progress for the core and extension packages."""
-    with (
-        patch("builtins.input", return_value="yes"),
-        patch.object(agent_pi.shutil, "which", side_effect=lambda name: f"/bin/{name}"),
-        patch.object(agent.utils, "run_command", return_value=(0, "", "")),
-    ):
-        agent.cmd_agent_install("pi")
-
-    output = capsys.readouterr().out
-    assert agent_pi.PI_CORE_PACKAGE in output
-    for package in agent_pi.PI_PACKAGES:
-        assert package in output
-    assert "installation complete" in output.lower()
-
-
 def test_agent_cli_registers_install_subcommand() -> None:
     """The agent command exposes an install subcommand."""
     import argparse
@@ -121,11 +65,12 @@ def test_agent_cli_registers_install_subcommand() -> None:
     assert args.agent_name == "pi"
 
 
-def test_agent_install_lists_supported_agents(capsys) -> None:
-    """Omitting the install name lists supported installers."""
+def test_agent_install_lists_tools_through_deprecated_alias(capsys) -> None:
+    """Omitting the old install name delegates to the tool manager's list."""
     agent.cmd_agent_install()
 
     output = capsys.readouterr().out
+    assert "strata" in output
     assert "pi" in output
     assert "omp" in output
 
@@ -140,58 +85,27 @@ def test_agent_install_rejects_unsupported_agent() -> None:
 
 def test_omp_installer_declines_before_running_commands(capsys) -> None:
     """Declining the OMP installer does not download or execute anything."""
+    from arkai import tools
+
+    with_root = Path("/isolated/omp")
     with (
+        patch.object(agent_omp, "get_install_dir", return_value=with_root),
         patch("builtins.input", return_value="n"),
-        patch.object(agent_omp, "run_install_command") as run_install,
+        patch.object(tools, "run_sandboxed_tool") as run_install,
+        patch.object(tools, "_run_sandboxed") as run_sandboxed,
     ):
         agent.cmd_agent_install("omp")
 
     run_install.assert_not_called()
+    run_sandboxed.assert_not_called()
     assert "cancelled" in capsys.readouterr().out.lower()
-
-
-def test_omp_installer_downloads_official_binary_to_managed_location(
-    tmp_path: Path, monkeypatch
-) -> None:
-    """The installer uses OMP's official script and Arkai-owned install prefix."""
-    core_dir = tmp_path / "omp" / "bin"
-    omp_path = core_dir / "omp"
-    commands: list[tuple[list[str], dict]] = []
-
-    def run_install(command: list[str], env: dict[str, str] | None = None) -> None:
-        commands.append((command, {"env": env}))
-        if command[0] == "/bin/sh":
-            core_dir.mkdir(parents=True, exist_ok=True)
-            omp_path.write_text("#!/bin/sh\necho 'omp test-version'\n")
-            omp_path.chmod(0o755)
-
-    monkeypatch.setattr(agent_omp, "get_core_dir", lambda: core_dir)
-    monkeypatch.setattr(agent_omp.platform, "system", lambda: "Darwin")
-    with (
-        patch("builtins.input", return_value="yes"),
-        patch.object(agent_omp.shutil, "which", side_effect=lambda name: f"/bin/{name}"),
-        patch.object(agent_omp, "run_install_command", side_effect=run_install),
-        patch.object(agent_omp.utils, "run_command", return_value=(0, "omp test-version\n", "")),
-    ):
-        agent.cmd_agent_install("omp")
-
-    installer_path = commands[0][0][-1]
-    assert commands[0][0] == [
-        "/bin/curl",
-        "-fsSL",
-        agent_omp.OMP_INSTALLER_URL,
-        "-o",
-        installer_path,
-    ]
-    assert commands[1][0] == ["/bin/sh", installer_path, "--binary"]
-    assert commands[1][1]["env"]["PI_INSTALL_DIR"] == str(core_dir)
-    assert omp_path.is_file()
 
 
 def test_omp_installer_rejects_unsupported_platform(monkeypatch) -> None:
     """Automatic OMP installation fails clearly outside macOS and Linux."""
+    monkeypatch.setattr(agent_omp, "get_install_dir", lambda: Path("/isolated/omp"))
     monkeypatch.setattr(agent_omp.platform, "system", lambda: "Windows")
-    with pytest.raises(RuntimeError, match="supports macOS and Linux"):
+    with pytest.raises(RuntimeError, match="requires macOS or Linux and Arapuca"):
         agent_omp.install()
 
 
@@ -276,21 +190,25 @@ def test_pi_update_check_uses_pi_manager_and_filters_to_arkai_packages(
             "type": "npm",
         },
     ]
-    result = SimpleNamespace(returncode=0, stdout=json.dumps(updates), stderr="")
+    monkeypatch.setattr(agent_pi, "get_install_dir", lambda: tmp_path / "pi")
 
     with (
         patch.object(agent_pi, "_resolve_node_path", return_value="/node/bin/node"),
-        patch.object(agent_pi.subprocess, "run", return_value=result) as run,
+        patch.object(
+            agent_pi.tools,
+            "run_sandboxed_tool",
+            return_value=(0, json.dumps(updates), ""),
+        ) as run,
     ):
         found = agent_pi._check_for_package_updates(str(pi_path), str(agent_dir))
 
     assert [update["displayName"] for update in found] == ["pi-mcp-adapter", "pi-web-access"]
-    command = run.call_args.args[0]
+    command = run.call_args.args[2]
     assert command[:3] == ["/node/bin/node", "--input-type=module", "-e"]
     assert manager_entrypoint.as_uri() in command[3]
     assert "checkForAvailableUpdates" in command[3]
-    assert run.call_args.kwargs["env"]["PI_CODING_AGENT_DIR"] == str(agent_dir)
-    assert run.call_args.kwargs["cwd"] == str(agent_dir)
+    assert run.call_args.kwargs["child_environment"]["PI_CODING_AGENT_DIR"] == str(agent_dir)
+    assert run.call_args.kwargs["allow_network"] is True
 
 
 def test_pi_updates_only_reported_packages_after_confirmation(tmp_path: Path, monkeypatch) -> None:
@@ -301,20 +219,21 @@ def test_pi_updates_only_reported_packages_after_confirmation(tmp_path: Path, mo
         {"source": "npm:pi-web-access", "displayName": "pi-web-access"},
     ]
     monkeypatch.setattr(agent_pi, "get_agent_dir", lambda: agent_dir)
+    monkeypatch.setattr(agent_pi, "get_install_dir", lambda: tmp_path / "pi-install")
     with (
         patch.object(agent_pi, "_is_arkai_managed_pi", return_value=True),
         patch.object(agent_pi, "_check_for_package_updates", return_value=updates),
         patch("builtins.input", return_value="") as prompt,
-        patch.object(agent_pi.subprocess, "run", return_value=SimpleNamespace(returncode=0)) as run,
+        patch.object(agent_pi.tools, "run_sandboxed_tool", return_value=(0, "", "")) as run,
     ):
         agent_pi._maybe_update_arkai_packages("/managed/pi")
 
-    assert [call.args[0] for call in run.call_args_list] == [
+    assert [call.args[2] for call in run.call_args_list] == [
         ["/managed/pi", "update", "--extension", "npm:pi-mcp-adapter"],
         ["/managed/pi", "update", "--extension", "npm:pi-web-access"],
     ]
     prompt.assert_called_once_with("Upgrade these packages before starting Pi? [Y/n] ")
-    assert all(call.kwargs["cwd"] == str(agent_dir) for call in run.call_args_list)
+    assert all(call.kwargs["allow_network"] is True for call in run.call_args_list)
 
 
 def test_pi_keeps_outdated_packages_when_update_is_declined(tmp_path: Path, monkeypatch) -> None:
@@ -328,7 +247,7 @@ def test_pi_keeps_outdated_packages_when_update_is_declined(tmp_path: Path, monk
             return_value=[{"source": "npm:pi-mcp-adapter", "displayName": "pi-mcp-adapter"}],
         ),
         patch("builtins.input", return_value="n"),
-        patch.object(agent_pi.subprocess, "run") as run,
+        patch.object(agent_pi.tools, "run_sandboxed_tool") as run,
     ):
         agent_pi._maybe_update_arkai_packages("/managed/pi")
 

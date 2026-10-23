@@ -3,12 +3,10 @@
 import json
 import os
 import platform
-import shutil
-import tempfile
 from pathlib import Path
 
 from arkai import cloud_auth, config, utils
-from arkai.agent import AgentLaunchSpec, run_install_command, run_launch_spec
+from arkai.agent import AgentLaunchSpec, run_launch_spec
 
 OMP_INSTALLER_URL = "https://omp.sh/install"
 OMP_CONFIG_DIR = ".local/state/arkai/omp"
@@ -331,51 +329,8 @@ def start(
 
 
 def install() -> None:
-    """Install OMP's verified prebuilt binary into Arkai's private directory."""
-    system = platform.system()
-    if system not in {"Darwin", "Linux"}:
-        raise RuntimeError(
-            f"Arkai's automatic OMP installer supports macOS and Linux, not {system or 'this OS'}. "
-            "Install OMP using its official instructions, then set agent.path in Arkai config."
-        )
+    """Compatibility wrapper; use ``arkai tools install omp`` instead."""
+    from arkai import tools
 
-    curl_path = shutil.which("curl")
-    sh_path = shutil.which("sh")
-    if curl_path is None or sh_path is None:
-        missing = " and ".join(
-            name for name, path in (("curl", curl_path), ("sh", sh_path)) if path is None
-        )
-        raise RuntimeError(f"{missing} was not found in PATH; install it and retry.")
-
-    install_dir = get_core_dir()
-    omp_path = install_dir / "omp"
-    utils.warn(
-        "This will download the official oh-my-pi installer and install its verified binary "
-        f"under {install_dir}."
-    )
-    try:
-        answer = input("Proceed with the installation? [y/N] ")
-    except EOFError:
-        answer = ""
-    if answer.strip().lower() not in {"y", "yes"}:
-        utils.info("OMP installation cancelled.")
-        return
-
-    with tempfile.TemporaryDirectory(prefix="arkai-omp-install-") as temp_dir:
-        installer_path = Path(temp_dir) / "install.sh"
-        utils.info("Downloading the official OMP installer...")
-        run_install_command([curl_path, "-fsSL", OMP_INSTALLER_URL, "-o", str(installer_path)])
-        install_env = os.environ.copy()
-        install_env["PI_INSTALL_DIR"] = str(install_dir)
-        utils.info("Installing the OMP binary...")
-        run_install_command([sh_path, str(installer_path), "--binary"], env=install_env)
-
-    if not omp_path.is_file() or not os.access(omp_path, os.X_OK):
-        raise RuntimeError(f"OMP installer completed without creating an executable at {omp_path}")
-
-    code, stdout, stderr = utils.run_command([str(omp_path), "--version"], timeout=30)
-    if code != 0:
-        detail = stderr.strip() or stdout.strip() or f"exit code {code}"
-        raise RuntimeError(f"Installed OMP binary failed its version check: {detail}")
-    version = stdout.strip() or stderr.strip() or "version unavailable"
-    utils.info(f"OMP installation complete ({version}): {omp_path}")
+    utils.warn("agent_omp.install() is deprecated; use 'arkai tools install omp'.")
+    tools.cmd_tools_install("omp")

@@ -4,7 +4,6 @@ import json
 import os
 import platform
 import shutil
-import subprocess
 import sys
 import tempfile
 import time
@@ -12,8 +11,8 @@ from pathlib import Path
 
 import requests
 
-from arkai import cloud_auth, config, utils
-from arkai.agent import AgentLaunchSpec, run_install_command, run_launch_spec
+from arkai import cloud_auth, config, tools, utils
+from arkai.agent import AgentLaunchSpec, run_launch_spec
 
 PI_CORE_PACKAGE = "@earendil-works/pi-coding-agent"
 PI_PACKAGES = ("pi-mcp-adapter", "pi-web-access", "pi-subagents")
@@ -374,25 +373,21 @@ def _check_for_package_updates(agent_path: str, agent_dir: str) -> list[dict[str
         "  packageNames.has(update.displayName)\n"
         ")));\n"
     )
-    env = os.environ.copy()
-    env["PI_CODING_AGENT_DIR"] = agent_dir
+    env = {"PI_CODING_AGENT_DIR": agent_dir}
     try:
-        result = subprocess.run(
+        _, stdout, _ = tools.run_sandboxed_tool(
+            get_install_dir(),
+            ("node", "npm"),
             [_resolve_node_path(), "--input-type=module", "-e", script],
-            cwd=agent_dir,
-            capture_output=True,
-            text=True,
+            allow_network=True,
+            child_environment=env,
+            capture=True,
             timeout=60,
-            env=env,
-            check=False,
         )
-    except (OSError, subprocess.TimeoutExpired) as error:
+    except RuntimeError as error:
         raise RuntimeError(f"Pi package update check failed: {error}") from error
-    if result.returncode != 0:
-        detail = result.stderr.strip() or f"exit code {result.returncode}"
-        raise RuntimeError(f"Pi package update check failed: {detail}")
     try:
-        updates = json.loads(result.stdout)
+        updates = json.loads(stdout)
     except json.JSONDecodeError as error:
         raise RuntimeError("Pi package update check returned invalid JSON") from error
     if not isinstance(updates, list):
@@ -434,23 +429,25 @@ def _maybe_update_arkai_packages(agent_path: str) -> None:
         utils.info("Starting Pi without updating packages.")
         return
 
-    env = os.environ.copy()
-    env["PI_CODING_AGENT_DIR"] = agent_dir
+    env = {"PI_CODING_AGENT_DIR": agent_dir}
     for update in updates:
         utils.info(f"Updating {update['displayName']}...")
         try:
-            result = subprocess.run(
+            _, stdout, stderr = tools.run_sandboxed_tool(
+                get_install_dir(),
+                ("node", "npm"),
                 [agent_path, "update", "--extension", update["source"]],
-                cwd=agent_dir,
-                env=env,
-                check=False,
+                allow_network=True,
+                child_environment=env,
+                capture=True,
+                timeout=None,
             )
-        except OSError as error:
+        except RuntimeError as error:
             raise RuntimeError(f"Could not update {update['displayName']}: {error}") from error
-        if result.returncode != 0:
-            raise RuntimeError(
-                f"Updating {update['displayName']} failed with exit code {result.returncode}"
-            )
+        if stdout.strip():
+            utils.info(stdout.rstrip())
+        if stderr.strip():
+            utils.warn(stderr.rstrip())
     utils.info("Pi package updates complete.")
 
 
@@ -712,29 +709,6 @@ def start(
 
 
 def install() -> None:
-    """Install Pi and its supported package extensions."""
-    utils.warn("This will install:\n- pi.dev\n- pi-mcp-adapter\n- pi-web-access\n- pi-subagents")
-    try:
-        answer = input("Proceed with the installation? [y/N] ")
-    except EOFError:
-        answer = ""
-    if answer.strip().lower() not in {"y", "yes"}:
-        utils.info("Pi installation cancelled.")
-        return
-
-    npm_path = shutil.which("npm")
-    if npm_path is None:
-        raise RuntimeError("npm was not found. Install Node.js and npm, then retry.")
-    core_dir = get_core_dir()
-    agent_dir = get_agent_dir()
-    utils.info(f"Installing {PI_CORE_PACKAGE}...")
-    run_install_command(
-        [npm_path, "install", "--prefix", str(core_dir), "-g", "--ignore-scripts", PI_CORE_PACKAGE]
-    )
-    pi_path = core_dir / "bin" / "pi"
-    install_env = os.environ.copy()
-    install_env["PI_CODING_AGENT_DIR"] = str(agent_dir)
-    for package in PI_PACKAGES:
-        utils.info(f"Installing {package}...")
-        run_install_command([str(pi_path), "install", f"npm:{package}"], env=install_env)
-    utils.info(f"Pi installation complete: {core_dir}")
+    """Compatibility wrapper; use ``arkai tools install pi`` instead."""
+    utils.warn("agent_pi.install() is deprecated; use 'arkai tools install pi'.")
+    tools.cmd_tools_install("pi")

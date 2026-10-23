@@ -119,13 +119,17 @@ boundary. With `--no-sandbox`, Codex retains its normal sandbox configuration.
 Install pi.dev and its standard MCP, web-access, and subagent packages:
 
 ```
-arkai agent install pi
+arkai tools install pi
+arkai tools update pi
+arkai tools remove pi
 ```
 
-Run `arkai agent install` without a name to list installable agents. The command
-warns that installation writes files to disk and requires confirmation.
-It installs `@earendil-works/pi-coding-agent`, `pi-mcp-adapter`, `pi-web-access`,
-and `pi-subagents`.
+The tool manager lists installed tools and versions with `arkai tools list`; run
+`arkai tools install` without a name to list supported installers. Install,
+update, and removal require confirmation and execute external tools inside the
+configured Arapuca sandbox. Pi management installs or updates
+`@earendil-works/pi-coding-agent`, `pi-mcp-adapter`, `pi-web-access`, and
+`pi-subagents`.
 
 Pi is installed only for arkai under `~/.local/state/arkai/pi/`; it is not added to
 your global npm installation or shell `PATH`. Node.js and npm must be installed.
@@ -134,7 +138,9 @@ Install [oh-my-pi](https://github.com/can1357/oh-my-pi) using its verified offic
 macOS/Linux binary installer:
 
 ```bash
-arkai agent install omp
+arkai tools install omp
+arkai tools update omp
+arkai tools remove omp
 ```
 
 OMP is installed under `~/.local/state/arkai/omp/`; it is not added to your global
@@ -148,6 +154,9 @@ arkai agent prompt -a omp "Summarize this project"
 The automatic OMP installer currently supports macOS and Linux. On other platforms,
 install OMP using its [official instructions](https://github.com/can1357/oh-my-pi#install)
 and set `agent.path` to the executable in Arkai's config.
+
+`arkai agent install pi|omp` remains as a deprecated compatibility alias for
+`arkai tools install pi|omp`.
 
 **Known issue:** On macOS, copying from sandboxed pi.dev to the system clipboard
 does not work in Terminal.app because it does not support OSC 52 clipboard writes.

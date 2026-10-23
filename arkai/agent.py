@@ -166,11 +166,14 @@ def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
     agent_prompt_parser.add_argument(
         "prompt_text", nargs="*", help="Prompt text (reads from stdin if not provided)"
     )
-    agent_install_parser = agent_subparsers.add_parser("install", help="Install a supported agent")
+    agent_install_parser = agent_subparsers.add_parser(
+        "install",
+        help="Deprecated alias for 'arkai tools install'",
+    )
     agent_install_parser.add_argument(
         "agent_name",
         nargs="?",
-        help="Agent to install (omit to list supported agents)",
+        help="Agent to install (deprecated; use 'arkai tools install')",
     )
 
 
@@ -811,37 +814,23 @@ def _dispatch_agent(
     return None
 
 
-def run_install_command(command: list[str], env: dict[str, str] | None = None) -> None:
-    """Run an installation command and raise an actionable error on failure."""
-    code, _, stderr = utils.run_command(command, timeout=None, env=env)
-    if code != 0:
-        detail = stderr.strip() or f"exit code {code}"
-        raise RuntimeError(f"Installation command failed ({' '.join(command)}): {detail}")
-
-
 def cmd_agent_install(agent_name: str | None = None) -> None:
-    """Install a supported agent, or list agents with an available installer.
+    """Deprecated compatibility alias for ``arkai tools install``.
 
     Args:
         agent_name: Agent to install. If omitted, print the installable agents.
-
-    Raises:
-        ValueError: If the requested agent has no installer.
     """
-    installers = {"pi": "arkai.agent_pi", "omp": "arkai.agent_omp"}
-    if agent_name is None:
-        utils.info("Agents supported for installation: " + ", ".join(installers))
-        return
-
-    module_name = installers.get(agent_name)
-    if module_name is None:
+    supported_agents = ("pi", "omp")
+    if agent_name is not None and agent_name not in supported_agents:
         raise ValueError(
             f"Agent '{agent_name}' is not supported for installation. "
-            f"Supported agents: {', '.join(installers)}"
+            f"Supported agents: {', '.join(supported_agents)}"
         )
 
-    module = __import__(module_name, fromlist=["install"])
-    module.install()
+    utils.warn("'arkai agent install' is deprecated; use 'arkai tools install' instead.")
+    from arkai import tools
+
+    tools.cmd_tools_install(agent_name)
 
 
 def cmd_agent(
