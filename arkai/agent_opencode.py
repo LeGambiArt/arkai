@@ -8,6 +8,7 @@ import tempfile
 from pathlib import Path
 
 from arkai import cloud_auth, config, utils
+from arkai import cloud_provider as cloud_config_utils
 from arkai.agent import AgentLaunchSpec, run_launch_spec
 
 
@@ -69,6 +70,8 @@ def build_launch_spec(
     cloud_model: str | None = None,
     session_dir: str | None = None,
     resume_session: bool = False,
+    cloud_config: dict | None = None,
+    cloud_api_environment: dict[str, str] | None = None,
 ) -> AgentLaunchSpec:
     """Create OpenCode configuration and return its process launch specification."""
     from arkai.agent import _build_sandbox_cmd, _get_agent_model_id, _get_model_name
@@ -84,7 +87,80 @@ def build_launch_spec(
     from arkai.agent import _cloud_provider
 
     cloud_provider = _cloud_provider(cloud_services)
-    if is_cloud and cloud_model is not None:
+    custom_provider_config = None
+    custom_api_keys: dict[str, str] = {}
+    custom_hosts: list[str] = []
+    if cloud_provider == "custom":
+        custom_provider_config = cloud_config or cloud_config_utils.custom_cloud_config_from_arkai(
+            cfg
+        )
+        assert custom_provider_config is not None
+        custom_api_keys = (
+            dict(cloud_api_environment)
+            if cloud_api_environment is not None
+            else cloud_config_utils.custom_cloud_environment(custom_provider_config)
+        )
+        selected_model_reference = cloud_config_utils.select_custom_cloud_model(
+            custom_provider_config, cloud_model
+        )
+        selected_provider, selected_model = cloud_config_utils.custom_cloud_model_provider(
+            custom_provider_config, selected_model_reference
+        )
+        opencode_providers = {}
+        for provider_id, provider in custom_provider_config["providers"].items():
+            model_config = {}
+            model_filter = (
+                selected_model if provider_id == selected_provider["provider_id"] else None
+            )
+            for model in cloud_config_utils.custom_cloud_models(provider, model_filter):
+                model_entry = {"name": model.get("name", model["id"])}
+                limit = {}
+                if "context_window" in model:
+                    limit["context"] = model["context_window"]
+                if "max_output_tokens" in model:
+                    limit["output"] = model["max_output_tokens"]
+                if limit:
+                    model_entry["limit"] = limit
+                model_config[model["id"]] = model_entry
+
+            native_protocols = {
+                "openai": "openai-completions",
+                "anthropic": "anthropic-messages",
+            }
+            if native_protocols.get(provider_id) == provider["protocol"]:
+                opencode_provider = {
+                    "settings": {"baseURL": provider["base_url"]},
+                }
+                if provider.get("name") != "openai":
+                    opencode_provider["name"] = provider["name"]
+                if model_config:
+                    opencode_provider["models"] = model_config
+            else:
+                opencode_provider = {
+                    "name": provider["name"],
+                    "package": (
+                        "@opencode/ai/providers/openai-compatible"
+                        if provider["protocol"] == "openai-completions"
+                        else "@opencode/ai/providers/anthropic"
+                    ),
+                    "settings": {"baseURL": provider["base_url"]},
+                    "models": model_config,
+                }
+            if provider.get("api_key_environment_name"):
+                environment_name = provider["api_key_environment_name"]
+                opencode_provider["env"] = [environment_name]
+                api_key = cloud_config_utils.custom_cloud_resolved_api_key(
+                    provider, custom_api_keys
+                )
+                if api_key:
+                    custom_api_keys[environment_name] = api_key
+            opencode_providers[provider_id] = opencode_provider
+            if provider["host"] not in custom_hosts:
+                custom_hosts.append(provider["host"])
+
+        config_data["providers"] = opencode_providers
+        config_data["model"] = selected_model_reference
+    elif is_cloud and cloud_model is not None:
         config_data["model"] = cloud_model
     if not is_cloud:
         inference_port = config.get_config_value(cfg, "inference.port", 8081)
@@ -137,6 +213,14 @@ def build_launch_spec(
     if is_cloud and cloud_api_key:
         environment["OPENAI_API_KEY"] = cloud_api_key
         sandbox_environment["OPENAI_API_KEY"] = cloud_api_key
+    if cloud_provider == "custom":
+        for native_key in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
+            if native_key not in custom_api_keys:
+                environment.pop(native_key, None)
+                sandbox_environment.pop(native_key, None)
+        for environment_name, api_key in custom_api_keys.items():
+            environment[environment_name] = api_key
+            sandbox_environment[environment_name] = api_key
     sandbox_volumes = list(cli_volumes or [])
     if cloud_provider == "vertex":
         sandbox_volumes, sandbox_environment = cloud_auth.vertex_sandbox_settings(
@@ -159,7 +243,9 @@ def build_launch_spec(
                 allow_network=False,
                 allow_inference=not is_cloud,
                 extra_hosts=(
-                    ["*.openai.com:443", "api.openai.com:443"]
+                    custom_hosts
+                    if cloud_provider == "custom" and platform.system() == "Linux"
+                    else ["*.openai.com:443", "api.openai.com:443"]
                     if cloud_provider == "openai" and platform.system() == "Linux"
                     else [
                         "*-aiplatform.googleapis.com:443",
@@ -220,6 +306,8 @@ def start(
     resume_session: bool = False,
     native_session_id: str | None = None,
     session_record: dict | None = None,
+    cloud_config: dict | None = None,
+    cloud_api_environment: dict[str, str] | None = None,
 ) -> str | None:
     """Build and run OpenCode's launch specification."""
     cloud_api_key = (
@@ -243,6 +331,8 @@ def start(
             cloud_model,
             session_dir,
             resume_session,
+            cloud_config,
+            cloud_api_environment,
         ),
         capture_stdout,
     )

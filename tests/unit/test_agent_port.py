@@ -403,6 +403,22 @@ def test_agent_cli_accepts_vertex_cloud_provider() -> None:
     assert args.cloud == ["vertex"]
 
 
+def test_agent_cli_accepts_custom_cloud_provider() -> None:
+    """The start and prompt commands accept the generic custom provider."""
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    agent.ingest_cli_options(subparsers)
+
+    start_args = parser.parse_args(["agent", "start", "--cloud", "Custom"])
+    prompt_args = parser.parse_args(["agent", "prompt", "--cloud", "custom", "hello"])
+
+    assert start_args.cloud == ["custom"]
+    assert prompt_args.cloud == ["custom"]
+    assert prompt_args.prompt_text == ["hello"]
+
+
 def test_agent_prompt_cli_accepts_codex_openai_cloud() -> None:
     """Codex prompt mode accepts the supported OpenAI cloud provider."""
     import argparse
@@ -467,6 +483,122 @@ def test_codex_rejects_vertex_cloud_provider() -> None:
             assert "Codex does not support --cloud vertex" in str(error)
         else:
             raise AssertionError("Expected Codex to reject Vertex cloud mode")
+
+
+def test_custom_cloud_uses_configured_default_and_skips_local_inference(
+    monkeypatch,
+) -> None:
+    """Custom cloud setup selects its configured model without starting inference."""
+    cfg = {
+        "agent": {
+            "name": "opencode",
+            "path": "/agent",
+            "mcp": False,
+            "cloud": {
+                "custom": {
+                    "base_url": "https://gateway.example/v1",
+                    "api_key": {"source": "environment", "name": "TEAM_MODEL_KEY"},
+                    "default_provider": "gateway",
+                    "providers": {"gateway": {"default_model": "org/model"}},
+                }
+            },
+        },
+        "inference": {},
+        "sandbox": {"disable": True},
+    }
+    with (
+        patch.object(agent.config, "load_config", return_value=cfg),
+        patch.object(agent.config, "validate_config", return_value=True),
+        patch.object(agent.inference, "is_inference_running") as running,
+        patch.object(agent.inference, "is_inference_server_available") as available,
+        patch.object(agent.inference, "cmd_inference_start") as start,
+        patch.object(agent.utils, "resolve_binary", return_value="/agent"),
+    ):
+        monkeypatch.setenv("TEAM_MODEL_KEY", "context-secret")
+        with agent._agent_context("opencode", cloud_services=["custom"]) as context:
+            assert context.cloud_model == "gateway/org/model"
+            assert context.cloud_config is not None
+            assert context.cloud_config["default_provider"] == "gateway"
+            assert context.cloud_api_environment == {"TEAM_MODEL_KEY": "context-secret"}
+            assert "context-secret" not in repr(context)
+
+    running.assert_not_called()
+    available.assert_not_called()
+    start.assert_not_called()
+
+
+def test_custom_cloud_requires_model_and_supported_agent() -> None:
+    """Custom mode reports missing model configuration and unsupported agents."""
+    base_config = {
+        "agent": {
+            "name": "opencode",
+            "cloud": {
+                "custom": {
+                    "base_url": "https://gateway.example/v1",
+                    "providers": {"gateway": {}},
+                }
+            },
+        },
+        "inference": {},
+        "sandbox": {"disable": True},
+    }
+    with patch.object(agent.config, "load_config", return_value=base_config):
+        try:
+            with agent._agent_context("opencode", cloud_services=["custom"]):
+                pass
+        except RuntimeError as error:
+            assert "default_model or an explicit --model" in str(error)
+        else:
+            raise AssertionError("Expected custom cloud to require a selected model")
+
+    base_config["agent"]["cloud"]["custom"]["providers"]["gateway"]["default_model"] = "org/model"
+    with patch.object(agent.config, "load_config", return_value=base_config):
+        try:
+            with agent._agent_context("crush", cloud_services=["custom"]):
+                pass
+        except RuntimeError as error:
+            assert "opencode, pi, and omp" in str(error)
+        else:
+            raise AssertionError("Expected custom cloud to reject unsupported agents")
+
+
+def test_custom_provider_alias_selection_is_shared_with_pi() -> None:
+    cfg = {
+        "agent": {
+            "name": "pi",
+            "mcp": False,
+            "cloud": {
+                "custom": {
+                    "base_url": "https://gateway.example/v1",
+                    "default_provider": "gateway",
+                    "providers": {
+                        "gateway": {"default_model": "org/model"},
+                        "openai": {"models": [{"id": "gpt-model"}]},
+                    },
+                }
+            },
+        },
+        "inference": {},
+        "sandbox": {"disable": True},
+    }
+    with (
+        patch.object(agent.config, "load_config", return_value=cfg),
+        patch.object(agent.config, "validate_config", return_value=True),
+        patch.object(agent.inference, "is_inference_running") as running,
+        patch.object(agent.inference, "is_inference_server_available") as available,
+        patch.object(agent.inference, "cmd_inference_start") as start,
+        patch.object(agent.utils, "resolve_binary", return_value="/agent"),
+    ):
+        with agent._agent_context(
+            "pi", model="openai/gpt-model", cloud_services=["custom"]
+        ) as context:
+            assert context.cloud_model == "openai/gpt-model"
+            assert context.cloud_config is not None
+            assert set(context.cloud_config["providers"]) == {"gateway", "openai"}
+
+    running.assert_not_called()
+    available.assert_not_called()
+    start.assert_not_called()
 
 
 def test_agent_prompt_passes_backend_override_to_context() -> None:
@@ -592,6 +724,22 @@ def test_opencode_agent_dispatches_cloud_services() -> None:
 
     assert launcher.call_args.kwargs["cloud_services"] == ["openai"]
     assert launcher.call_args.kwargs["cloud_model"] == "openai/model-v2"
+
+
+def test_custom_cloud_dispatches_resolved_api_environment() -> None:
+    """The dispatcher passes host-resolved custom credentials to the launcher."""
+    resolved_environment = {"ARKAI_CUSTOM_API_KEY_GATEWAY_12345678": "keychain-secret"}
+    ctx = agent.AgentContext(
+        agent_name="opencode",
+        agent_path="/bin/opencode",
+        cloud_services=["custom"],
+        cloud_config={"default_provider": "gateway", "providers": {}},
+        cloud_api_environment=resolved_environment,
+    )
+    with patch.object(agent_opencode, "start", return_value=None) as launcher:
+        agent._dispatch_agent(ctx)
+
+    assert launcher.call_args.kwargs["cloud_api_environment"] == resolved_environment
 
 
 def test_crush_agent_dispatches_cloud_services() -> None:

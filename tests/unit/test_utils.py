@@ -73,11 +73,35 @@ class TestYAMLHandling:
         assert result["agent"]["name"] == "crush"
 
     def test_merge_configs(self):
-        base = {"agent": {"name": "opencode"}, "inference": {"port": 8081}}
-        override = {"agent": {"name": "crush"}}
+        base = {
+            "agent": {
+                "name": "opencode",
+                "cloud": {"custom": {"api_key": {"source": "environment", "name": "TEAM_KEY"}}},
+            },
+            "inference": {"port": 8081},
+        }
+        override = {
+            "agent": {
+                "name": "crush",
+                "cloud": {
+                    "custom": {
+                        "api_key": {
+                            "source": "keychain",
+                            "service": "arkai/cloud",
+                            "account": "team",
+                        }
+                    }
+                },
+            }
+        }
         result = utils.merge_configs(base, override)
         assert result["agent"]["name"] == "crush"
         assert result["inference"]["port"] == 8081
+        assert result["agent"]["cloud"]["custom"]["api_key"] == {
+            "source": "keychain",
+            "service": "arkai/cloud",
+            "account": "team",
+        }
 
 
 class TestPIDManagement:

@@ -25,6 +25,9 @@ rag = [
 mlx = [
     "mlx-lm>=0.20.0",
 ]
+keychain = [
+    "keyring>=24.0.0",
+]
 dev = [
     "pytest>=7.0",
     "behave>=1.2.6",

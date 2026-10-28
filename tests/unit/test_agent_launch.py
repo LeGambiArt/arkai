@@ -1,6 +1,7 @@
 """Tests for agent launch specification construction and execution."""
 
 import json
+import shutil
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -20,6 +21,51 @@ from arkai import (
 def _cfg() -> dict:
     """Return a minimal configuration shared by launch-spec tests."""
     return {"inference": {"model": "model.gguf", "port": 8123}}
+
+
+def _custom_cloud_cfg() -> dict:
+    """Return a generic custom provider configuration for launch-spec tests."""
+    return {
+        "agent": {
+            "cloud": {
+                "custom": {
+                    "base_url": "https://gateway.example/v1",
+                    "api_key": {"source": "environment", "name": "TEAM_MODEL_KEY"},
+                    "default_provider": "arkai-custom",
+                    "providers": {
+                        "arkai-custom": {
+                            "name": "Example Gateway",
+                            "default_model": "org/model-one",
+                            "models": [
+                                {
+                                    "id": "org/model-one",
+                                    "name": "Model One",
+                                    "context_window": 65536,
+                                    "max_output_tokens": 8192,
+                                    "reasoning": True,
+                                },
+                                {"id": "org/model-two", "name": "Model Two"},
+                            ],
+                        },
+                        "openai": {
+                            "name": "OpenAI-compatible endpoint",
+                            "base_url": "https://openai-gateway.example/v1",
+                            "api_key": {
+                                "source": "environment",
+                                "name": "OPENAI_GATEWAY_KEY",
+                            },
+                            "models": [{"id": "gpt-model-id", "name": "GPT model"}],
+                        },
+                        "anthropic": {
+                            "base_url": "https://anthropic-gateway.example/v1",
+                            "models": [{"id": "claude-model-id", "name": "Claude model"}],
+                        },
+                    },
+                }
+            }
+        },
+        "inference": {"model": "local.gguf", "port": 8123},
+    }
 
 
 def test_opencode_builds_configuration_without_starting_process(
@@ -94,6 +140,144 @@ def test_opencode_cloud_model_overrides_agent_model(tmp_path: Path, monkeypatch)
     config_path = Path(spec.environment["OPENCODE_CONFIG"])
     assert json.loads(config_path.read_text())["model"] == "openai/cloud-only-model"
     config_path.unlink()
+
+
+def test_opencode_custom_provider_uses_configured_endpoint_and_models(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(agent_opencode, "_get_config_dir", lambda: tmp_path)
+    monkeypatch.setenv("TEAM_MODEL_KEY", "provider-secret")
+    monkeypatch.setenv("OPENAI_GATEWAY_KEY", "openai-secret")
+    monkeypatch.setenv("OPENAI_API_KEY", "unrelated-openai-secret")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "unrelated-anthropic-secret")
+
+    spec = agent_opencode.build_launch_spec(
+        "/agent", _custom_cloud_cfg(), None, False, None, cloud_services=["custom"]
+    )
+
+    config_path = Path(spec.environment["OPENCODE_CONFIG"])
+    config_data = json.loads(config_path.read_text())
+    provider = config_data["providers"]["arkai-custom"]
+    openai_provider = config_data["providers"]["openai"]
+    anthropic_provider = config_data["providers"]["anthropic"]
+    assert config_data["model"] == "arkai-custom/org/model-one"
+    assert provider["package"] == "@opencode/ai/providers/openai-compatible"
+    assert provider["env"] == ["TEAM_MODEL_KEY"]
+    assert provider["settings"] == {"baseURL": "https://gateway.example/v1"}
+    assert provider["models"]["org/model-one"] == {
+        "name": "Model One",
+        "limit": {"context": 65536, "output": 8192},
+    }
+    assert openai_provider["env"] == ["OPENAI_GATEWAY_KEY"]
+    assert openai_provider["settings"] == {"baseURL": "https://openai-gateway.example/v1"}
+    assert openai_provider["models"]["gpt-model-id"] == {"name": "GPT model"}
+    assert anthropic_provider["env"] == ["TEAM_MODEL_KEY"]
+    assert "package" not in anthropic_provider
+    assert anthropic_provider["settings"] == {"baseURL": "https://anthropic-gateway.example/v1"}
+    assert anthropic_provider["models"]["claude-model-id"] == {"name": "Claude model"}
+    assert "provider-secret" not in config_path.read_text()
+    assert spec.environment["TEAM_MODEL_KEY"] == "provider-secret"
+    assert spec.environment["OPENAI_GATEWAY_KEY"] == "openai-secret"
+    assert "OPENAI_API_KEY" not in spec.environment
+    assert "ANTHROPIC_API_KEY" not in spec.environment
+    config_path.unlink()
+
+
+def test_opencode_custom_keychain_uses_runtime_environment_binding(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(agent_opencode, "_get_config_dir", lambda: tmp_path)
+    cfg = _custom_cloud_cfg()
+    custom = cfg["agent"]["cloud"]["custom"]
+    custom.pop("api_key")
+    custom["providers"]["arkai-custom"]["api_key"] = {
+        "source": "keychain",
+        "service": "arkai/cloud",
+        "account": "gateway",
+    }
+    normalized = agent_opencode.cloud_config_utils.normalize_custom_cloud_config(custom)
+    runtime_name = normalized["providers"]["arkai-custom"]["api_key_environment_name"]
+    resolved_environment = {
+        runtime_name: "keychain-secret",
+        "OPENAI_GATEWAY_KEY": "openai-secret",
+    }
+
+    spec = agent_opencode.build_launch_spec(
+        "/agent",
+        cfg,
+        None,
+        False,
+        None,
+        cloud_services=["custom"],
+        cloud_config=normalized,
+        cloud_api_environment=resolved_environment,
+    )
+
+    config_path = Path(spec.environment["OPENCODE_CONFIG"])
+    config_data = json.loads(config_path.read_text())
+    assert config_data["providers"]["arkai-custom"]["env"] == [runtime_name]
+    assert spec.environment[runtime_name] == "keychain-secret"
+    assert "keychain-secret" not in config_path.read_text()
+    config_path.unlink()
+
+
+def test_opencode_custom_cli_model_overrides_default_and_is_registered(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(agent_opencode, "_get_config_dir", lambda: tmp_path)
+    monkeypatch.setenv("TEAM_MODEL_KEY", "provider-secret")
+    monkeypatch.setenv("OPENAI_GATEWAY_KEY", "openai-secret")
+    monkeypatch.setenv("OPENAI_API_KEY", "unrelated-openai-secret")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "unrelated-anthropic-secret")
+
+    spec = agent_opencode.build_launch_spec(
+        "/agent",
+        _custom_cloud_cfg(),
+        None,
+        False,
+        None,
+        cloud_services=["custom"],
+        cloud_model="openai/gpt-model-id",
+    )
+
+    config_path = Path(spec.environment["OPENCODE_CONFIG"])
+    config_data = json.loads(config_path.read_text())
+    assert config_data["model"] == "openai/gpt-model-id"
+    assert config_data["providers"]["openai"]["models"]["gpt-model-id"] == {"name": "GPT model"}
+    config_path.unlink()
+
+
+def test_opencode_custom_sandbox_allows_only_configured_endpoint(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(agent_opencode, "_get_config_dir", lambda: tmp_path)
+    monkeypatch.setattr(agent_opencode.platform, "system", lambda: "Linux")
+    monkeypatch.setenv("TEAM_MODEL_KEY", "provider-secret")
+    monkeypatch.setenv("OPENAI_GATEWAY_KEY", "openai-secret")
+    monkeypatch.setenv("OPENAI_API_KEY", "unrelated-openai-secret")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "unrelated-anthropic-secret")
+    with patch.object(agent, "_build_sandbox_cmd", return_value=["arapuca", "run", "--"]) as build:
+        spec = agent_opencode.build_launch_spec(
+            "/agent",
+            _custom_cloud_cfg(),
+            None,
+            True,
+            str(tmp_path),
+            cloud_services=["custom"],
+        )
+
+    assert build.call_args.kwargs["allow_inference"] is False
+    assert build.call_args.kwargs["extra_hosts"] == [
+        "gateway.example:443",
+        "openai-gateway.example:443",
+        "anthropic-gateway.example:443",
+    ]
+    assert build.call_args.args[6]["TEAM_MODEL_KEY"] == "provider-secret"
+    assert build.call_args.args[6]["OPENAI_GATEWAY_KEY"] == "openai-secret"
+    assert "OPENAI_API_KEY" not in build.call_args.args[6]
+    assert "ANTHROPIC_API_KEY" not in build.call_args.args[6]
+    for path in spec.cleanup_paths:
+        path.unlink(missing_ok=True)
 
 
 def test_opencode_cloud_sandbox_allows_openai_only(tmp_path: Path, monkeypatch) -> None:
@@ -786,6 +970,203 @@ def test_pi_cloud_model_override_is_passed_to_agent(tmp_path: Path, monkeypatch)
     ]
 
 
+def test_pi_custom_provider_registers_models_and_selects_default(
+    tmp_path: Path, monkeypatch
+) -> None:
+    agent_dir = tmp_path / "pi-agent"
+    agent_dir.mkdir()
+    models_path = agent_dir / "models.json"
+    original_models = json.dumps({"providers": {"existing": {"models": []}}})
+    models_path.write_text(original_models)
+    auth_path = agent_dir / "auth.json"
+    original_auth = json.dumps({"existing": {"type": "api_key", "key": "other-secret"}})
+    auth_path.write_text(original_auth)
+    monkeypatch.setattr(agent_pi, "get_global_agent_dir", lambda: agent_dir)
+    monkeypatch.setattr(agent_pi, "get_install_dir", lambda: tmp_path / "arkai-pi")
+    monkeypatch.setenv("TEAM_MODEL_KEY", "provider-secret")
+    monkeypatch.setenv("OPENAI_GATEWAY_KEY", "openai-secret")
+    monkeypatch.setenv("OPENAI_API_KEY", "unrelated-openai-secret")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "unrelated-anthropic-secret")
+    with patch("arkai.wtmcp.is_wtmcp_running", return_value=False):
+        spec = agent_pi.build_launch_spec(
+            "/bin/pi",
+            _custom_cloud_cfg(),
+            None,
+            False,
+            str(tmp_path),
+            cloud_services=["custom"],
+            cloud_api_environment={
+                "TEAM_MODEL_KEY": "provider-secret",
+                "OPENAI_GATEWAY_KEY": "openai-secret",
+            },
+        )
+
+    runtime_agent_dir = Path(spec.environment["PI_CODING_AGENT_DIR"])
+    runtime_models_path = runtime_agent_dir / "models.json"
+    models = json.loads(runtime_models_path.read_text())
+    provider = models["providers"]["arkai-custom"]
+    openai_provider = models["providers"]["openai"]
+    anthropic_provider = models["providers"]["anthropic"]
+    assert set(models["providers"]) == {
+        "arkai-custom",
+        "openai",
+        "anthropic",
+    }
+    assert provider["baseUrl"] == "https://gateway.example/v1"
+    assert provider["api"] == "openai-completions"
+    assert [model["id"] for model in provider["models"]] == [
+        "org/model-one",
+        "org/model-two",
+    ]
+    assert provider["models"][0]["contextWindow"] == 65536
+    assert provider["models"][0]["maxTokens"] == 8192
+    assert provider["models"][0]["cost"] == {
+        "input": 0,
+        "output": 0,
+        "cacheRead": 0,
+        "cacheWrite": 0,
+    }
+    assert openai_provider["baseUrl"] == "https://openai-gateway.example/v1"
+    assert [model["id"] for model in openai_provider["models"]] == ["gpt-model-id"]
+    assert anthropic_provider["baseUrl"] == "https://anthropic-gateway.example"
+    assert anthropic_provider["api"] == "anthropic-messages"
+    assert [model["id"] for model in anthropic_provider["models"]] == ["claude-model-id"]
+    assert spec.command == [
+        "/bin/pi",
+        "--models",
+        "arkai-custom/org/model-one,arkai-custom/org/model-two,"
+        "openai/gpt-model-id,anthropic/claude-model-id",
+        "--model",
+        "arkai-custom/org/model-one",
+    ]
+    assert spec.environment["TEAM_MODEL_KEY"] == "provider-secret"
+    assert spec.environment["OPENAI_GATEWAY_KEY"] == "openai-secret"
+    assert "OPENAI_API_KEY" not in spec.environment
+    assert "ANTHROPIC_API_KEY" not in spec.environment
+    assert runtime_models_path.stat().st_mode & 0o777 == 0o600
+    assert models_path.read_text() == original_models
+    assert auth_path.read_text() == original_auth
+    private_auth_path = runtime_agent_dir / "auth.json"
+    assert json.loads(private_auth_path.read_text()) == {
+        "arkai-custom": {"type": "api_key", "key": "provider-secret"},
+        "openai": {"type": "api_key", "key": "openai-secret"},
+        "anthropic": {"type": "api_key", "key": "provider-secret"},
+    }
+    assert private_auth_path.stat().st_mode & 0o777 == 0o600
+    for path in spec.cleanup_paths:
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink(missing_ok=True)
+
+
+def test_pi_custom_sandbox_passes_key_and_exact_endpoint_allowlist(
+    tmp_path: Path, monkeypatch
+) -> None:
+    agent_dir = tmp_path / "pi-agent"
+    monkeypatch.setattr(agent_pi, "get_global_agent_dir", lambda: agent_dir)
+    monkeypatch.setattr(agent_pi, "get_install_dir", lambda: tmp_path / "arkai-pi")
+    monkeypatch.setattr(agent_pi, "_resolve_node_path", lambda: "/usr/bin/node")
+    monkeypatch.setattr(agent_pi.platform, "system", lambda: "Linux")
+    monkeypatch.setenv("TEAM_MODEL_KEY", "provider-secret")
+    monkeypatch.setenv("OPENAI_GATEWAY_KEY", "openai-secret")
+    monkeypatch.setenv("OPENAI_API_KEY", "unrelated-openai-secret")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "unrelated-anthropic-secret")
+    with (
+        patch("arkai.wtmcp.is_wtmcp_running", return_value=False),
+        patch.object(agent_pi, "_create_node_path_preload", return_value=tmp_path / "preload.cjs"),
+        patch.object(agent, "_build_sandbox_cmd", return_value=["arapuca", "run", "--"]) as build,
+    ):
+        spec = agent_pi.build_launch_spec(
+            "/bin/pi",
+            _custom_cloud_cfg(),
+            None,
+            True,
+            str(tmp_path),
+            cloud_services=["custom"],
+        )
+
+    assert build.call_args.kwargs["allow_inference"] is False
+    assert build.call_args.kwargs["extra_hosts"] == [
+        "gateway.example:443",
+        "openai-gateway.example:443",
+        "anthropic-gateway.example:443",
+    ]
+    assert build.call_args.args[6]["TEAM_MODEL_KEY"] == "provider-secret"
+    assert build.call_args.args[6]["OPENAI_GATEWAY_KEY"] == "openai-secret"
+    assert "OPENAI_API_KEY" not in build.call_args.args[6]
+    assert "ANTHROPIC_API_KEY" not in build.call_args.args[6]
+    for path in spec.cleanup_paths:
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink(missing_ok=True)
+
+
+def test_pi_custom_model_override_selects_provider_alias(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(agent_pi, "get_global_agent_dir", lambda: tmp_path / "pi-agent")
+    monkeypatch.setattr(agent_pi, "get_install_dir", lambda: tmp_path / "arkai-pi")
+    monkeypatch.setenv("TEAM_MODEL_KEY", "provider-secret")
+    monkeypatch.setenv("OPENAI_GATEWAY_KEY", "openai-secret")
+    with patch("arkai.wtmcp.is_wtmcp_running", return_value=False):
+        spec = agent_pi.build_launch_spec(
+            "/bin/pi",
+            _custom_cloud_cfg(),
+            None,
+            False,
+            str(tmp_path),
+            cloud_services=["custom"],
+            cloud_model="openai/gpt-model-id",
+        )
+
+    assert spec.command[spec.command.index("--models") + 1] == (
+        "arkai-custom/org/model-one,arkai-custom/org/model-two,"
+        "openai/gpt-model-id,anthropic/claude-model-id"
+    )
+    assert spec.command[spec.command.index("--model") + 1] == "openai/gpt-model-id"
+    for path in spec.cleanup_paths:
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink(missing_ok=True)
+
+
+def test_pi_custom_provider_ids_are_lowercased_for_native_registry(
+    tmp_path: Path, monkeypatch
+) -> None:
+    cfg = _custom_cloud_cfg()
+    custom = cfg["agent"]["cloud"]["custom"]
+    custom["providers"]["TeamGateway"] = custom["providers"].pop("arkai-custom")
+    custom["default_provider"] = "TeamGateway"
+    monkeypatch.setattr(agent_pi, "get_global_agent_dir", lambda: tmp_path / "pi-agent")
+    monkeypatch.setattr(agent_pi, "get_install_dir", lambda: tmp_path / "arkai-pi")
+    monkeypatch.setenv("TEAM_MODEL_KEY", "provider-secret")
+    monkeypatch.setenv("OPENAI_GATEWAY_KEY", "openai-secret")
+    with patch("arkai.wtmcp.is_wtmcp_running", return_value=False):
+        spec = agent_pi.build_launch_spec(
+            "/bin/pi", cfg, None, False, str(tmp_path), cloud_services=["custom"]
+        )
+
+    runtime_agent_dir = Path(spec.environment["PI_CODING_AGENT_DIR"])
+    models = json.loads((runtime_agent_dir / "models.json").read_text())
+    assert "teamgateway" in models["providers"]
+    assert "TeamGateway" not in models["providers"]
+    assert set(spec.command[spec.command.index("--models") + 1].split(",")) == {
+        "teamgateway/org/model-one",
+        "teamgateway/org/model-two",
+        "openai/gpt-model-id",
+        "anthropic/claude-model-id",
+    }
+    assert spec.command[spec.command.index("--model") + 1] == "teamgateway/org/model-one"
+    auth = json.loads((runtime_agent_dir / "auth.json").read_text())
+    assert auth["teamgateway"]["key"] == "provider-secret"
+    for path in spec.cleanup_paths:
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink(missing_ok=True)
+
+
 def test_pi_cloud_mcp_config_allows_project_servers(tmp_path: Path, monkeypatch) -> None:
     """Cloud Pi runs put the project-server policy in their selected MCP config."""
     agent_dir = tmp_path / "pi-agent"
@@ -1131,6 +1512,155 @@ def test_omp_vertex_cloud_selects_google_vertex_provider(tmp_path: Path, monkeyp
 
     assert spec.command[spec.command.index("--provider") + 1] == "google-vertex"
     assert "--model" not in spec.command
+
+
+def test_omp_custom_provider_registers_models_and_selects_default(
+    tmp_path: Path, monkeypatch
+) -> None:
+    agent_dir = tmp_path / "omp-agent"
+    agent_dir.mkdir()
+    models_path = agent_dir / "models.yml"
+    original_models = "providers:\n  existing:\n    api: openai-completions\n"
+    models_path.write_text(original_models)
+    config_path = agent_dir / "config.yml"
+    config_path.write_text("startup:\n  quiet: true\n")
+    original_config = config_path.read_text()
+    monkeypatch.setattr(agent_omp, "get_global_agent_dir", lambda: agent_dir)
+    monkeypatch.setattr(agent_omp, "get_install_dir", lambda: tmp_path / "arkai-omp")
+    monkeypatch.setenv("TEAM_MODEL_KEY", "provider-secret")
+    monkeypatch.setenv("OPENAI_GATEWAY_KEY", "openai-secret")
+    monkeypatch.setenv("OPENAI_API_KEY", "unrelated-openai-secret")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "unrelated-anthropic-secret")
+
+    spec = agent_omp.build_launch_spec(
+        "/bin/omp",
+        _custom_cloud_cfg(),
+        None,
+        False,
+        str(tmp_path),
+        cloud_services=["custom"],
+        cloud_api_environment={
+            "TEAM_MODEL_KEY": "provider-secret",
+            "OPENAI_GATEWAY_KEY": "openai-secret",
+        },
+    )
+
+    runtime_agent_dir = Path(spec.environment["PI_CODING_AGENT_DIR"])
+    runtime_models_path = runtime_agent_dir / "models.yml"
+    models = agent.utils.load_yaml(str(runtime_models_path))
+    provider = models["providers"]["arkai-custom"]
+    openai_provider = models["providers"]["openai"]
+    anthropic_provider = models["providers"]["anthropic"]
+    assert set(models["providers"]) == {
+        "arkai-custom",
+        "openai",
+        "anthropic",
+    }
+    assert provider["baseUrl"] == "https://gateway.example/v1"
+    assert provider["api"] == "openai-completions"
+    assert [model["id"] for model in provider["models"]] == [
+        "org/model-one",
+        "org/model-two",
+    ]
+    assert openai_provider["baseUrl"] == "https://openai-gateway.example/v1"
+    assert [model["id"] for model in openai_provider["models"]] == ["gpt-model-id"]
+    assert anthropic_provider["baseUrl"] == "https://anthropic-gateway.example/v1"
+    assert anthropic_provider["api"] == "anthropic-messages"
+    assert [model["id"] for model in anthropic_provider["models"]] == ["claude-model-id"]
+    assert "--provider" not in spec.command
+    assert "--model" not in spec.command
+    runtime_config = agent.utils.load_yaml(
+        str(Path(spec.environment["PI_CODING_AGENT_DIR"]) / "config.yml")
+    )
+    assert runtime_config["modelRoles"]["default"] == "arkai-custom/org/model-one"
+    assert runtime_config["startup"] == {"quiet": True}
+    assert spec.environment["TEAM_MODEL_KEY"] == "provider-secret"
+    assert spec.environment["OPENAI_GATEWAY_KEY"] == "openai-secret"
+    assert "OPENAI_API_KEY" not in spec.environment
+    assert "ANTHROPIC_API_KEY" not in spec.environment
+    assert runtime_models_path.stat().st_mode & 0o777 == 0o600
+    assert models_path.read_text() == original_models
+    assert config_path.read_text() == original_config
+    assert models["providers"]["arkai-custom"]["apiKey"] == "provider-secret"
+    assert models["providers"]["openai"]["apiKey"] == "openai-secret"
+    assert models["providers"]["anthropic"]["apiKey"] == "provider-secret"
+    for path in spec.cleanup_paths:
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink(missing_ok=True)
+
+
+def test_omp_custom_sandbox_passes_key_and_exact_endpoint_allowlist(
+    tmp_path: Path, monkeypatch
+) -> None:
+    agent_dir = tmp_path / "omp-agent"
+    monkeypatch.setattr(agent_omp, "get_global_agent_dir", lambda: agent_dir)
+    monkeypatch.setattr(agent_omp, "get_install_dir", lambda: tmp_path / "arkai-omp")
+    monkeypatch.setattr(agent_omp.platform, "system", lambda: "Linux")
+    monkeypatch.setenv("TEAM_MODEL_KEY", "provider-secret")
+    monkeypatch.setenv("OPENAI_GATEWAY_KEY", "openai-secret")
+    monkeypatch.setenv("OPENAI_API_KEY", "unrelated-openai-secret")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "unrelated-anthropic-secret")
+    with patch.object(agent, "_build_sandbox_cmd", return_value=["arapuca", "run", "--"]) as build:
+        spec = agent_omp.build_launch_spec(
+            "/bin/omp",
+            _custom_cloud_cfg(),
+            None,
+            True,
+            str(tmp_path),
+            cloud_services=["custom"],
+            cloud_model="openai/gpt-model-id",
+        )
+
+    assert build.call_args.kwargs["allow_inference"] is False
+    assert build.call_args.kwargs["extra_hosts"] == [
+        "gateway.example:443",
+        "openai-gateway.example:443",
+        "anthropic-gateway.example:443",
+    ]
+    assert build.call_args.args[6]["TEAM_MODEL_KEY"] == "provider-secret"
+    assert build.call_args.args[6]["OPENAI_GATEWAY_KEY"] == "openai-secret"
+    assert "OPENAI_API_KEY" not in build.call_args.args[6]
+    assert "ANTHROPIC_API_KEY" not in build.call_args.args[6]
+    assert "--provider" not in spec.command
+    assert "--model" not in spec.command
+    runtime_config = agent.utils.load_yaml(
+        str(Path(spec.environment["PI_CODING_AGENT_DIR"]) / "config.yml")
+    )
+    assert runtime_config["modelRoles"]["default"] == "openai/gpt-model-id"
+    for path in spec.cleanup_paths:
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink(missing_ok=True)
+
+
+def test_omp_custom_prompt_pins_provider_and_model(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(agent_omp, "get_global_agent_dir", lambda: tmp_path / "omp-agent")
+    monkeypatch.setattr(agent_omp, "get_install_dir", lambda: tmp_path / "arkai-omp")
+    monkeypatch.setenv("TEAM_MODEL_KEY", "provider-secret")
+    monkeypatch.setenv("OPENAI_GATEWAY_KEY", "openai-secret")
+
+    spec = agent_omp.build_launch_spec(
+        "/bin/omp",
+        _custom_cloud_cfg(),
+        None,
+        False,
+        str(tmp_path),
+        prompt="summarize this project",
+        cloud_services=["custom"],
+        cloud_model="openai/gpt-model-id",
+    )
+
+    assert spec.command[spec.command.index("--provider") + 1] == "openai"
+    assert spec.command[spec.command.index("--model") + 1] == "gpt-model-id"
+    assert spec.command[-1] == "summarize this project"
+    for path in spec.cleanup_paths:
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink(missing_ok=True)
 
 
 def test_omp_cloud_model_override_is_passed_to_agent(tmp_path: Path, monkeypatch) -> None:

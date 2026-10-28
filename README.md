@@ -561,6 +561,9 @@ arkai agent start -a crush --cloud vertex
 arkai agent start -a pi --cloud vertex
 arkai agent start -a omp --cloud vertex
 arkai agent start -a opencode --cloud vertex
+arkai agent start -a opencode --cloud custom
+arkai agent start -a pi --cloud custom -m org/model-id
+arkai agent start -a omp --cloud custom
 arkai agent start -a codex --cloud openai
 arkai agent prompt -a codex --cloud openai "Summarize this project"
 ```
@@ -573,7 +576,7 @@ arkai agent prompt -a codex --cloud openai "Summarize this project"
 |------|-------------|
 | `-a/--agent AGENT` | Override agent from config |
 | `-m/--model MODEL` | Override the local model, or select the cloud agent model with `--cloud` |
-| `--cloud SERVICE` | Use a cloud AI provider instead of local inference (`openai` or `vertex`; Codex supports OpenAI only) |
+| `--cloud SERVICE` | Use a cloud AI provider instead of local inference (`openai`, `vertex`, or configured `custom`; custom supports OpenCode, Pi, and OMP) |
 | `--no-mcp` | Skip wtmcp entirely |
 | `--no-sandbox` | Skip sandbox for this run |
 | `-s/--sandbox PROFILE` | Use a specific sandbox profile for this run |
@@ -640,16 +643,94 @@ Vertex AI and OAuth endpoints.
 Codex currently does not support `--cloud vertex`: Codex custom providers require
 the Responses API, while Vertex's OpenAI-compatible endpoint currently exposes
 Chat Completions instead.
-With `--cloud`, `-m/--model` selects the model for the cloud provider and is passed
-to the agent without being treated as a local inference model (it will not be
-downloaded). Use the model identifier expected by the selected agent/provider.
+With `--cloud custom`, configure `agent.cloud.custom` in the user or project
+Arkai YAML file. The provider uses an HTTPS endpoint and the OpenAI Chat
+Completions protocol:
+
+```yaml
+agent:
+  cloud:
+    custom:
+      default_provider: gateway
+      protocol: openai-completions
+      base_url: https://gateway.example/v1
+      api_key:
+        source: environment
+        name: TEAM_MODEL_KEY
+      providers:
+        gateway:
+          name: Team model gateway
+          default_model: org/model-id
+          models:
+            - id: org/model-id
+              name: Example model
+              context_window: 65536
+              max_output_tokens: 8192
+        openai:
+          # Inherits the endpoint, protocol, and API-key source above.
+          models:
+            - id: gpt-model-id
+              name: GPT model
+        anthropic:
+          # Uses the Anthropic Messages protocol and inherits the API-key source.
+          base_url: https://anthropic-gateway.example/v1
+          models:
+            - id: claude-model-id
+              name: Claude model
+```
+
+To use the system keychain instead, replace the root `api_key` block above
+(or set this on one provider to override the inherited source):
+
+```yaml
+agent:
+  cloud:
+    custom:
+      api_key:
+        source: keychain
+        service: arkai/cloud
+        account: gateway
+```
+
+Install the optional keychain support with `pip install 'arkai[keychain]'`
+(or `pip install -e '.[keychain]'` in a source checkout), then store the value
+using `keyring set arkai/cloud gateway`. This uses macOS Keychain, Windows
+Credential Manager, or a supported Linux Secret Service/KWallet backend. On
+Linux, the keychain service must be available to the current user session.
+The `service` and `account` values correspond to the arguments of `keyring set`.
+
+For `source: environment`, export the configured variable before launch (for
+example, `export TEAM_MODEL_KEY=...`). Keys are not stored in Arkai YAML. Arkai
+resolves either source on the host; it does not expose the host keychain to a
+sandbox. OpenCode receives the key in its child environment. Pi and OMP also
+write it to a private, temporary native credential file keyed by provider ID.
+Each provider can override the inherited `base_url`, `protocol`, or `api_key`
+source. Missing credentials do not fall back to another source.
+`default_provider` is
+required when multiple providers are listed; otherwise Arkai selects the only
+provider. `-m/--model`
+accepts a raw model ID for the default provider or `provider-id/model-id` to
+select another provider. OpenCode, Pi, and OMP register all configured providers;
+each translates them into its native provider and authentication formats. On
+Linux, the sandbox allows only the configured endpoint hosts. Use the same
+configuration for similar HTTPS services that implement the configured API
+protocol. `protocol` supports `openai-completions` and `anthropic-messages`.
+Provider IDs `openai` and `anthropic` infer their matching protocol unless
+overridden; other IDs inherit the root `protocol`.
+For `anthropic-messages`, Pi uses the endpoint origin and appends its native
+`/v1/messages` path; OpenCode and OMP use the configured `base_url`.
+With `--cloud`, `-m/--model` selects the model for the cloud provider and is
+passed to the agent without being treated as a local inference model (it will
+not be downloaded). Use the model identifier expected by the selected
+agent/provider.
 For Crush, use `openai/MODEL` or `vertexai/MODEL`; without `-m`, choose a model
 in the Crush picker with `Ctrl+L`.
 Without `-m`, the agent's normal cloud model setting remains in effect. Pi and OMP
-use their global agent directories in the sandbox; OpenCode's OpenAI API key is
-passed through the sandbox environment. On Linux, the network deny rule remains
-enabled with provider HTTPS endpoints allowlisted; macOS uses Arapuca's baseline
-profile. Use `--no-sandbox` to run without those boundaries.
+use their global agent directories for built-in providers; `custom` stages config
+in a private runtime directory and leaves those global files unchanged. OpenCode's
+OpenAI API key is passed through the sandbox environment. On Linux, the network deny
+rule remains enabled with provider HTTPS endpoints allowlisted; macOS uses
+Arapuca's baseline profile. Use `--no-sandbox` to run without those boundaries.
 
 ### Lifecycle
 

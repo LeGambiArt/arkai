@@ -8,10 +8,12 @@ import sys
 import tempfile
 import time
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 import requests
 
 from arkai import cloud_auth, config, tools, utils
+from arkai import cloud_provider as cloud_config_utils
 from arkai.agent import AgentLaunchSpec, run_launch_spec
 
 PI_CORE_PACKAGE = "@earendil-works/pi-coding-agent"
@@ -51,6 +53,20 @@ def get_global_agent_dir() -> Path:
     """Return the user's Pi agent directory, including global auth and settings."""
     configured_dir = os.environ.get("PI_CODING_AGENT_DIR") or "~/.pi/agent"
     return Path(configured_dir).expanduser().resolve()
+
+
+def _runtime_provider_id(provider_id: str) -> str:
+    """Use normalized IDs in Pi's provider registry, which expects lowercase IDs."""
+    return provider_id.lower()
+
+
+def _pi_provider_config(provider: dict) -> dict:
+    """Use the origin URL for Pi's Anthropic Messages endpoint construction."""
+    result = dict(provider)
+    if provider["protocol"] == "anthropic-messages":
+        parsed_url = urlsplit(provider["base_url"])
+        result["base_url"] = urlunsplit((parsed_url.scheme, parsed_url.netloc, "", "", ""))
+    return result
 
 
 def _write_run_mcp_config(agent_dir: str, port: int) -> Path:
@@ -231,6 +247,88 @@ def _merge_vertex_anthropic_models(agent_dir: Path, catalog_models: list[dict]) 
             models_file.write("\n")
         os.replace(temporary_path, write_path)
         write_path.chmod(0o600)
+    except Exception:
+        temporary_path.unlink(missing_ok=True)
+        raise
+
+
+def _merge_custom_provider_models(
+    agent_dir: Path,
+    custom_cloud_config: dict,
+    selected_provider_id: str,
+    selected_model: str,
+) -> None:
+    """Add all configured providers and models to Pi's private model catalog."""
+    models_path = agent_dir / "models.json"
+    try:
+        models = json.loads(models_path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        models = {"$schema": "https://pi.dev/schemas/models.schema.json", "providers": {}}
+    except json.JSONDecodeError as error:
+        raise RuntimeError(
+            f"Could not add custom provider: {models_path} is invalid JSON"
+        ) from error
+    if not isinstance(models, dict):
+        raise RuntimeError(f"Could not add custom provider: {models_path} must contain an object")
+
+    providers = models.setdefault("providers", {})
+    if not isinstance(providers, dict):
+        raise RuntimeError(f"Could not add custom provider: invalid providers in {models_path}")
+    runtime_provider_ids: set[str] = set()
+    for provider_id, provider in custom_cloud_config["providers"].items():
+        provider = _pi_provider_config(provider)
+        runtime_provider_id = _runtime_provider_id(provider_id)
+        if runtime_provider_id in runtime_provider_ids:
+            raise RuntimeError(
+                "Custom provider IDs must remain unique after lowercase normalization for Pi"
+            )
+        runtime_provider_ids.add(runtime_provider_id)
+        provider_config = providers.setdefault(runtime_provider_id, {})
+        if not isinstance(provider_config, dict):
+            raise RuntimeError(f"Could not add custom provider: invalid provider in {models_path}")
+        provider_config["api"] = provider["protocol"]
+        provider_config["baseUrl"] = provider["base_url"]
+        provider_models = provider_config.setdefault("models", [])
+        if not isinstance(provider_models, list):
+            raise RuntimeError(
+                f"Could not add custom provider: invalid model list in {models_path}"
+            )
+
+        selected_id = selected_model if provider_id == selected_provider_id else None
+        configured = {
+            model.get("id"): model for model in provider_models if isinstance(model, dict)
+        }
+        for model in cloud_config_utils.custom_cloud_models(provider, selected_id):
+            model_entry = {
+                "id": model["id"],
+                "name": model.get("name", model["id"]),
+                "api": provider["protocol"],
+                "reasoning": model.get("reasoning", False),
+                "input": ["text"],
+                "cost": {
+                    "input": 0,
+                    "output": 0,
+                    "cacheRead": 0,
+                    "cacheWrite": 0,
+                },
+                "contextWindow": model.get("context_window", 32768),
+                "maxTokens": model.get("max_output_tokens", 8192),
+                "compat": {"supportsDeveloperRole": model.get("supports_developer_role", False)},
+            }
+            if model["id"] in configured:
+                configured[model["id"]].update(model_entry)
+            else:
+                provider_models.append(model_entry)
+
+    descriptor, filename = tempfile.mkstemp(prefix="arkai-custom-models-", dir=agent_dir)
+    temporary_path = Path(filename)
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as models_file:
+            json.dump(models, models_file, indent=2)
+            models_file.write("\n")
+        os.replace(temporary_path, models_path)
+        models_path.chmod(0o600)
     except Exception:
         temporary_path.unlink(missing_ok=True)
         raise
@@ -510,6 +608,8 @@ def build_launch_spec(
     cloud_model: str | None = None,
     session_dir: str | None = None,
     resume_session: bool = False,
+    cloud_config: dict | None = None,
+    cloud_api_environment: dict[str, str] | None = None,
 ) -> AgentLaunchSpec:
     """Create Pi configuration and return its process launch specification."""
     from arkai import wtmcp
@@ -520,12 +620,67 @@ def build_launch_spec(
     from arkai.agent import _cloud_provider
 
     cloud_provider = _cloud_provider(cloud_services)
+    custom_cloud_config = None
+    selected_custom_provider = None
+    selected_provider_id = None
+    selected_custom_model_reference = None
+    selected_custom_model = None
+    custom_api_environment: dict[str, str] = {}
+    custom_agent_volumes: list[str] = []
+    if cloud_provider == "custom":
+        custom_cloud_config = cloud_config or cloud_config_utils.custom_cloud_config_from_arkai(cfg)
+        assert custom_cloud_config is not None
+        selected_custom_model_reference = cloud_config_utils.select_custom_cloud_model(
+            custom_cloud_config, cloud_model
+        )
+        selected_custom_provider, selected_custom_model = (
+            cloud_config_utils.custom_cloud_model_provider(
+                custom_cloud_config, selected_custom_model_reference
+            )
+        )
+        selected_provider_id = selected_custom_provider["provider_id"]
+        assert isinstance(selected_provider_id, str)
+        custom_api_environment = (
+            dict(cloud_api_environment)
+            if cloud_api_environment is not None
+            else cloud_config_utils.custom_cloud_environment(custom_cloud_config)
+        )
     pi_package_json = _find_pi_package_json(agent_path) if cloud_provider == "vertex" else None
     vertex_extension_path: Path | None = None
     mcp_available = wtmcp_port is not None and wtmcp.is_wtmcp_running(wtmcp_port)
     if is_cloud:
-        agent_dir = get_global_agent_dir()
-        agent_dir.mkdir(parents=True, exist_ok=True)
+        if cloud_provider == "custom":
+            assert selected_custom_model is not None
+            assert custom_cloud_config is not None
+            agent_dir, custom_agent_volumes = cloud_config_utils.create_private_agent_dir(
+                get_global_agent_dir(),
+                get_install_dir(),
+                "arkai-pi-custom-",
+                excluded_entries={"auth.json", "models.json"},
+            )
+            try:
+                for provider in custom_cloud_config["providers"].values():
+                    cloud_auth.ensure_custom_api_key(
+                        "pi",
+                        agent_dir,
+                        _runtime_provider_id(provider["provider_id"]),
+                        cloud_config_utils.custom_cloud_resolved_api_key(
+                            provider, custom_api_environment
+                        ),
+                    )
+                assert selected_provider_id is not None
+                _merge_custom_provider_models(
+                    agent_dir,
+                    custom_cloud_config,
+                    selected_provider_id,
+                    selected_custom_model,
+                )
+            except Exception:
+                shutil.rmtree(agent_dir, ignore_errors=True)
+                raise
+        else:
+            agent_dir = get_global_agent_dir()
+            agent_dir.mkdir(parents=True, exist_ok=True)
         if cloud_provider == "vertex":
             assert pi_package_json is not None
             catalog_models = _load_vertex_anthropic_models(agent_dir)
@@ -534,29 +689,64 @@ def build_launch_spec(
                 vertex_extension_path = _ensure_vertex_anthropic_extension(
                     agent_dir, pi_package_json
                 )
-        mcp_config = _write_run_mcp_config(str(agent_dir), wtmcp_port) if mcp_available else None
+        cleanup_paths = [agent_dir] if cloud_provider == "custom" else []
+        try:
+            mcp_config = (
+                _write_run_mcp_config(str(agent_dir), wtmcp_port) if mcp_available else None
+            )
+        except Exception:
+            for path in cleanup_paths:
+                if path.is_dir():
+                    shutil.rmtree(path, ignore_errors=True)
+                else:
+                    path.unlink(missing_ok=True)
+            raise
+        if mcp_config is not None:
+            cleanup_paths.append(mcp_config)
     else:
         agent_dir = Path(_prepare_agent_dir(cfg, wtmcp_port if mcp_available else None))
         mcp_config = Path(agent_dir, "mcp.json") if mcp_available else None
+        cleanup_paths = []
     env = os.environ.copy()
+    if cloud_provider == "custom" and custom_cloud_config is not None:
+        for native_key in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
+            if native_key not in custom_api_environment:
+                env.pop(native_key, None)
+        env.update(custom_api_environment)
     env["PI_CODING_AGENT_DIR"] = str(agent_dir)
     if pi_package_json is not None:
         env["ARKAI_PI_PACKAGE_JSON"] = pi_package_json
     if is_cloud:
         # Scope models without --provider, which Pi requires to accompany --model.
         # This leaves the provider's native authentication flow available.
-        model_provider = VERTEX_ANTHROPIC_PROVIDER if cloud_provider == "vertex" else "openai"
-        model_patterns = (
-            "google-vertex/*,google-vertex-anthropic/*"
-            if cloud_provider == "vertex"
-            else f"{model_provider}/*"
-        )
+        if cloud_provider == "custom":
+            assert custom_cloud_config is not None
+            assert selected_provider_id is not None
+            assert selected_custom_model is not None
+            model_references = []
+            for provider_id, provider in custom_cloud_config["providers"].items():
+                selected_id = selected_custom_model if provider_id == selected_provider_id else None
+                for model in cloud_config_utils.custom_cloud_models(provider, selected_id):
+                    model_references.append(f"{_runtime_provider_id(provider_id)}/{model['id']}")
+            model_patterns = ",".join(model_references)
+        elif cloud_provider == "vertex":
+            model_provider = VERTEX_ANTHROPIC_PROVIDER
+            model_patterns = "google-vertex/*,google-vertex-anthropic/*"
+        else:
+            model_provider = "openai"
+            model_patterns = f"{model_provider}/*"
         agent_args = []
         if vertex_extension_path is not None:
             agent_args.extend(["--extension", str(vertex_extension_path)])
         agent_args.extend(["--models", model_patterns])
-        if cloud_model is not None:
-            agent_args.extend(["--model", cloud_model])
+        selected_cloud_model = selected_custom_model_reference or cloud_model
+        if cloud_provider == "custom" and selected_custom_model is not None:
+            assert selected_provider_id is not None
+            selected_cloud_model = (
+                f"{_runtime_provider_id(selected_provider_id)}/{selected_custom_model}"
+            )
+        if selected_cloud_model is not None:
+            agent_args.extend(["--model", selected_cloud_model])
     else:
         from arkai.agent import _get_agent_model_id
 
@@ -577,12 +767,12 @@ def build_launch_spec(
         agent_args.extend(["--system-prompt", _PROMPT_SYSTEM_INSTRUCTION])
         agent_args.extend(["-p", prompt])
 
-    cleanup_paths = [mcp_config] if is_cloud and mcp_config is not None else []
     try:
         if use_sandbox:
             node_path = _resolve_node_path()
             runtime_volumes = list(cli_volumes or [])
             runtime_volumes.extend(get_runtime_volumes(agent_path, node_path))
+            runtime_volumes.extend(custom_agent_volumes)
             if session_dir:
                 runtime_volumes.append(str(native_session_dir))
             if pi_package_json is not None:
@@ -600,6 +790,11 @@ def build_launch_spec(
                     runtime_volumes.append(f"{pi_package_dir}:ro")
             sandbox_environment = dict(cli_environment or {})
             sandbox_environment["PI_CODING_AGENT_DIR"] = str(agent_dir)
+            if cloud_provider == "custom" and custom_cloud_config is not None:
+                for native_key in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
+                    if native_key not in custom_api_environment:
+                        sandbox_environment.pop(native_key, None)
+                sandbox_environment.update(custom_api_environment)
             if mcp_available:
                 # Prevent project .mcp.json from replacing Arkai's host HTTP server
                 # with a stdio WTMCP process running inside the agent sandbox.
@@ -622,7 +817,16 @@ def build_launch_spec(
                 allow_network=False,
                 allow_inference=not is_cloud,
                 extra_hosts=(
-                    ["*.openai.com:443", "chatgpt.com:443", "*.chatgpt.com:443"]
+                    list(
+                        dict.fromkeys(
+                            provider["host"]
+                            for provider in custom_cloud_config["providers"].values()
+                        )
+                    )
+                    if cloud_provider == "custom"
+                    and custom_cloud_config is not None
+                    and platform.system() == "Linux"
+                    else ["*.openai.com:443", "chatgpt.com:443", "*.chatgpt.com:443"]
                     if cloud_provider == "openai" and platform.system() == "Linux"
                     else [
                         "*-aiplatform.googleapis.com:443",
@@ -648,7 +852,10 @@ def build_launch_spec(
             cmd = [agent_path]
     except Exception:
         for path in cleanup_paths:
-            path.unlink(missing_ok=True)
+            if path.is_dir():
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                path.unlink(missing_ok=True)
         raise
 
     cmd.extend(agent_args)
@@ -682,6 +889,8 @@ def start(
     resume_session: bool = False,
     native_session_id: str | None = None,
     session_record: dict | None = None,
+    cloud_config: dict | None = None,
+    cloud_api_environment: dict[str, str] | None = None,
 ) -> str | None:
     """Build and run Pi's launch specification."""
     if cloud_services and any(service.lower() == "openai" for service in cloud_services):
@@ -703,6 +912,8 @@ def start(
             cloud_model,
             session_dir,
             resume_session,
+            cloud_config,
+            cloud_api_environment,
         ),
         capture_stdout,
     )

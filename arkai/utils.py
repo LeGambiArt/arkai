@@ -164,7 +164,10 @@ def merge_configs(base: dict, override: dict) -> dict:
     """Recursively merge override dict into base; override wins."""
     result = base.copy()
     for key, value in override.items():
-        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+        if key == "api_key":
+            # Credential sources are tagged unions; merge the selected source as a whole.
+            result[key] = value
+        elif key in result and isinstance(result[key], dict) and isinstance(value, dict):
             result[key] = merge_configs(result[key], value)
         else:
             result[key] = value

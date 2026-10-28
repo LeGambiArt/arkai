@@ -8,6 +8,35 @@
 agent:
   # Supported agents: opencode, crush, claude, pi, omp
   name: opencode
+  # Optional OpenAI Chat Completions-compatible cloud provider for --cloud custom.
+  # Configure the API key with an environment variable or the system keychain;
+  # do not put its value in this file.
+  # cloud:
+  #   custom:
+  #     default_provider: gateway
+  #     protocol: openai-completions
+  #     base_url: https://gateway.example/v1
+  #     api_key:
+  #       source: environment
+  #       name: TEAM_MODEL_KEY
+  #     providers:
+  #       gateway:
+  #         default_model: org/model-id
+  #         models:
+  #           - id: org/model-id
+  #             name: Example model
+  #             context_window: 65536
+  #             max_output_tokens: 8192
+  #       openai:
+  #         models:
+  #           - id: gpt-model-id
+  #             name: GPT model
+  #       # A provider can instead use a system keychain entry:
+  #       secure-gateway:
+  #         api_key:
+  #           source: keychain
+  #           service: arkai/cloud
+  #           account: secure-gateway
 
 inference:
   backend: llama-cpp

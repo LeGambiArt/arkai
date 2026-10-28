@@ -160,6 +160,17 @@ def validate_config(
         utils.error(f"agent.name must be one of {VALID_AGENTS}, got {agent_name}")
         valid = False
 
+    agent_config = config.get("agent", {})
+    cloud_config = agent_config.get("cloud", {}) if isinstance(agent_config, dict) else {}
+    if isinstance(cloud_config, dict) and cloud_config.get("custom") is not None:
+        from arkai.cloud_provider import normalize_custom_cloud_config
+
+        try:
+            normalize_custom_cloud_config(cloud_config["custom"])
+        except ValueError as error:
+            utils.error(str(error))
+            valid = False
+
     # Check inference config
     inference_backend = get_config_value(config, "inference.backend", "llama-cpp")
     from arkai.inference_backend import get_backend_names

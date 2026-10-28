@@ -229,6 +229,10 @@ def _read_model_config_key(agent_name: str, agent_dir: Path) -> str | None:
 
 
 def _write_pi_key(agent_dir: Path, key: str) -> None:
+    _write_pi_provider_key(agent_dir, "openai", key)
+
+
+def _write_pi_provider_key(agent_dir: Path, provider: str, key: str) -> None:
     agent_dir.mkdir(parents=True, exist_ok=True)
     auth_path = agent_dir / "auth.json"
     try:
@@ -237,11 +241,13 @@ def _write_pi_key(agent_dir: Path, key: str) -> None:
         auth_data = {}
     except json.JSONDecodeError as error:
         raise RuntimeError(
-            f"Could not save OpenAI credentials: {auth_path} is invalid JSON"
+            f"Could not save provider credentials: {auth_path} is invalid JSON"
         ) from error
     if not isinstance(auth_data, dict):
-        raise RuntimeError(f"Could not save OpenAI credentials: {auth_path} must contain an object")
-    auth_data["openai"] = {"type": "api_key", "key": key}
+        raise RuntimeError(
+            f"Could not save provider credentials: {auth_path} must contain an object"
+        )
+    auth_data[provider] = {"type": "api_key", "key": key}
 
     descriptor, filename = tempfile.mkstemp(prefix="auth-", suffix=".json", dir=agent_dir)
     temporary_path = Path(filename)
@@ -354,8 +360,8 @@ def _read_omp_cli_key(agent_path: str, agent_dir: Path) -> str | None:
     return key if key and key != "OPENAI_API_KEY" else None
 
 
-def _write_omp_models_key(agent_dir: Path, key: str) -> None:
-    """Persist an OMP OpenAI key in its global models config with private permissions."""
+def _write_omp_models_key(agent_dir: Path, key: str, provider_id: str = "openai") -> None:
+    """Persist an OMP provider key in its models config with private permissions."""
     agent_dir.mkdir(parents=True, exist_ok=True)
     paths = [agent_dir / "models.yml", agent_dir / "models.yaml"]
     models_path = next((path for path in paths if path.exists()), paths[0])
@@ -371,9 +377,9 @@ def _write_omp_models_key(agent_dir: Path, key: str) -> None:
     providers = models.setdefault("providers", {})
     if not isinstance(providers, dict):
         raise RuntimeError(f"Invalid providers section in OMP model configuration: {models_path}")
-    provider = providers.setdefault("openai", {})
+    provider = providers.setdefault(provider_id, {})
     if not isinstance(provider, dict):
-        raise RuntimeError(f"Invalid OpenAI provider config in {models_path}")
+        raise RuntimeError(f"Invalid provider config for {provider_id} in {models_path}")
     provider["apiKey"] = key
 
     descriptor, filename = tempfile.mkstemp(prefix=".arkai-models-", dir=agent_dir)
@@ -466,4 +472,25 @@ def ensure_openai_api_key(agent_name: str, agent_dir: Path, agent_path: str | No
         _write_pi_key(agent_dir, key)
     else:
         _write_omp_models_key(agent_dir, key)
+    return key
+
+
+def ensure_custom_api_key(
+    agent_name: str,
+    agent_dir: Path,
+    provider_id: str,
+    api_key: str | None,
+) -> str | None:
+    """Save an already-resolved custom-provider key in a private agent directory."""
+    if not api_key:
+        return None
+    key = api_key.strip()
+    if not key:
+        return None
+    if agent_name == "pi":
+        _write_pi_provider_key(agent_dir, provider_id, key)
+    elif agent_name == "omp":
+        _write_omp_models_key(agent_dir, key, provider_id)
+    else:
+        raise ValueError(f"Custom provider credentials are not supported for {agent_name}")
     return key

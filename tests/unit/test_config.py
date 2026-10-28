@@ -44,6 +44,131 @@ class TestConfigLoading:
 
 
 class TestConfigValidation:
+    def test_validate_custom_cloud_configuration(self):
+        cfg = {
+            "agent": {
+                "name": "opencode",
+                "cloud": {
+                    "custom": {
+                        "base_url": "https://gateway.example/v1",
+                        "api_key": {"source": "environment", "name": "TEAM_MODEL_KEY"},
+                        "default_provider": "gateway",
+                        "providers": {
+                            "gateway": {
+                                "default_model": "org/model",
+                                "models": [
+                                    {
+                                        "id": "org/model",
+                                        "name": "Model",
+                                        "context_window": 32768,
+                                        "max_output_tokens": 4096,
+                                        "reasoning": True,
+                                    }
+                                ],
+                            },
+                            "openai": {"models": [{"id": "gpt-model"}]},
+                        },
+                    }
+                },
+            },
+            "inference": {"model": "model.gguf"},
+        }
+
+        assert config.validate_config(cfg) is True
+
+    def test_validate_custom_cloud_keychain_api_key(self):
+        cfg = {
+            "agent": {
+                "name": "opencode",
+                "cloud": {
+                    "custom": {
+                        "base_url": "https://gateway.example/v1",
+                        "default_provider": "gateway",
+                        "providers": {
+                            "gateway": {
+                                "api_key": {
+                                    "source": "keychain",
+                                    "service": "arkai/cloud",
+                                    "account": "gateway",
+                                },
+                                "default_model": "org/model",
+                            }
+                        },
+                    }
+                },
+            },
+            "inference": {"model": "model.gguf"},
+        }
+
+        assert config.validate_config(cfg) is True
+
+    def test_validate_custom_cloud_rejects_legacy_api_key_env(self):
+        cfg = {
+            "agent": {
+                "name": "opencode",
+                "cloud": {
+                    "custom": {
+                        "base_url": "https://gateway.example/v1",
+                        "api_key_env": "TEAM_MODEL_KEY",
+                        "providers": {"gateway": {"default_model": "org/model"}},
+                    }
+                },
+            },
+            "inference": {"model": "model.gguf"},
+        }
+
+        assert config.validate_config(cfg) is False
+
+    def test_validate_custom_cloud_rejects_non_https_endpoint(self):
+        cfg = {
+            "agent": {
+                "name": "opencode",
+                "cloud": {
+                    "custom": {
+                        "base_url": "http://gateway.example/v1",
+                        "providers": {"gateway": {"default_model": "org/model"}},
+                    }
+                },
+            },
+            "inference": {"model": "model.gguf"},
+        }
+
+        assert config.validate_config(cfg) is False
+
+    def test_validate_custom_cloud_rejects_unknown_protocol(self):
+        cfg = {
+            "agent": {
+                "name": "opencode",
+                "cloud": {
+                    "custom": {
+                        "base_url": "https://gateway.example/v1",
+                        "protocol": "unsupported",
+                        "providers": {"gateway": {"default_model": "org/model"}},
+                    }
+                },
+            },
+            "inference": {"model": "model.gguf"},
+        }
+
+        assert config.validate_config(cfg) is False
+
+    def test_validate_custom_cloud_rejects_old_top_level_models(self):
+        cfg = {
+            "agent": {
+                "name": "opencode",
+                "cloud": {
+                    "custom": {
+                        "base_url": "https://gateway.example/v1",
+                        "models": [{"id": "org/model"}],
+                        "providers": {"gateway": {}},
+                    }
+                },
+            },
+            "inference": {"model": "model.gguf"},
+        }
+
+        assert config.validate_config(cfg) is False
+
     def test_validate_profiles_and_resolve_selected_settings(self):
         cfg = {
             "agent": {"name": "opencode"},

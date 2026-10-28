@@ -12,7 +12,7 @@ from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from arkai import agent_session, config, inference, utils
+from arkai import agent_session, cloud_provider, config, inference, utils
 
 
 def exec_cmd(args: argparse.Namespace | None = None) -> None:
@@ -137,9 +137,9 @@ def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
         nargs="+",
         action="extend",
         type=str.lower,
-        choices=("openai", "vertex"),
+        choices=("openai", "vertex", "custom"),
         metavar="SERVICE",
-        help="Use a cloud AI provider instead of local inference (Codex supports OpenAI only)",
+        help="Use a cloud AI provider instead of local inference",
     )
     agent_start_parser.add_argument(
         "-b", "--backend", help="Override inference backend from config"
@@ -153,9 +153,9 @@ def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
         nargs=1,
         action="extend",
         type=str.lower,
-        choices=("openai", "vertex"),
+        choices=("openai", "vertex", "custom"),
         metavar="SERVICE",
-        help="Use a cloud AI provider instead of local inference (Codex supports OpenAI only)",
+        help="Use a cloud AI provider instead of local inference",
     )
     agent_prompt_parser.add_argument(
         "-b", "--backend", help="Override inference backend from config"
@@ -194,6 +194,8 @@ class AgentContext:
     sandbox_environment: dict | None = None
     cloud_services: list[str] = field(default_factory=list)
     cloud_model: str | None = None
+    cloud_config: dict | None = None
+    cloud_api_environment: dict[str, str] = field(default_factory=dict, repr=False)
 
 
 @dataclass
@@ -201,7 +203,7 @@ class AgentLaunchSpec:
     """Command and resources prepared for one agent process."""
 
     command: list[str]
-    environment: dict[str, str]
+    environment: dict[str, str] = field(repr=False)
     cleanup_paths: list[Path] = field(default_factory=list)
     suppress_stderr_prefixes: tuple[str, ...] = ()
     working_directory: str | None = None
@@ -212,7 +214,7 @@ def _cloud_provider(cloud_services: list[str] | None) -> str | None:
     providers = list(dict.fromkeys(service.lower() for service in cloud_services or []))
     if len(providers) > 1:
         raise RuntimeError("Only one --cloud provider can be selected at a time")
-    if providers and providers[0] not in {"openai", "vertex"}:
+    if providers and providers[0] not in {"openai", "vertex", "custom"}:
         raise RuntimeError(f"Unsupported cloud service: {providers[0]}")
     return providers[0] if providers else None
 
@@ -319,12 +321,23 @@ def _agent_context(
     cfg = config.load_config()
 
     cloud_services = list(dict.fromkeys(service.lower() for service in cloud_services or []))
-    unsupported_clouds = sorted(set(cloud_services) - {"openai", "vertex"})
+    unsupported_clouds = sorted(set(cloud_services) - {"openai", "vertex", "custom"})
     if unsupported_clouds:
         raise RuntimeError(f"Unsupported cloud service(s): {', '.join(unsupported_clouds)}")
     if len(set(cloud_services)) > 1:
         raise RuntimeError("Only one --cloud provider can be selected at a time")
     use_cloud = bool(cloud_services)
+    custom_cloud_config = None
+    cloud_api_environment: dict[str, str] = {}
+    cloud_model = model if use_cloud else None
+    if "custom" in cloud_services:
+        custom_cloud_config = cloud_provider.custom_cloud_config_from_arkai(cfg)
+        if agent_name not in {"opencode", "pi", "omp"}:
+            raise RuntimeError(
+                "--cloud custom currently supports only the opencode, pi, and omp agents"
+            )
+        cloud_model = cloud_provider.select_custom_cloud_model(custom_cloud_config, model)
+        cloud_api_environment = cloud_provider.custom_cloud_environment(custom_cloud_config)
     if agent_name == "codex" and "vertex" in cloud_services:
         raise RuntimeError(
             "Codex does not support --cloud vertex: Codex requires the Responses API, "
@@ -446,7 +459,9 @@ def _agent_context(
             sandbox_volume=sandbox_volume,
             sandbox_environment=sandbox_environment,
             cloud_services=cloud_services,
-            cloud_model=model if use_cloud else None,
+            cloud_model=cloud_model,
+            cloud_config=custom_cloud_config,
+            cloud_api_environment=cloud_api_environment,
         )
 
         yield ctx  # may raise from execution
@@ -789,18 +804,24 @@ def _dispatch_agent(
             capture_stdout,
         )
         if ctx.agent_name in {"crush", "opencode", "pi", "omp", "codex"}:
-            return module.start(
-                *launch_args,
-                cloud_services=ctx.cloud_services,
-                cloud_model=ctx.cloud_model,
-                session_dir=(
+            launch_options = {
+                "cloud_services": ctx.cloud_services,
+                "cloud_model": ctx.cloud_model,
+                "session_dir": (
                     str(agent_session.get_session_dir(session["id"]) / "native")
                     if session is not None
                     else None
                 ),
-                resume_session=resume_session,
-                native_session_id=session.get("native_session_id") if session else None,
-                session_record=session,
+                "resume_session": resume_session,
+                "native_session_id": session.get("native_session_id") if session else None,
+                "session_record": session,
+            }
+            if ctx.cloud_config is not None:
+                launch_options["cloud_config"] = ctx.cloud_config
+                launch_options["cloud_api_environment"] = ctx.cloud_api_environment
+            return module.start(
+                *launch_args,
+                **launch_options,
             )
         return module.start(
             *launch_args,

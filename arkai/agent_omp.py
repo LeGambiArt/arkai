@@ -3,9 +3,14 @@
 import json
 import os
 import platform
+import shutil
+import tempfile
 from pathlib import Path
 
+import yaml
+
 from arkai import cloud_auth, config, utils
+from arkai import cloud_provider as cloud_config_utils
 from arkai.agent import AgentLaunchSpec, run_launch_spec
 
 OMP_INSTALLER_URL = "https://omp.sh/install"
@@ -132,6 +137,91 @@ def _prepare_agent_dir(cfg: dict, wtmcp_port: int | None) -> Path:
     return agent_dir
 
 
+def _merge_custom_providers(
+    agent_dir: Path,
+    custom_cloud_config: dict,
+    selected_provider_id: str,
+    selected_model: str,
+) -> None:
+    """Merge all user-configured providers into OMP's model catalog."""
+    paths = [agent_dir / "models.yml", agent_dir / "models.yaml"]
+    models_path = next((path for path in paths if path.exists()), paths[0])
+    try:
+        models = (utils.load_yaml(str(models_path)) or {}) if models_path.exists() else {}
+    except Exception as error:
+        raise RuntimeError(f"Could not read OMP model configuration: {models_path}") from error
+    if not isinstance(models, dict):
+        raise RuntimeError(f"OMP model configuration must contain a mapping: {models_path}")
+    providers = models.setdefault("providers", {})
+    if not isinstance(providers, dict):
+        raise RuntimeError(f"Invalid providers section in OMP model configuration: {models_path}")
+    for provider_id, provider in custom_cloud_config["providers"].items():
+        provider_config = providers.setdefault(provider_id, {})
+        if not isinstance(provider_config, dict):
+            raise RuntimeError(f"Invalid custom provider configuration in {models_path}")
+        provider_config["baseUrl"] = provider["base_url"]
+        provider_config["api"] = provider["protocol"]
+        provider_models = provider_config.setdefault("models", [])
+        if not isinstance(provider_models, list):
+            raise RuntimeError(f"Invalid model list for provider {provider_id} in {models_path}")
+        selected_id = selected_model if provider_id == selected_provider_id else None
+        configured = {
+            model.get("id"): model for model in provider_models if isinstance(model, dict)
+        }
+        for model in cloud_config_utils.custom_cloud_models(provider, selected_id):
+            model_entry = {
+                "id": model["id"],
+                "name": model.get("name", model["id"]),
+                "reasoning": model.get("reasoning", False),
+                "contextWindow": model.get("context_window", 32768),
+                "maxTokens": model.get("max_output_tokens", 8192),
+                "compat": {"supportsDeveloperRole": model.get("supports_developer_role", False)},
+            }
+            if model["id"] in configured:
+                configured[model["id"]].update(model_entry)
+            else:
+                provider_models.append(model_entry)
+
+    descriptor, filename = tempfile.mkstemp(prefix="arkai-custom-models-", dir=agent_dir)
+    temporary_path = Path(filename)
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as models_file:
+            yaml.safe_dump(models, models_file, sort_keys=False)
+        os.replace(temporary_path, models_path)
+        models_path.chmod(0o600)
+    except Exception:
+        temporary_path.unlink(missing_ok=True)
+        raise
+
+
+def _set_custom_default_model(agent_dir: Path, model_reference: str) -> None:
+    """Set OMP's startup role without restricting the interactive provider picker."""
+    config_path = agent_dir / "config.yml"
+    try:
+        settings = (utils.load_yaml(str(config_path)) or {}) if config_path.exists() else {}
+    except Exception as error:
+        raise RuntimeError(f"Could not read OMP configuration: {config_path}") from error
+    if not isinstance(settings, dict):
+        raise RuntimeError(f"OMP configuration must contain a mapping: {config_path}")
+    model_roles = settings.setdefault("modelRoles", {})
+    if not isinstance(model_roles, dict):
+        raise RuntimeError(f"OMP modelRoles must contain a mapping: {config_path}")
+    model_roles["default"] = model_reference
+
+    descriptor, filename = tempfile.mkstemp(prefix="arkai-custom-config-", dir=agent_dir)
+    temporary_path = Path(filename)
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as config_file:
+            yaml.safe_dump(settings, config_file, sort_keys=False)
+        os.replace(temporary_path, config_path)
+        config_path.chmod(0o600)
+    except Exception:
+        temporary_path.unlink(missing_ok=True)
+        raise
+
+
 def build_launch_spec(
     agent_path: str,
     cfg: dict,
@@ -147,6 +237,8 @@ def build_launch_spec(
     session_dir: str | None = None,
     resume_session: bool = False,
     native_session_id: str | None = None,
+    cloud_config: dict | None = None,
+    cloud_api_environment: dict[str, str] | None = None,
 ) -> AgentLaunchSpec:
     """Create OMP configuration and return its process launch specification."""
     from arkai.agent import _build_sandbox_cmd
@@ -156,19 +248,93 @@ def build_launch_spec(
     from arkai.agent import _cloud_provider
 
     cloud_provider = _cloud_provider(cloud_services)
+    custom_cloud_config = None
+    selected_custom_provider = None
+    selected_custom_model = None
+    selected_provider_id = None
+    selected_custom_model_reference = None
+    custom_api_environment: dict[str, str] = {}
+    if cloud_provider == "custom":
+        custom_cloud_config = cloud_config or cloud_config_utils.custom_cloud_config_from_arkai(cfg)
+        assert custom_cloud_config is not None
+        selected_custom_model_reference = cloud_config_utils.select_custom_cloud_model(
+            custom_cloud_config, cloud_model
+        )
+        selected_custom_provider, selected_custom_model = (
+            cloud_config_utils.custom_cloud_model_provider(
+                custom_cloud_config, selected_custom_model_reference
+            )
+        )
+        selected_provider_id = selected_custom_provider["provider_id"]
+        assert isinstance(selected_provider_id, str)
+        custom_api_environment = (
+            dict(cloud_api_environment)
+            if cloud_api_environment is not None
+            else cloud_config_utils.custom_cloud_environment(custom_cloud_config)
+        )
+    custom_agent_volumes: list[str] = []
     native_session_dir = Path(session_dir) / "omp-sessions" if session_dir else None
     if native_session_dir is not None:
         native_session_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         native_session_dir.chmod(0o700)
     if is_cloud:
-        agent_dir = get_global_agent_dir()
-        agent_dir.mkdir(parents=True, exist_ok=True)
-        mcp_config = _write_project_mcp_config(workdir, wtmcp_port) if wtmcp_port else None
+        if cloud_provider == "custom":
+            assert selected_custom_model is not None
+            assert custom_cloud_config is not None
+            agent_dir, custom_agent_volumes = cloud_config_utils.create_private_agent_dir(
+                get_global_agent_dir(),
+                get_install_dir(),
+                "arkai-omp-custom-",
+                excluded_entries={"agent.db", "auth.json", "models.yml", "models.yaml"},
+            )
+            try:
+                for provider in custom_cloud_config["providers"].values():
+                    cloud_auth.ensure_custom_api_key(
+                        "omp",
+                        agent_dir,
+                        provider["provider_id"],
+                        cloud_config_utils.custom_cloud_resolved_api_key(
+                            provider, custom_api_environment
+                        ),
+                    )
+                assert selected_provider_id is not None
+                _merge_custom_providers(
+                    agent_dir,
+                    custom_cloud_config,
+                    selected_provider_id,
+                    selected_custom_model,
+                )
+                assert selected_custom_model_reference is not None
+                _set_custom_default_model(agent_dir, selected_custom_model_reference)
+            except Exception:
+                shutil.rmtree(agent_dir, ignore_errors=True)
+                raise
+        else:
+            agent_dir = get_global_agent_dir()
+            agent_dir.mkdir(parents=True, exist_ok=True)
+        cleanup_paths = [agent_dir] if cloud_provider == "custom" else []
+        try:
+            mcp_config = _write_project_mcp_config(workdir, wtmcp_port) if wtmcp_port else None
+        except Exception:
+            for path in cleanup_paths:
+                if path.is_dir():
+                    shutil.rmtree(path, ignore_errors=True)
+                else:
+                    path.unlink(missing_ok=True)
+            raise
+        if mcp_config is not None:
+            cleanup_paths.append(mcp_config)
     else:
         agent_dir = _prepare_agent_dir(cfg, wtmcp_port)
         mcp_config = None
+        cleanup_paths = []
 
     environment = os.environ.copy()
+    if cloud_provider == "custom" and custom_cloud_config is not None:
+        for native_key in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
+            if native_key not in custom_api_environment:
+                environment.pop(native_key, None)
+        environment.update(custom_api_environment)
     if not is_cloud:
         environment["PI_CONFIG_DIR"] = OMP_CONFIG_DIR
         environment["PI_CODING_AGENT_DIR"] = str(agent_dir)
@@ -181,6 +347,7 @@ def build_launch_spec(
         resolved_agent_path = str(Path(agent_path).resolve())
         binary_dir = str(Path(resolved_agent_path).parent)
         volumes = list(cli_volumes or [])
+        volumes.extend(custom_agent_volumes)
         if native_session_dir is not None:
             volumes.append(str(native_session_dir))
         binary_volume = f"{binary_dir}:ro"
@@ -189,6 +356,11 @@ def build_launch_spec(
         sandbox_environment = dict(cli_environment or {})
         sandbox_environment["PI_CODING_AGENT_DIR"] = str(agent_dir)
         sandbox_environment["OMP_SKIP_SETUP"] = "1"
+        if cloud_provider == "custom" and custom_cloud_config is not None:
+            for native_key in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
+                if native_key not in custom_api_environment:
+                    sandbox_environment.pop(native_key, None)
+            sandbox_environment.update(custom_api_environment)
         if cloud_provider == "vertex":
             volumes, sandbox_environment = cloud_auth.vertex_sandbox_settings(
                 volumes, sandbox_environment
@@ -208,7 +380,16 @@ def build_launch_spec(
                 allow_network=False,
                 allow_inference=not is_cloud,
                 extra_hosts=(
-                    ["*.openai.com:443", "chatgpt.com:443", "*.chatgpt.com:443"]
+                    list(
+                        dict.fromkeys(
+                            provider["host"]
+                            for provider in custom_cloud_config["providers"].values()
+                        )
+                    )
+                    if cloud_provider == "custom"
+                    and custom_cloud_config is not None
+                    and platform.system() == "Linux"
+                    else ["*.openai.com:443", "chatgpt.com:443", "*.chatgpt.com:443"]
                     if cloud_provider == "openai" and platform.system() == "Linux"
                     else [
                         "*-aiplatform.googleapis.com:443",
@@ -220,8 +401,11 @@ def build_launch_spec(
                 ),
             )
         except Exception:
-            if is_cloud and mcp_config is not None:
-                mcp_config.unlink(missing_ok=True)
+            for path in cleanup_paths:
+                if path.is_dir():
+                    shutil.rmtree(path, ignore_errors=True)
+                else:
+                    path.unlink(missing_ok=True)
             raise
         env_args = ["env"]
         if not is_cloud or "PI_CONFIG_DIR" in os.environ:
@@ -247,10 +431,18 @@ def build_launch_spec(
     command.append("--profile")
     command.append("default")
     if is_cloud:
-        provider_name = "google-vertex" if cloud_provider == "vertex" else "openai"
-        command.extend(["--provider", provider_name])
-        if cloud_model is not None:
-            command.extend(["--model", cloud_model])
+        if cloud_provider == "custom":
+            assert selected_provider_id is not None
+            provider_name = selected_provider_id
+        elif cloud_provider == "vertex":
+            provider_name = "google-vertex"
+        else:
+            provider_name = "openai"
+        if cloud_provider != "custom" or prompt is not None:
+            command.extend(["--provider", provider_name])
+            selected_cloud_model = selected_custom_model or cloud_model
+            if selected_cloud_model is not None:
+                command.extend(["--model", selected_cloud_model])
     else:
         from arkai.agent import _get_agent_model_id
 
@@ -258,7 +450,6 @@ def build_launch_spec(
     if prompt is not None:
         command.extend(["-p", "--no-session", "--mode", "text", prompt])
 
-    cleanup_paths = [mcp_config] if mcp_config is not None else []
     return AgentLaunchSpec(command, environment, cleanup_paths, working_directory=workdir)
 
 
@@ -290,6 +481,8 @@ def start(
     resume_session: bool = False,
     native_session_id: str | None = None,
     session_record: dict | None = None,
+    cloud_config: dict | None = None,
+    cloud_api_environment: dict[str, str] | None = None,
 ) -> str | None:
     """Build and run OMP's launch specification."""
     if cloud_services and any(service.lower() == "openai" for service in cloud_services):
@@ -318,6 +511,8 @@ def start(
             session_dir,
             resume_session,
             native_session_id,
+            cloud_config,
+            cloud_api_environment,
         ),
         capture_stdout,
     )

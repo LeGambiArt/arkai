@@ -118,6 +118,48 @@ def test_environment_key_is_persisted_for_pi_sandbox_runs(tmp_path: Path, monkey
     }
 
 
+def test_custom_provider_key_is_saved_to_pi_auth_without_replacing_other_auth(
+    tmp_path: Path, monkeypatch
+) -> None:
+    agent_dir = tmp_path / "pi-agent"
+    agent_dir.mkdir()
+    auth_path = agent_dir / "auth.json"
+    auth_path.write_text(json.dumps({"existing": {"type": "api_key", "key": "keep"}}))
+    monkeypatch.setenv("TEAM_MODEL_KEY", "provider-secret")
+
+    key = cloud_auth.ensure_custom_api_key("pi", agent_dir, "arkai-custom", "provider-secret")
+
+    assert key == "provider-secret"
+    assert json.loads(auth_path.read_text()) == {
+        "existing": {"type": "api_key", "key": "keep"},
+        "arkai-custom": {"type": "api_key", "key": "provider-secret"},
+    }
+    assert auth_path.stat().st_mode & 0o777 == 0o600
+
+
+def test_custom_provider_key_is_saved_to_omp_models(tmp_path: Path, monkeypatch) -> None:
+    agent_dir = tmp_path / "omp-agent"
+    agent_dir.mkdir()
+    models_path = agent_dir / "models.yml"
+    models_path.write_text("providers:\n  existing:\n    apiKey: keep\n")
+    monkeypatch.setenv("TEAM_MODEL_KEY", "provider-secret")
+
+    key = cloud_auth.ensure_custom_api_key("omp", agent_dir, "arkai-custom", "provider-secret")
+
+    assert key == "provider-secret"
+    models = yaml.safe_load(models_path.read_text())
+    assert models["providers"]["existing"]["apiKey"] == "keep"
+    assert models["providers"]["arkai-custom"]["apiKey"] == "provider-secret"
+    assert models_path.stat().st_mode & 0o777 == 0o600
+
+
+def test_custom_provider_missing_key_does_not_write_auth(tmp_path: Path) -> None:
+    agent_dir = tmp_path / "pi-agent"
+
+    assert cloud_auth.ensure_custom_api_key("pi", agent_dir, "arkai-custom", None) is None
+    assert not agent_dir.exists()
+
+
 def test_missing_key_requires_secure_interactive_prompt(tmp_path: Path, monkeypatch) -> None:
     """Do not fall back to an echoed input prompt when no controlling TTY exists."""
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
