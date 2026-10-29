@@ -288,6 +288,19 @@ def progress(msg: str) -> None:
 VALID_VOLUME_FLAGS = {"ro", ""}
 
 
+def expand_home_path(value: str) -> str:
+    """Expand a leading ``~/`` using the current user's home directory."""
+    if value.startswith("~/"):
+        return f"{Path.home()}{value[1:]}"
+    return value
+
+
+def expand_home_volume(volume: str) -> str:
+    """Expand the path portion of a volume mount while preserving its flag."""
+    path, separator, flag = volume.partition(":")
+    return f"{expand_home_path(path)}{separator}{flag}"
+
+
 def validate_volumes(volumes: list) -> str | None:
     """Validate a list of volume mount strings.
 
@@ -304,8 +317,8 @@ def validate_volumes(volumes: list) -> str | None:
         parts = vol.split(":", 1)
         path = parts[0]
         flag = parts[1] if len(parts) > 1 else ""
-        if not path.startswith("/"):
-            return f"Volume path must be absolute, got {path!r}"
+        if not path.startswith(("/", "~/")):
+            return f"Volume path must be absolute or start with '~/': got {path!r}"
         if flag not in VALID_VOLUME_FLAGS:
             return f"Unsupported volume flag {flag!r} in {vol!r}; supported: 'ro'"
         if path in seen_paths:

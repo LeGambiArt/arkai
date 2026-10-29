@@ -72,7 +72,7 @@ def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
         "--volume",
         action="append",
         dest="volumes",
-        help="Mount a volume in the sandbox (format: /path or /path:ro)",
+        help="Mount a volume in the sandbox (format: /path or ~/path, optionally :ro)",
     )
     create_parser.add_argument(
         "-e",

@@ -1706,6 +1706,47 @@ def test_sandbox_mounts_read_write_paths_without_rw_suffix(tmp_path: Path, monke
     assert "--allow-network-listeners" in command
 
 
+def test_sandbox_expands_home_prefixes_in_volumes_and_environment(
+    tmp_path: Path, monkeypatch
+) -> None:
+    home = tmp_path / "home"
+    monkeypatch.setattr(agent.Path, "home", lambda: home)
+    monkeypatch.setattr(agent.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(agent.utils, "resolve_binary", lambda _: "/arapuca")
+    cfg = {
+        "inference": {"port": 8123},
+        "sandbox": {
+            "volume": ["~/profile-tools:ro"],
+            "environment": {
+                "PROFILE_CACHE": "~/profile-cache",
+                "PATH": "~/bin:/usr/bin",
+            },
+        },
+    }
+
+    command = agent._build_sandbox_cmd(
+        cfg,
+        None,
+        None,
+        None,
+        cli_volumes=["~/cli-tools"],
+        cli_environment={"CLI_CACHE": "~/cli-cache", "LITERAL": "~other/cache"},
+    )
+
+    volumes = [command[index + 1] for index, arg in enumerate(command[:-1]) if arg == "-v"]
+    environment = {
+        key: value
+        for index, arg in enumerate(command[:-1])
+        if arg == "--env"
+        for key, _, value in [command[index + 1].partition("=")]
+    }
+    assert volumes[-2:] == [f"{home}/profile-tools:ro", f"{home}/cli-tools"]
+    assert environment["PROFILE_CACHE"] == f"{home}/profile-cache"
+    assert environment["CLI_CACHE"] == f"{home}/cli-cache"
+    assert environment["PATH"] == f"{home}/bin:/usr/bin"
+    assert environment["LITERAL"] == "~other/cache"
+
+
 def test_opencode_session_uses_persistent_data_home_and_continues(
     tmp_path: Path, monkeypatch
 ) -> None:

@@ -809,6 +809,9 @@ the mounted workspace.
 
 The current working directory is mounted read-write by default (override path with
 `--cwd`).
+Sandbox volume paths and environment values beginning with `~/` are expanded to
+the current user's home directory before Arkai passes them to Arapuca. This
+applies to profile settings and per-run `--volume` / `--env` options.
 
 ### Profiles
 
@@ -945,8 +948,8 @@ tracked separately so Arkai only stops services it started.
 | `sandbox.cpus` | int | `2` | CPU count |
 | `sandbox.pids` | int | `256` | PID limit |
 | `sandbox.timeout` | int | `0` | Timeout in seconds (`0` = no limit) |
-| `sandbox.volume` | list | `[]` | Extra volume mounts (`/path` or `/path:ro`) |
-| `sandbox.environment` | map | — | Extra environment variables passed into sandbox |
+| `sandbox.volume` | list | `[]` | Extra mounts (`/path` or `~/path`, optionally suffixed with `:ro`) |
+| `sandbox.environment` | map | — | Extra environment variables; leading `~/` values are expanded |
 | `sandbox.active_profile` | string | — | Name of the active sandbox profile |
 | `sandbox.profiles.<name>` | map | — | Named sandbox profile (same keys as above) |
 

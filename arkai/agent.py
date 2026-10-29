@@ -91,7 +91,7 @@ def _add_agent_common_args(parser: argparse.ArgumentParser) -> None:
         "--volume",
         action="append",
         dest="volumes",
-        help="Mount a volume in the sandbox (format: /path or /path:ro)",
+        help="Mount a volume in the sandbox (format: /path or ~/path, optionally :ro)",
     )
     parser.add_argument(
         "-e",
@@ -511,6 +511,9 @@ def _merge_volumes(profile_volumes: list, cli_volumes: list | None = None) -> li
     if cli_volumes:
         merged.extend(cli_volumes)
 
+    merged = [
+        utils.expand_home_volume(volume) if isinstance(volume, str) else volume for volume in merged
+    ]
     return sandbox_module._deduplicate_volumes(merged)
 
 
@@ -527,6 +530,9 @@ def _merge_environment(profile_env: dict | None, cli_env: dict | None) -> dict:
     merged = dict(profile_env) if profile_env else {}
     if cli_env:
         merged.update(cli_env)
+    for key, value in merged.items():
+        if isinstance(value, str):
+            merged[key] = utils.expand_home_path(value)
     return merged
 
 

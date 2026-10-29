@@ -396,6 +396,16 @@ class TestValidateVolumes:
         cfg = self._cfg_with_sandbox({"volume": ["/data:ro"]})
         assert config.validate_config(cfg) is True
 
+    def test_valid_tilde_volume_paths(self) -> None:
+        """Home-relative paths are accepted for root and profile volume mounts."""
+        cfg = self._cfg_with_sandbox(
+            {
+                "volume": ["~/data:ro"],
+                "profiles": {"dev": {"volume": ["~/cache"]}},
+            }
+        )
+        assert config.validate_config(cfg) is True
+
     def test_invalid_volume_not_absolute(self) -> None:
         """A relative path volume is invalid."""
         cfg = self._cfg_with_sandbox({"volume": ["data/subdir"]})
@@ -435,7 +445,9 @@ class TestValidateEnvironment:
 
     def test_valid_environment_dict(self) -> None:
         """A valid environment dict passes."""
-        cfg = self._cfg_with_sandbox({"environment": {"FOO": "bar", "COUNT": 42}})
+        cfg = self._cfg_with_sandbox(
+            {"environment": {"FOO": "bar", "COUNT": 42, "CACHE": "~/cache"}}
+        )
         assert config.validate_config(cfg) is True
 
     def test_invalid_environment_not_dict(self) -> None:

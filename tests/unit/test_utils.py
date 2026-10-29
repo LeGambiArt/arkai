@@ -7,6 +7,19 @@ from arkai import utils
 
 
 class TestPathResolution:
+    def test_expand_home_path_only_expands_leading_tilde_slash(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(utils.Path, "home", lambda: tmp_path)
+
+        assert utils.expand_home_path("~/cache") == str(tmp_path / "cache")
+        assert utils.expand_home_path("~other/cache") == "~other/cache"
+        assert utils.expand_home_path("~//cache") == f"{tmp_path}//cache"
+
+    def test_expand_home_volume_preserves_read_only_flag(self, tmp_path, monkeypatch):
+        monkeypatch.setattr(utils.Path, "home", lambda: tmp_path)
+
+        assert utils.expand_home_volume("~/tools:ro") == f"{tmp_path}/tools:ro"
+        assert utils.validate_volumes(["~/tools:ro"]) is None
+
     def test_config_home_uses_xdg_config_home(self, monkeypatch):
         monkeypatch.setenv("XDG_CONFIG_HOME", "/custom/config")
         assert utils.get_config_home() == "/custom/config/arkai"
