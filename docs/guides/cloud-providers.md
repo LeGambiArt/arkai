@@ -1,0 +1,88 @@
+# Cloud providers
+
+Agent launches can use a cloud service instead of local inference:
+
+```bash
+arkai agent start --agent opencode --cloud openai
+arkai agent prompt --agent codex --cloud openai "Summarize this project"
+arkai agent start --agent pi --cloud vertex
+```
+
+The built-in choices are `openai`, `vertex`, and `custom`. Cloud launches
+do not start the local inference backend. Each agent adapter translates
+the provider selection into that agent's native configuration and
+authentication format; provider support can vary by agent. Codex does not
+currently support `--cloud vertex`.
+
+## OpenAI
+
+Configure credentials in the agent's native setup or export
+`OPENAI_API_KEY`. Some adapters can prompt for a key and save it in the
+agent's normal credential store. Codex uses its existing Codex login or
+API-key setup.
+
+## Vertex AI
+
+Authenticate with Google Application Default Credentials, for example:
+
+```bash
+gcloud auth application-default login
+```
+
+Alternatively set `GOOGLE_APPLICATION_CREDENTIALS`, and configure the
+project and location using the variables required by the selected agent.
+Sandboxed launches mount an available ADC credential file read-only and
+allow the Vertex and OAuth endpoints needed by the provider.
+
+## Custom endpoints
+
+Custom providers use an HTTPS endpoint and either the OpenAI Chat
+Completions or Anthropic Messages protocol. API keys are referenced from
+an environment variable or system keychain; do not put secret values in
+Arkai YAML.
+
+```yaml
+agent:
+  cloud:
+    custom:
+      default_provider: gateway
+      protocol: openai-completions
+      base_url: https://gateway.example/v1
+      api_key:
+        source: environment
+        name: TEAM_MODEL_KEY
+      providers:
+        gateway:
+          name: Team gateway
+          default_model: org/model-id
+          models:
+            - id: org/model-id
+              name: Example model
+              context_window: 65536
+              max_output_tokens: 8192
+```
+
+Export the variable before launching, then select the provider with
+`--cloud custom`. If several providers are configured, `default_provider`
+is required; `--model` can select a model or `provider-id/model-id`. For
+keychain storage, install the optional extra:
+
+```bash
+python -m pip install 'arkai[keychain]'
+keyring set arkai/cloud gateway
+```
+
+Configure `api_key` with `source: keychain`, `service`, and `account` as
+shown below; the values must match the `keyring set` arguments.
+
+For example, a keychain source can be declared as:
+
+```yaml
+api_key:
+  source: keychain
+  service: arkai/cloud
+  account: gateway
+```
+
+See the [cloud provider design](../design/cloud-providers.md) for
+credential handling, sandbox network rules, and adapter behavior.

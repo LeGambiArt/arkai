@@ -1,0 +1,133 @@
+# Full Arkai configuration key reference.
+# Copy to ~/.config/arkai/arkai.yaml for user defaults, or to .arkai.yaml for
+# project overrides. Only the minimal agent and backend defaults below are
+# active. Uncomment optional keys and replace null/placeholder values as needed.
+# Optional values marked "unset" should usually be omitted; nulls/placeholders
+# in commented examples must be replaced when enabling a setting that requires it.
+# Values follow arkai/config.py defaults. `arkai config init` currently seeds
+# sandbox.cpus as 200 instead of the runtime default 2; see the inline note.
+
+agent:
+  name: opencode # Default agent: opencode, crush, claude, codex, pi, or omp.
+  # path: null # Default: use the selected agent's executable name from PATH.
+  # mcp: true # Default: start wtmcp for agent launches.
+  # theme: null # Default: no theme override; used by OpenCode and Pi.
+  # cloud: # Cloud-specific settings.
+  #   # custom defaults to null (no custom provider configuration). Replace
+  #   # null with the mapping below and add at least one configured provider.
+  #   custom:
+  #     default_provider: null # Default: infer when exactly one provider exists.
+  #     protocol: openai-completions # Default; also supports anthropic-messages.
+  #     base_url: null # Default: unset; each provider must resolve to an HTTPS URL without credentials.
+  #     api_key: null # Default: no key. When set, use one of the forms below.
+  #     providers: {} # Default: none; replace {} with one or more providers to enable custom cloud.
+  #       # Provider IDs may contain letters, digits, underscores, and hyphens.
+  #       <provider-id>:
+  #         name: null # Omit for default provider ID; explicit null is invalid.
+  #         base_url: null # Omit to inherit root; set a URL if root is unset.
+  #         protocol: null # Omit to infer/inherit; explicit null is invalid.
+  #         api_key: null # Omit to inherit root; explicit null means no key.
+  #         default_model: null # Default: unset; required to launch without --model.
+  #         models: [] # Default: none; replace [] with entries to add model metadata.
+  #           - id: null # Required when an entry is present.
+  #             name: null # Omit to default to model ID.
+  #             context_window: null # Unset; omit unless setting a positive integer.
+  #             max_output_tokens: null # Unset; omit unless setting a positive integer.
+  #             reasoning: null # Unset; omit unless setting a boolean.
+  #             supports_developer_role: null # Unset; omit unless setting a boolean.
+  #     # Root or provider api_key may instead use exactly one of these forms:
+  #     # api_key:
+  #     #   source: environment # No default; required when api_key is a mapping.
+  #     #   name: TEAM_MODEL_KEY # Required for environment source.
+  #     # api_key:
+  #     #   source: keychain # Required when api_key is a mapping.
+  #     #   service: arkai/cloud # Required for keychain source.
+  #     #   account: gateway # Required for keychain source.
+
+inference:
+  backend: llama-cpp # Default backend: llama-cpp, mlx, splash, or strata.
+  # model: null # Default: unset; set this or pass --model to start local inference.
+  # path: null # Default: backend executable (llama-server, mlx_lm.server, splash, or strata).
+  # port: 8081 # Default inference API port.
+  # gpu_layers: -1 # Default: offload all supported layers; Strata requires -1.
+  # context_size: 65536 # Default context size in tokens; accepts k/m suffixes.
+  # startup_timeout: 600 # Default readiness timeout in seconds.
+  # Sampling keys default to unset (backend defaults apply). Not every backend
+  # supports every setting; omit these unless setting a numeric value.
+  # temperature: null # Controls randomness.
+  # top_p: null # Nucleus sampling probability threshold.
+  # top_k: null # Limits sampling to the top K tokens.
+  # min_p: null # Minimum token probability relative to the most likely token.
+  # presence_penalty: null # Penalizes tokens already present in the output.
+  # frequency_penalty: null # Penalizes tokens in proportion to their frequency.
+  # repetition_penalty: null # Penalizes repeated tokens.
+  # profiles: {} # Default: none; replace {} with profiles to configure them.
+  # A configured profile must have a model; sampling values are optional.
+  # profiles:
+  #   <profile-name>:
+  #     model: null # Required after this profile is enabled.
+  #     temperature: null # Default: unset; backend default applies.
+  #     top_p: null
+  #     top_k: null
+  #     min_p: null
+  #     presence_penalty: null
+  #     frequency_penalty: null
+  #     repetition_penalty: null
+  # splash: # Default: absent/empty, with no Splash-specific overrides.
+  #   max_memory: null # Unset by default; if set, a size such as 28G.
+  #   max_cache_disk: null # Unset by default; if set, a size such as 100G.
+  #   kv_format: int8 # Effective default; supported values are int8 and bf16.
+  #   language_only: false # Default: use vision capability when supported.
+  #   revision: null # Default: use the model repository's default revision.
+  #   draft_model: null # Default: no draft model.
+  #   default_reasoning_effort: none # Default; supports none/minimal/low/medium/high/xhigh/max.
+  #   hub_cache: null # Default: ~/.local/share/arkai/models/splash/hub.
+  #   weight_cache: null # Default: ~/.local/share/arkai/models/splash/weights.
+  #   installation_root: null # Default: discover the supported Splash installation.
+  #   python_path: null # Default: use Splash's bundled Python executable.
+
+wtmcp: {} # Default mapping; replace {} with entries from the commented block to override.
+# wtmcp:
+#   path: wtmcp # Default executable name.
+#   port: 8080 # Default MCP server port.
+#   workdir: null # Default: let wtmcp choose its working directory.
+#   config: null # Default: use wtmcp's normal config; optionally set a base config path.
+#   plugins: [] # Default: no injected entries; a non-empty list is read from project .arkai.yaml.
+
+sandbox: {} # Default mapping; replace {} with entries from the commented block to override.
+# sandbox:
+#   enabled: true # Default/config-init value; agent launch currently uses `disable` below.
+#   disable: false # Default: sandbox agent launches; true disables the sandbox.
+#   path: arapuca # Default sandbox executable name.
+#   memory_mb: 2048 # Default memory limit in MiB.
+#   cpus: 2 # Runtime default CPU limit. `arkai config init` currently writes 200.
+#   pids: 256 # Default process limit.
+#   timeout: 0 # Default: no timeout.
+#   active_profile: null # Default: use root sandbox values.
+#   volume: [] # Default: no additional mounts; entries may end in :ro.
+#   environment: null # Default: no additional sandbox environment variables.
+  #   profiles: {} # Default: none; replace {} with named profiles to configure them.
+#   # Profile keys use the values shown here when omitted.
+#   profiles:
+#     <profile-name>:
+#       path: arapuca
+#       memory_mb: 2048
+#       cpus: 2
+#       pids: 256
+#       timeout: 0
+#       volume: []
+#       environment: null
+
+vectordb: {} # Default mapping; replace {} with entries from the commented block to override.
+# vectordb:
+#   vendor: chromadb # Default and only supported vendor.
+#   port: 8082 # Default ChromaDB server port.
+#   path: chroma # Default executable name.
+#   database_dir: null # Default: ~/.local/share/arkai/chromadb.
+
+rag: {} # Default mapping; replace {} with entries from the commented block to override.
+# rag:
+#   chunk_size: 512 # Default document chunk size.
+#   chunk_overlap: 50 # Default overlap; must be less than chunk_size.
+#   embedding_model: null # Default: all-MiniLM-L6-v2.
+#   max_search_results: 15 # Default number of passages retrieved.

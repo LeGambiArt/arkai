@@ -1,0 +1,50 @@
+# Design: configuration
+
+## Scope
+
+The configuration feature loads, layers, validates, and resolves Arkai's
+YAML settings for CLI commands. It is intentionally a small Python
+implementation rather than a separate schema service.
+
+## Loading and precedence
+
+`arkai.config.load_config` deep-copies built-in defaults, merges the user
+file at `~/.config/arkai/arkai.yaml`, then merges `.arkai.yaml` in the
+selected project directory. Merge behavior is provided by
+`arkai.utils.merge_configs`. Command handlers apply their supported CLI
+overrides after loading.
+
+## Validation and resolution
+
+Validation checks agent and backend names, model/profile shape, sampling
+values, ports, RAG chunk settings, context size, and sandbox volume and
+environment declarations. Custom cloud settings are validated by
+`arkai.cloud_provider`. Validation can allow a missing model when a
+healthy inference service is already available; otherwise local inference
+startup requires a model.
+
+`resolve_model` selects the configured profile and merges profile
+sampling values over inference-level defaults. Commands that accept a
+model override apply it before validation.
+
+## Evolution rules
+
+- Keep defaults and validation in `arkai/config.py` aligned with the
+  example configuration and the user-facing configuration guide. Every new
+  configuration key must be documented with its default in
+  `docs/arkai-full-config.yaml`.
+- CLI options remain the source of truth for per-command overrides; avoid
+  claiming that every option is a persistent YAML setting.
+- Add or update unit tests for normalization and validation edge cases.
+  Add Behave scenarios for user-visible CLI and configuration behavior.
+- Unknown keys are not currently rejected by a strict external schema, so
+  examples should use only keys consumed by the implementation.
+
+## Implementation map
+
+- Loading, defaults, validation, and model profile resolution:
+  `arkai/config.py`
+- YAML merge and filesystem paths: `arkai/utils.py`
+- Unit coverage: `tests/unit/test_config.py`
+- CLI behavior: `features/config.feature`
+- User instructions: [Configuration](../guides/configuration.md)
