@@ -11,8 +11,9 @@ python -m pip install 'arkai[rag]'
 
 From a source checkout, install with `python -m pip install -e '.[rag]'`.
 
-Use a Python 3.10–3.14 environment. The embedding stack depends on
-PyTorch, which does not currently provide a compatible Python 3.15 wheel.
+Use a Python 3.10–3.14 environment. The supported vector database,
+ChromaDB, has a dependency that does not currently provide a compatible
+Python 3.15 wheel.
 
 Start and initialize the vector database, then ingest and ask:
 
