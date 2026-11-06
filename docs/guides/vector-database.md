@@ -1,8 +1,10 @@
 # Vector database
 
-Arkai currently integrates with ChromaDB. Install its `chroma` CLI
-separately; the server uses the configured port (default `8082`) and
-database directory (by default under Arkai's data directory).
+Arkai currently integrates with ChromaDB. Installing Arkai's `rag` extra
+installs a supported ChromaDB release and its `chroma` CLI. If you only
+need vector database commands, install `chromadb>=1.0.0,<2.0` separately.
+The server uses the configured port (default `8082`) and database
+directory (by default under Arkai's data directory).
 
 ```bash
 arkai vectordb start

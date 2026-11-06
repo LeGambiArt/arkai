@@ -2,8 +2,8 @@
 
 Arkai's optional retrieval-augmented generation workflow ingests
 supported documents into ChromaDB, retrieves relevant passages, and sends
-them to a running inference server. Install the optional Python
-dependencies and ensure the `chroma` CLI is available:
+them to a running inference server. Install the optional dependencies; the
+`rag` extra includes a supported ChromaDB release and its `chroma` CLI:
 
 ```bash
 python -m pip install 'arkai[rag]'
