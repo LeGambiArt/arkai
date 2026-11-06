@@ -40,3 +40,4 @@ inference.log
 *.swp
 /.arkai.session
 .omp
+uv.lock
