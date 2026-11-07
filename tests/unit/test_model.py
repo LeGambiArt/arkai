@@ -173,8 +173,10 @@ class TestCmdModelDownload:
         with pytest.raises(RuntimeError, match="git command not found"):
             model.cmd_model_download("hf:test-org/test-model")
 
-    def test_download_rejects_invalid_repository(self):
-        """Test that repository IDs cannot escape the cache directory."""
+    def test_download_rejects_invalid_repository(self, monkeypatch):
+        """Reject invalid repository IDs before checking for Git."""
+        monkeypatch.setattr(providers.shutil, "which", lambda command: None)
+
         with pytest.raises(ValueError, match="invalid path"):
             model.cmd_model_download("hf:../outside")
 
