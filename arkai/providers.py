@@ -98,11 +98,11 @@ class GitModelProvider(ModelProvider):
 
     def download(self, reference: ModelReference) -> Path:
         """Clone or update a model repository using Git."""
+        repository_dir = self._repository_dir(reference.identifier)
         git_path = shutil.which("git")
         if git_path is None:
             raise RuntimeError("git command not found; install Git to download models")
 
-        repository_dir = self._repository_dir(reference.identifier)
         repository_dir.parent.mkdir(parents=True, exist_ok=True)
         remote_identifier = reference.identifier
         repository_url = f"https://{self.host}/{remote_identifier}.git"
