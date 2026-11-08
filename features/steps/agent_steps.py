@@ -7,9 +7,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import threading
 from contextlib import contextmanager, nullcontext
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import StringIO
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -501,21 +499,8 @@ def step_prepare_pi_prompt_test(context):
     )
     agent_path.chmod(0o755)
 
-    class InferenceHandler(BaseHTTPRequestHandler):
-        def do_GET(self) -> None:
-            response = json.dumps({"data": [{"id": "test-model"}]}).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(response)))
-            self.end_headers()
-            self.wfile.write(response)
-
-        def log_message(self, format: str, *args: object) -> None:
-            pass
-
-    inference_server = ThreadingHTTPServer(("127.0.0.1", 0), InferenceHandler)
-    server_thread = threading.Thread(target=inference_server.serve_forever, daemon=True)
-    server_thread.start()
+    # The prompt subprocess stubs arkai.inference.get_inference_model instead of
+    # talking to a real local server, so no socket bind is required here.
 
     pid_dir = home / ".local" / "state" / "arkai"
     pid_dir.mkdir(parents=True)
@@ -524,10 +509,7 @@ def step_prepare_pi_prompt_test(context):
         json.dumps(
             {
                 "agent": {"name": "pi", "path": str(agent_path), "mcp": True},
-                "inference": {
-                    "model": "test.gguf",
-                    "port": inference_server.server_address[1],
-                },
+                "inference": {"model": "test.gguf"},
             }
         ),
         encoding="utf-8",
@@ -543,8 +525,6 @@ def step_prepare_pi_prompt_test(context):
 
     context.pi_prompt_agent = agent_path
     context.pi_prompt_environment = environment
-    context.pi_prompt_inference_server = inference_server
-    context.pi_prompt_server_thread = server_thread
     context.pi_prompt_workdir = workdir
     context.pi_prompt_answer = (
         "The speed of light in a vacuum is exactly **299,792,458 meters per second** "
@@ -561,7 +541,8 @@ def step_run_pi_prompt_from_tty(context):
             [
                 sys.executable,
                 "-c",
-                "from arkai.cli import main; main()",
+                "import arkai.inference; arkai.inference.get_inference_model ="
+                " lambda port=None: 'test-model'; from arkai.cli import main; main()",
                 "agent",
                 "prompt",
                 "-a",
@@ -585,9 +566,6 @@ def step_run_pi_prompt_from_tty(context):
     finally:
         os.close(master_fd)
         os.close(slave_fd)
-        context.pi_prompt_inference_server.shutdown()
-        context.pi_prompt_server_thread.join(timeout=5)
-        context.pi_prompt_inference_server.server_close()
         context.pi_prompt_tempdir.cleanup()
 
 
