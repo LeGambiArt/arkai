@@ -73,3 +73,12 @@ target-version = "py310"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "C4"]
+
+[tool.ty.analysis]
+# Optional dependencies (rag extra / transitive); may or may not be installed
+# in the environment ty runs in, so never report import-not-found for them.
+allowed-unresolved-imports = [
+    "fitz",
+    "sentence_transformers.**",
+    "huggingface_hub.**",
+]

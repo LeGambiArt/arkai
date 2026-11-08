@@ -588,7 +588,7 @@ def _load_embedding_model(
     """
     with _suppress_embedding_output(quiet):
         try:
-            from sentence_transformers import SentenceTransformer  # ty: ignore[import-not-found]
+            from sentence_transformers import SentenceTransformer
         except ImportError:
             raise RuntimeError(
                 "sentence-transformers is required for embeddings. "
