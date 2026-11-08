@@ -12,6 +12,10 @@ from arkai import utils
 DEFAULTS = {
     "agent": {
         "name": "opencode",
+        "mode": "local",
+        "cloud": {
+            "default": None,
+        },
     },
     "inference": {
         "backend": "llama-cpp",
@@ -50,6 +54,8 @@ DEFAULTS = {
 }
 
 VALID_AGENTS = {"opencode", "crush", "claude", "codex", "pi", "omp"}
+CLOUD_SERVICES = ("openai", "vertex", "custom")
+AGENT_MODES = ("local", "cloud")
 MODEL_SETTINGS = {
     "temperature",
     "top_p",
@@ -142,14 +148,32 @@ def validate_config(
 
     agent_config = config.get("agent", {})
     cloud_config = agent_config.get("cloud", {}) if isinstance(agent_config, dict) else {}
-    if isinstance(cloud_config, dict) and cloud_config.get("custom") is not None:
-        from arkai.cloud_provider import normalize_custom_cloud_config
+    agent_mode = agent_config.get("mode", "local") if isinstance(agent_config, dict) else None
+    if agent_mode not in AGENT_MODES:
+        utils.error(f"agent.mode must be one of {', '.join(AGENT_MODES)}")
+        valid = False
 
-        try:
-            normalize_custom_cloud_config(cloud_config["custom"])
-        except ValueError as error:
-            utils.error(str(error))
+    if cloud_config is None:
+        cloud_config = {}
+    if not isinstance(cloud_config, dict):
+        utils.error("agent.cloud must be a mapping")
+        valid = False
+    else:
+        cloud_service = cloud_config.get("default")
+        if cloud_service is not None and (
+            not isinstance(cloud_service, str) or cloud_service.lower() not in CLOUD_SERVICES
+        ):
+            utils.error(f"agent.cloud.default must be one of {', '.join(CLOUD_SERVICES)}")
             valid = False
+
+        if cloud_config.get("custom") is not None:
+            from arkai.cloud_provider import normalize_custom_cloud_config
+
+            try:
+                normalize_custom_cloud_config(cloud_config["custom"])
+            except ValueError as error:
+                utils.error(str(error))
+                valid = False
 
     # Check inference config
     inference_backend = get_config_value(config, "inference.backend", "llama-cpp")

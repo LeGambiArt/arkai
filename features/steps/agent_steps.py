@@ -158,6 +158,7 @@ def _run_agent_in_tty(
             # sandbox was used if the command starts with the arapuca prefix ("fake-agent run ...")
             context.sandbox_used = len(popen_cmd) >= 2 and popen_cmd[1] == "run"
             context.agent_config_text = write_text.call_args.args[0]
+            context.agent_launch_options = session_record["launch_options"]
 
             mkstemp.assert_called_once_with(
                 prefix="opencode-", suffix=".json", dir=agent_opencode.Path(config_dir)
@@ -247,6 +248,56 @@ def step_custom_cloud_provider_with_size_unit_model(context):
 def step_run_agent_with_custom_cloud(context):
     """Run arkai agent start against the configured custom cloud provider."""
     _run_agent_in_tty(context, no_sandbox=True, cloud_services=["custom"])
+
+
+@given("a custom cloud provider configured as the default")  # ty: ignore[call-non-callable]
+def step_custom_cloud_provider_as_default(context):
+    """Configure a custom cloud service as the agent's default launch provider."""
+    context.config_data = {
+        "agent": {
+            "name": "opencode",
+            "mcp": False,
+            "mode": "cloud",
+            "cloud": {
+                "default": "custom",
+                "custom": {
+                    "base_url": "https://gateway.example/v1",
+                    "default_provider": "gateway",
+                    "providers": {"gateway": {"default_model": "org/model-id"}},
+                },
+            },
+        },
+        "inference": {},
+        "sandbox": {"disable": True},
+    }
+
+
+@when('I run "arkai agent prompt" with a configured cloud')  # ty: ignore[call-non-callable]
+def step_run_agent_prompt_with_configured_cloud(context):
+    """Run the public prompt command and capture its selected cloud service."""
+
+    def capture_dispatch(agent_context, prompt=None, capture_stdout=False):
+        context.prompt_cloud_services = agent_context.cloud_services
+        return "configured cloud answer"
+
+    with (
+        patch.object(agent.utils, "resolve_binary", return_value="/usr/bin/fake-agent"),
+        patch.object(agent, "_dispatch_agent", side_effect=capture_dispatch),
+    ):
+        context.run_command(["arkai", "agent", "prompt", "hello"])
+
+
+@then("the configured cloud provider is used")  # ty: ignore[call-non-callable]
+def step_configured_cloud_provider_used(context):
+    """Assert agent start records the configured default cloud service."""
+    assert context.agent_launch_options["cloud_services"] == ["custom"]
+
+
+@then("the configured cloud provider is used for the prompt")  # ty: ignore[call-non-callable]
+def step_configured_cloud_provider_used_for_prompt(context):
+    """Assert agent prompt selected the configured default cloud service."""
+    assert context.exit_code == 0, context.stderr
+    assert context.prompt_cloud_services == ["custom"]
 
 
 @then("the agent model catalog uses the default cloud context window")  # ty: ignore[call-non-callable]

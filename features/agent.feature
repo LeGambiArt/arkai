@@ -45,6 +45,16 @@ Feature: Agent Execution
     When I run "arkai agent start" with "--cloud custom" in a TTY
     Then the agent model catalog uses the default cloud context window
 
+  Scenario: Agent start uses the configured cloud provider by default
+    Given a custom cloud provider configured as the default
+    When I run "arkai agent start" in a TTY
+    Then the configured cloud provider is used
+
+  Scenario: Agent prompt uses the configured cloud provider by default
+    Given a custom cloud provider configured as the default
+    When I run "arkai agent prompt" with a configured cloud
+    Then the configured cloud provider is used for the prompt
+
   Scenario: Custom cloud model size units are expanded in the model catalog
     Given a custom cloud provider with a model using size-unit metadata
     When I run "arkai agent start" with "--cloud custom" in a TTY

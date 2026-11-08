@@ -288,7 +288,13 @@ def test_cloud_agent_skips_local_inference_engine() -> None:
 def test_cloud_agent_skips_local_inference_for_opencode() -> None:
     """OpenCode cloud sessions do not query, start, or stop local inference."""
     cfg = {
-        "agent": {"name": "opencode", "path": "/agent", "mcp": False},
+        "agent": {
+            "name": "opencode",
+            "path": "/agent",
+            "mcp": False,
+            "mode": "cloud",
+            "cloud": {"default": "custom"},
+        },
         "inference": {"port": 8081},
         "sandbox": {"disable": True},
     }
@@ -485,22 +491,24 @@ def test_codex_rejects_vertex_cloud_provider() -> None:
             raise AssertionError("Expected Codex to reject Vertex cloud mode")
 
 
-def test_custom_cloud_uses_configured_default_and_skips_local_inference(
+def test_custom_cloud_config_default_skips_local_inference(
     monkeypatch,
 ) -> None:
-    """Custom cloud setup selects its configured model without starting inference."""
+    """The configured custom cloud is selected without starting inference."""
     cfg = {
         "agent": {
             "name": "opencode",
             "path": "/agent",
             "mcp": False,
+            "mode": "cloud",
             "cloud": {
+                "default": "custom",
                 "custom": {
                     "base_url": "https://gateway.example/v1",
                     "api_key": {"source": "environment", "name": "TEAM_MODEL_KEY"},
                     "default_provider": "gateway",
                     "providers": {"gateway": {"default_model": "org/model"}},
-                }
+                },
             },
         },
         "inference": {},
@@ -515,8 +523,9 @@ def test_custom_cloud_uses_configured_default_and_skips_local_inference(
         patch.object(agent.utils, "resolve_binary", return_value="/agent"),
     ):
         monkeypatch.setenv("TEAM_MODEL_KEY", "context-secret")
-        with agent._agent_context("opencode", cloud_services=["custom"]) as context:
+        with agent._agent_context("opencode") as context:
             assert context.cloud_model == "gateway/org/model"
+            assert context.cloud_services == ["custom"]
             assert context.cloud_config is not None
             assert context.cloud_config["default_provider"] == "gateway"
             assert context.cloud_api_environment == {"TEAM_MODEL_KEY": "context-secret"}
@@ -526,6 +535,23 @@ def test_custom_cloud_uses_configured_default_and_skips_local_inference(
     running.assert_not_called()
     available.assert_not_called()
     start.assert_not_called()
+
+
+def test_cloud_mode_requires_a_default_cloud_service() -> None:
+    """Cloud mode without a selected cloud service fails with a config hint."""
+    cfg = {
+        "agent": {"name": "opencode", "mode": "cloud"},
+        "inference": {},
+        "sandbox": {"disable": True},
+    }
+    with patch.object(agent.config, "load_config", return_value=cfg):
+        try:
+            with agent._agent_context("opencode"):
+                pass
+        except RuntimeError as error:
+            assert "agent.cloud.default is not configured" in str(error)
+        else:
+            raise AssertionError("Expected cloud mode to require a default cloud service")
 
 
 def test_custom_cloud_requires_model_and_supported_agent() -> None:

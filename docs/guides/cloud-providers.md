@@ -8,6 +8,11 @@ arkai agent prompt --agent codex --cloud openai "Summarize this project"
 arkai agent start --agent pi --cloud vertex
 ```
 
+To make both `agent start` and `agent prompt` use cloud inference by default,
+set `agent.mode` to `cloud` and choose a service with `agent.cloud.default`.
+The default mode is `local`; passing `--cloud` selects cloud inference for
+that invocation and overrides `agent.cloud.default`.
+
 The built-in choices are `openai`, `vertex`, and `custom`. Cloud launches
 do not start the local inference backend. Each agent adapter translates
 the provider selection into that agent's native configuration and
@@ -43,7 +48,9 @@ Arkai YAML.
 
 ```yaml
 agent:
+  mode: cloud
   cloud:
+    default: custom
     custom:
       default_provider: gateway
       protocol: openai-completions

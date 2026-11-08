@@ -41,9 +41,47 @@ class TestConfigLoading:
         # Should have defaults
         assert "inference" in cfg
         assert "agent" in cfg
+        assert cfg["agent"]["mode"] == "local"
+        assert cfg["agent"]["cloud"]["default"] is None
 
 
 class TestConfigValidation:
+    def test_validate_cloud_default_setting(self):
+        cfg = {
+            "agent": {
+                "name": "opencode",
+                "mode": "cloud",
+                "cloud": {"default": "CUSTOM"},
+            },
+            "inference": {"model": "model.gguf"},
+        }
+
+        assert config.validate_config(cfg) is True
+
+    def test_validate_rejects_unsupported_cloud_default(self):
+        cfg = {
+            "agent": {"name": "opencode", "cloud": {"default": "anthropic"}},
+            "inference": {"model": "model.gguf"},
+        }
+
+        assert config.validate_config(cfg) is False
+
+    def test_validate_rejects_non_string_cloud_default(self):
+        cfg = {
+            "agent": {"name": "opencode", "cloud": {"default": ["custom"]}},
+            "inference": {"model": "model.gguf"},
+        }
+
+        assert config.validate_config(cfg) is False
+
+    def test_validate_rejects_unknown_agent_mode(self):
+        cfg = {
+            "agent": {"name": "opencode", "mode": "remote"},
+            "inference": {"model": "model.gguf"},
+        }
+
+        assert config.validate_config(cfg) is False
+
     def test_validate_custom_cloud_configuration(self):
         cfg = {
             "agent": {

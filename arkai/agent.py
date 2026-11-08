@@ -137,7 +137,7 @@ def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
         nargs="+",
         action="extend",
         type=str.lower,
-        choices=("openai", "vertex", "custom"),
+        choices=config.CLOUD_SERVICES,
         metavar="SERVICE",
         help="Use a cloud AI provider instead of local inference",
     )
@@ -153,7 +153,7 @@ def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
         nargs=1,
         action="extend",
         type=str.lower,
-        choices=("openai", "vertex", "custom"),
+        choices=config.CLOUD_SERVICES,
         metavar="SERVICE",
         help="Use a cloud AI provider instead of local inference",
     )
@@ -320,8 +320,28 @@ def _agent_context(
     """
     cfg = config.load_config()
 
-    cloud_services = list(dict.fromkeys(service.lower() for service in cloud_services or []))
-    unsupported_clouds = sorted(set(cloud_services) - {"openai", "vertex", "custom"})
+    agent_mode = config.get_config_value(cfg, "agent.mode", "local")
+    if agent_mode not in config.AGENT_MODES:
+        raise RuntimeError(f"agent.mode must be one of {', '.join(config.AGENT_MODES)}")
+    if cloud_services is None:
+        if agent_mode == "cloud":
+            configured_cloud = config.get_config_value(cfg, "agent.cloud.default")
+            if configured_cloud is None:
+                raise RuntimeError(
+                    "agent.mode is 'cloud' but agent.cloud.default is not configured"
+                )
+            if not isinstance(configured_cloud, str) or configured_cloud.lower() not in (
+                config.CLOUD_SERVICES
+            ):
+                raise RuntimeError(
+                    f"agent.cloud.default must be one of {', '.join(config.CLOUD_SERVICES)}"
+                )
+            cloud_services = [configured_cloud]
+        else:
+            cloud_services = []
+
+    cloud_services = list(dict.fromkeys(service.lower() for service in cloud_services))
+    unsupported_clouds = sorted(set(cloud_services) - set(config.CLOUD_SERVICES))
     if unsupported_clouds:
         raise RuntimeError(f"Unsupported cloud service(s): {', '.join(unsupported_clouds)}")
     if len(set(cloud_services)) > 1:
