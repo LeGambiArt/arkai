@@ -327,9 +327,18 @@ def _agent_context(
         if agent_mode == "cloud":
             configured_cloud = config.get_config_value(cfg, "agent.cloud.default")
             if configured_cloud is None:
-                raise RuntimeError(
-                    "agent.mode is 'cloud' but agent.cloud.default is not configured"
-                )
+                cloud_config = config.get_config_value(cfg, "agent.cloud", {})
+                configured_clouds = [
+                    service
+                    for service in config.CLOUD_SERVICES
+                    if isinstance(cloud_config, dict) and cloud_config.get(service) is not None
+                ]
+                if len(configured_clouds) == 1:
+                    configured_cloud = configured_clouds[0]
+                else:
+                    raise RuntimeError(
+                        "agent.mode is 'cloud' but agent.cloud.default is not configured"
+                    )
             if not isinstance(configured_cloud, str) or configured_cloud.lower() not in (
                 config.CLOUD_SERVICES
             ):

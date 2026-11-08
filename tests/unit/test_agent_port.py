@@ -502,7 +502,6 @@ def test_custom_cloud_config_default_skips_local_inference(
             "mcp": False,
             "mode": "cloud",
             "cloud": {
-                "default": "custom",
                 "custom": {
                     "base_url": "https://gateway.example/v1",
                     "api_key": {"source": "environment", "name": "TEAM_MODEL_KEY"},
@@ -552,6 +551,60 @@ def test_cloud_mode_requires_a_default_cloud_service() -> None:
             assert "agent.cloud.default is not configured" in str(error)
         else:
             raise AssertionError("Expected cloud mode to require a default cloud service")
+
+
+def test_cloud_mode_requires_default_when_multiple_configurations_exist() -> None:
+    """Multiple configured cloud services require an explicit default selection."""
+    cfg = {
+        "agent": {
+            "name": "opencode",
+            "mode": "cloud",
+            "cloud": {
+                "openai": {},
+                "custom": {
+                    "base_url": "https://gateway.example/v1",
+                    "providers": {"gateway": {"default_model": "org/model"}},
+                },
+            },
+        },
+        "inference": {},
+        "sandbox": {"disable": True},
+    }
+    with patch.object(agent.config, "load_config", return_value=cfg):
+        try:
+            with agent._agent_context("opencode"):
+                pass
+        except RuntimeError as error:
+            assert str(error) == "agent.mode is 'cloud' but agent.cloud.default is not configured"
+        else:
+            raise AssertionError("Expected multiple cloud services to require a default")
+
+
+def test_cloud_mode_uses_explicit_default_when_multiple_configurations_exist() -> None:
+    """An explicit cloud default resolves multiple configured services."""
+    cfg = {
+        "agent": {
+            "name": "opencode",
+            "path": "/agent",
+            "mcp": False,
+            "mode": "cloud",
+            "cloud": {"default": "openai", "openai": {}, "custom": {}},
+        },
+        "inference": {},
+        "sandbox": {"disable": True},
+    }
+    with (
+        patch.object(agent.config, "load_config", return_value=cfg),
+        patch.object(agent.config, "validate_config", return_value=True),
+        patch.object(agent.inference, "is_inference_running") as running,
+        patch.object(agent.inference, "cmd_inference_start") as start,
+        patch.object(agent.utils, "resolve_binary", return_value="/agent"),
+    ):
+        with agent._agent_context("opencode") as context:
+            assert context.cloud_services == ["openai"]
+
+    running.assert_not_called()
+    start.assert_not_called()
 
 
 def test_custom_cloud_requires_model_and_supported_agent() -> None:

@@ -259,10 +259,29 @@ def step_custom_cloud_provider_as_default(context):
             "mcp": False,
             "mode": "cloud",
             "cloud": {
-                "default": "custom",
                 "custom": {
                     "base_url": "https://gateway.example/v1",
                     "default_provider": "gateway",
+                    "providers": {"gateway": {"default_model": "org/model-id"}},
+                },
+            },
+        },
+        "inference": {},
+        "sandbox": {"disable": True},
+    }
+
+
+@given("multiple cloud configurations without a default")  # ty: ignore[call-non-callable]
+def step_multiple_cloud_configurations_without_default(context):
+    """Configure more than one cloud service without choosing a default."""
+    context.config_data = {
+        "agent": {
+            "name": "opencode",
+            "mode": "cloud",
+            "cloud": {
+                "openai": {},
+                "custom": {
+                    "base_url": "https://gateway.example/v1",
                     "providers": {"gateway": {"default_model": "org/model-id"}},
                 },
             },
@@ -285,6 +304,12 @@ def step_run_agent_prompt_with_configured_cloud(context):
         patch.object(agent, "_dispatch_agent", side_effect=capture_dispatch),
     ):
         context.run_command(["arkai", "agent", "prompt", "hello"])
+
+
+@when('I run "arkai agent prompt" without a cloud default')  # ty: ignore[call-non-callable]
+def step_run_agent_prompt_without_cloud_default(context):
+    """Run the prompt command against ambiguous cloud configuration."""
+    context.run_command(["arkai", "agent", "prompt", "hello"])
 
 
 @then("the configured cloud provider is used")  # ty: ignore[call-non-callable]

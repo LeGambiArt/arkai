@@ -55,6 +55,12 @@ Feature: Agent Execution
     When I run "arkai agent prompt" with a configured cloud
     Then the configured cloud provider is used for the prompt
 
+  Scenario: Agent prompt requires a default for multiple cloud configurations
+    Given multiple cloud configurations without a default
+    When I run "arkai agent prompt" without a cloud default
+    Then the exit code is 1
+    And the error contains "agent.mode is 'cloud' but agent.cloud.default is not configured"
+
   Scenario: Custom cloud model size units are expanded in the model catalog
     Given a custom cloud provider with a model using size-unit metadata
     When I run "arkai agent start" with "--cloud custom" in a TTY

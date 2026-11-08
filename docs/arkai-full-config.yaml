@@ -14,7 +14,7 @@ agent:
   # mcp: true # Default: start wtmcp for agent launches.
   # theme: null # Default: no theme override; used by OpenCode and Pi.
   # cloud: # Cloud-specific settings.
-  #   default: null # Default: no cloud target; set to openai, vertex, or custom.
+  #   default: null # Set to openai, vertex, or custom; otherwise inferred if exactly one cloud config exists.
   #   # custom defaults to null (no custom provider configuration). Replace
   #   # null with the mapping below and add at least one configured provider.
   #   custom:
