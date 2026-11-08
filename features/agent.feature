@@ -40,6 +40,11 @@ Feature: Agent Execution
     Then the exit code is 0
     And the agent config uses Strata model "q2_0"
 
+  Scenario: Custom cloud models default to a 256k context window
+    Given a custom cloud provider with a model that has no context window
+    When I run "arkai agent start" with "--cloud custom" in a TTY
+    Then the agent model catalog uses the default cloud context window
+
   Scenario: Agent lists Arkai sessions without starting agent infrastructure
     Given a saved Arkai agent session named "session-to-list"
     When I list Arkai agent sessions

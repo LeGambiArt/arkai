@@ -62,6 +62,9 @@ agent:
               max_output_tokens: 8192
 ```
 
+Models without an explicit `context_window` default to 262144 tokens
+(256k) instead of the agent's smaller built-in default.
+
 Export the variable before launching, then select the provider with
 `--cloud custom`. If several providers are configured, `default_provider`
 is required; `--model` can select a model or `provider-id/model-id`. For

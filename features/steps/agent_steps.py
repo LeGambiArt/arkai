@@ -68,6 +68,7 @@ def _run_agent_in_tty(
     agent_name: str | None = None,
     no_start_inference: bool = False,
     strata_empty_model_list: bool = False,
+    cloud_services: list | None = None,
 ) -> None:
     """Run agent with a mocked TTY and capture output."""
     old_stdout = sys.stdout
@@ -147,6 +148,7 @@ def _run_agent_in_tty(
                 model=model,
                 agent_name=agent_name,
                 no_start_inference=no_start_inference,
+                cloud_services=cloud_services,
             )
         except SystemExit as e:
             context.exit_code = e.code if e.code else 1
@@ -186,6 +188,49 @@ def step_valid_config_sandbox_disabled(context):
 def step_run_agent_with_model_flag(context):
     """Run arkai agent start with -m model override in a TTY."""
     _run_agent_in_tty(context, model="test-model.gguf")
+
+
+@given("a custom cloud provider with a model that has no context window")  # ty: ignore[call-non-callable]
+def step_custom_cloud_provider_without_context_window(context):
+    """Configure a custom cloud provider whose model omits context_window."""
+    config_data = {
+        "agent": {
+            "name": "opencode",
+            "cloud": {
+                "custom": {
+                    "base_url": "https://gateway.example/v1",
+                    "default_provider": "gateway",
+                    "providers": {
+                        "gateway": {
+                            "default_model": "org/model-id",
+                            "models": [{"id": "org/model-id", "name": "Example model"}],
+                        }
+                    },
+                }
+            },
+        },
+        "inference": {"model": "test.gguf"},
+    }
+    utils.save_yaml(".arkai.yaml", config_data)
+
+
+@when('I run "arkai agent start" with "--cloud custom" in a TTY')  # ty: ignore[call-non-callable]
+def step_run_agent_with_custom_cloud(context):
+    """Run arkai agent start against the configured custom cloud provider."""
+    _run_agent_in_tty(context, no_sandbox=True, cloud_services=["custom"])
+
+
+@then("the agent model catalog uses the default cloud context window")  # ty: ignore[call-non-callable]
+def step_agent_catalog_uses_default_cloud_window(context):
+    """OpenCode's model limit defaults to Arkai's cloud context window."""
+    import json
+
+    from arkai.cloud_provider import DEFAULT_CUSTOM_CLOUD_CONTEXT_WINDOW
+
+    assert context.exit_code == 0, context.stderr
+    config = json.loads(context.agent_config_text)
+    model = config["providers"]["gateway"]["models"]["org/model-id"]
+    assert model["limit"]["context"] == DEFAULT_CUSTOM_CLOUD_CONTEXT_WINDOW
 
 
 @when(  # ty: ignore[call-non-callable]

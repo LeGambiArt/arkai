@@ -168,13 +168,23 @@ def test_opencode_custom_provider_uses_configured_endpoint_and_models(
         "name": "Model One",
         "limit": {"context": 65536, "output": 8192},
     }
+    assert provider["models"]["org/model-two"] == {
+        "name": "Model Two",
+        "limit": {"context": 262144},
+    }
     assert openai_provider["env"] == ["OPENAI_GATEWAY_KEY"]
     assert openai_provider["settings"] == {"baseURL": "https://openai-gateway.example/v1"}
-    assert openai_provider["models"]["gpt-model-id"] == {"name": "GPT model"}
+    assert openai_provider["models"]["gpt-model-id"] == {
+        "name": "GPT model",
+        "limit": {"context": 262144},
+    }
     assert anthropic_provider["env"] == ["TEAM_MODEL_KEY"]
     assert "package" not in anthropic_provider
     assert anthropic_provider["settings"] == {"baseURL": "https://anthropic-gateway.example/v1"}
-    assert anthropic_provider["models"]["claude-model-id"] == {"name": "Claude model"}
+    assert anthropic_provider["models"]["claude-model-id"] == {
+        "name": "Claude model",
+        "limit": {"context": 262144},
+    }
     assert "provider-secret" not in config_path.read_text()
     assert spec.environment["TEAM_MODEL_KEY"] == "provider-secret"
     assert spec.environment["OPENAI_GATEWAY_KEY"] == "openai-secret"
@@ -243,7 +253,10 @@ def test_opencode_custom_cli_model_overrides_default_and_is_registered(
     config_path = Path(spec.environment["OPENCODE_CONFIG"])
     config_data = json.loads(config_path.read_text())
     assert config_data["model"] == "openai/gpt-model-id"
-    assert config_data["providers"]["openai"]["models"]["gpt-model-id"] == {"name": "GPT model"}
+    assert config_data["providers"]["openai"]["models"]["gpt-model-id"] == {
+        "name": "GPT model",
+        "limit": {"context": 262144},
+    }
     config_path.unlink()
 
 
@@ -1020,6 +1033,9 @@ def test_pi_custom_provider_registers_models_and_selects_default(
     ]
     assert provider["models"][0]["contextWindow"] == 65536
     assert provider["models"][0]["maxTokens"] == 8192
+    assert provider["models"][1]["contextWindow"] == 262144
+    assert openai_provider["models"][0]["contextWindow"] == 262144
+    assert anthropic_provider["models"][0]["contextWindow"] == 262144
     assert provider["models"][0]["cost"] == {
         "input": 0,
         "output": 0,
@@ -1562,6 +1578,10 @@ def test_omp_custom_provider_registers_models_and_selects_default(
         "org/model-one",
         "org/model-two",
     ]
+    assert provider["models"][0]["contextWindow"] == 65536
+    assert provider["models"][1]["contextWindow"] == 262144
+    assert openai_provider["models"][0]["contextWindow"] == 262144
+    assert anthropic_provider["models"][0]["contextWindow"] == 262144
     assert openai_provider["baseUrl"] == "https://openai-gateway.example/v1"
     assert [model["id"] for model in openai_provider["models"]] == ["gpt-model-id"]
     assert anthropic_provider["baseUrl"] == "https://anthropic-gateway.example/v1"

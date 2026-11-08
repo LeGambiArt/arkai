@@ -11,6 +11,8 @@ from urllib.parse import urlsplit
 
 _PROVIDER_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 _ENVIRONMENT_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+DEFAULT_CUSTOM_CLOUD_CONTEXT_WINDOW = 262144
+
 _MODEL_METADATA_FIELDS = {
     "name",
     "context_window",
@@ -284,6 +286,10 @@ def custom_cloud_models(provider: dict, selected_model: str | None = None) -> li
     known_ids = {model["id"] for model in models}
     if selected_model and selected_model not in known_ids:
         models.append({"id": selected_model, "name": selected_model})
+    for model in models:
+        # Cloud models commonly support larger windows than agent defaults; an
+        # unconfigured context window must not silently truncate cloud sessions.
+        model.setdefault("context_window", DEFAULT_CUSTOM_CLOUD_CONTEXT_WINDOW)
     return models
 
 

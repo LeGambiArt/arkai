@@ -31,7 +31,7 @@ agent:
   #         models: [] # Default: none; replace [] with entries to add model metadata.
   #           - id: null # Required when an entry is present.
   #             name: null # Omit to default to model ID.
-  #             context_window: null # Unset; omit unless setting a positive integer.
+  #             context_window: null # Default: 262144 (256k) tokens when omitted.
   #             max_output_tokens: null # Unset; omit unless setting a positive integer.
   #             reasoning: null # Unset; omit unless setting a boolean.
   #             supports_developer_role: null # Unset; omit unless setting a boolean.

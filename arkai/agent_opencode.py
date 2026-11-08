@@ -114,13 +114,10 @@ def build_launch_spec(
             )
             for model in cloud_config_utils.custom_cloud_models(provider, model_filter):
                 model_entry = {"name": model.get("name", model["id"])}
-                limit = {}
-                if "context_window" in model:
-                    limit["context"] = model["context_window"]
+                limit = {"context": model["context_window"]}
                 if "max_output_tokens" in model:
                     limit["output"] = model["max_output_tokens"]
-                if limit:
-                    model_entry["limit"] = limit
+                model_entry["limit"] = limit
                 model_config[model["id"]] = model_entry
 
             native_protocols = {

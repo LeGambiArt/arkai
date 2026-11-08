@@ -311,7 +311,7 @@ def _merge_custom_provider_models(
                     "cacheRead": 0,
                     "cacheWrite": 0,
                 },
-                "contextWindow": model.get("context_window", 32768),
+                "contextWindow": model["context_window"],
                 "maxTokens": model.get("max_output_tokens", 8192),
                 "compat": {"supportsDeveloperRole": model.get("supports_developer_role", False)},
             }

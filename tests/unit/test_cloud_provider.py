@@ -177,3 +177,32 @@ def test_shared_source_can_be_inherited_by_multiple_providers() -> None:
 
     assert config["providers"]["gateway"]["api_key_environment_name"] == "TEAM_MODEL_KEY"
     assert config["providers"]["anthropic"]["api_key_environment_name"] == "TEAM_MODEL_KEY"
+
+
+def test_custom_cloud_models_default_context_window() -> None:
+    """Models without an explicit context window get a cloud-sized default."""
+    config = cloud_provider.normalize_custom_cloud_config(
+        {
+            "base_url": "https://gateway.example/v1",
+            "default_provider": "gateway",
+            "providers": {
+                "gateway": {
+                    "default_model": "org/model-one",
+                    "models": [
+                        {"id": "org/model-one", "context_window": 65536},
+                        {"id": "org/model-two"},
+                    ],
+                }
+            },
+        }
+    )
+
+    models = cloud_provider.custom_cloud_models(config["providers"]["gateway"])
+
+    assert [model["context_window"] for model in models] == [65536, 262144]
+    assert (
+        cloud_provider.custom_cloud_models(config["providers"]["gateway"], "org/model-three")[-1][
+            "context_window"
+        ]
+        == 262144
+    )

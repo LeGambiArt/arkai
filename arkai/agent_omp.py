@@ -173,7 +173,7 @@ def _merge_custom_providers(
                 "id": model["id"],
                 "name": model.get("name", model["id"]),
                 "reasoning": model.get("reasoning", False),
-                "contextWindow": model.get("context_window", 32768),
+                "contextWindow": model["context_window"],
                 "maxTokens": model.get("max_output_tokens", 8192),
                 "compat": {"supportsDeveloperRole": model.get("supports_developer_role", False)},
             }
