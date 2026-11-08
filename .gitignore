@@ -23,6 +23,7 @@ wheels/
 .behave_cache/
 .venv/
 venv/
+.ci-venv/
 ENV/
 env/
 .DS_Store

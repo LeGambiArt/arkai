@@ -17,6 +17,56 @@ PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
 cd "$PROJECT_ROOT"
 
+# Tools each command needs; missing tools trigger a self-created virtualenv.
+command_tools() {
+    case "$1" in
+        format|lint) echo "ruff" ;;
+        type) echo "ty" ;;
+        unit) echo "python pytest coverage" ;;
+        bdd) echo "python behave coverage" ;;
+        coverage) echo "python coverage" ;;
+        *) echo "python ruff ty pytest behave coverage" ;;
+    esac
+}
+
+CI_VENV="${PROJECT_ROOT}/.ci-venv"
+
+ensure_tools() {
+    if [ -x "${CI_VENV}/bin/python" ]
+    then
+        # Reuse a previously created environment.
+        export PATH="${CI_VENV}/bin:${PATH}"
+    fi
+    local missing=()
+    local tool
+    for tool in "$@"
+    do
+        command -v "$tool" > /dev/null 2>&1 || missing+=("$tool")
+    done
+    [ ${#missing[@]} -eq 0 ] && return 0
+
+    if [ ! -x "${CI_VENV}/bin/python" ]
+    then
+        echo "Missing tools: ${missing[*]}"
+        echo "Creating virtual environment in ${CI_VENV}..."
+        if command -v uv > /dev/null 2>&1
+        then
+            uv venv "$CI_VENV"
+        else
+            python3 -m venv "$CI_VENV"
+        fi
+        export PATH="${CI_VENV}/bin:${PATH}"
+    fi
+    if command -v uv > /dev/null 2>&1
+    then
+        uv pip install --python "${CI_VENV}/bin/python" -e "${PROJECT_ROOT}[dev]"
+    else
+        "${CI_VENV}/bin/pip" install -e "${PROJECT_ROOT}[dev]"
+    fi
+}
+
+ensure_tools $(command_tools "${1:-all}")
+
 # Functions for each check
 check_format() {
     if [[ $# -gt 0 ]]
