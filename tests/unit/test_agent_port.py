@@ -521,6 +521,7 @@ def test_custom_cloud_uses_configured_default_and_skips_local_inference(
             assert context.cloud_config["default_provider"] == "gateway"
             assert context.cloud_api_environment == {"TEAM_MODEL_KEY": "context-secret"}
             assert "context-secret" not in repr(context)
+    assert context.cloud_api_environment == {}
 
     running.assert_not_called()
     available.assert_not_called()

@@ -468,6 +468,8 @@ def _agent_context(
     except Exception as ex:
         errors.append(ex)
     finally:
+        # Cloud credentials are kept only for the lifetime of this agent run.
+        cloud_api_environment.clear()
         from arkai import wtmcp
 
         if wtmcp_started and wtmcp.is_wtmcp_running(wtmcp_port):

@@ -140,7 +140,12 @@ def build_launch_spec(
     session_id: str | None = None,
 ) -> AgentLaunchSpec:
     """Create a temporary Codex profile and return its process launch specification."""
-    from arkai.agent import _build_sandbox_cmd, _cloud_provider
+    from arkai.agent import (
+        _build_sandbox_cmd,
+        _cloud_provider,
+        _merge_environment,
+        _resolve_sandbox_profile,
+    )
 
     cloud_provider = _cloud_provider(cloud_services)
     if cloud_provider == "vertex":
@@ -185,10 +190,13 @@ def build_launch_spec(
             if certificate_path.is_file() and str(certificate_path) not in mounted_paths:
                 sandbox_volumes.append(f"{certificate_path}:ro")
                 mounted_paths.add(str(certificate_path))
+        sandbox_api_key = None
         if cloud_provider == "openai":
+            profile_environment = _resolve_sandbox_profile(cfg, sandbox_profile).get("environment")
+            effective_environment = _merge_environment(profile_environment, cli_environment)
             sandbox_api_key = (
-                sandbox_environment.get("CODEX_API_KEY")
-                or sandbox_environment.get("OPENAI_API_KEY")
+                effective_environment.get("CODEX_API_KEY")
+                or effective_environment.get("OPENAI_API_KEY")
                 or os.environ.get("CODEX_API_KEY")
                 or os.environ.get("OPENAI_API_KEY")
             )
@@ -211,7 +219,11 @@ def build_launch_spec(
                 tty=prompt is None,
                 allow_inference=cloud_provider is None,
                 extra_hosts=extra_hosts,
-                allow_keychain=(platform.system() == "Darwin" and cloud_provider == "openai"),
+                allow_keychain=(
+                    platform.system() == "Darwin"
+                    and cloud_provider == "openai"
+                    and not sandbox_api_key
+                ),
             )
         except Exception:
             profile_path.unlink(missing_ok=True)

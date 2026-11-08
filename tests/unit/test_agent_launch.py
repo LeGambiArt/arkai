@@ -540,6 +540,24 @@ def test_codex_openai_cloud_allows_mac_keychain_in_arakuca(tmp_path: Path, monke
     spec.cleanup_paths[0].unlink()
 
 
+def test_codex_openai_cloud_skips_mac_keychain_when_api_key_is_supplied(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A provided API key avoids redundant child-process Keychain access on macOS."""
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    monkeypatch.setenv("OPENAI_API_KEY", "provided-secret")
+    monkeypatch.setattr(agent_codex.platform, "system", lambda: "Darwin")
+
+    with patch.object(agent, "_build_sandbox_cmd", return_value=["arapuca", "run", "--"]) as build:
+        spec = agent_codex.build_launch_spec(
+            "/bin/codex", _cfg(), None, True, str(tmp_path), cloud_services=["openai"]
+        )
+
+    assert build.call_args.kwargs["allow_keychain"] is False
+    assert build.call_args.args[6]["CODEX_API_KEY"] == "provided-secret"
+    spec.cleanup_paths[0].unlink()
+
+
 def test_codex_prompt_uses_exec_with_a_unique_profile(tmp_path: Path, monkeypatch) -> None:
     """Codex prompt mode uses exec while interactive mode leaves the TUI command default."""
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))

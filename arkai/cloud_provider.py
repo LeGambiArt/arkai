@@ -2,10 +2,12 @@
 
 import hashlib
 import importlib
+import json
 import os
 import re
 import shutil
 import tempfile
+import threading
 from pathlib import Path
 from urllib.parse import urlsplit
 
@@ -21,6 +23,116 @@ _MODEL_METADATA_FIELDS = {
     "supports_developer_role",
 }
 _SUPPORTED_CUSTOM_PROTOCOLS = {"openai-completions", "anthropic-messages"}
+_KEYCHAIN_BUNDLE_SERVICE = "arkai/credential-cache"
+_KEYCHAIN_BUNDLE_ACCOUNT = "v1"
+
+
+class _InvalidKeychainBundle(RuntimeError):
+    """A keychain bundle exists but does not have a supported format."""
+
+
+def _load_system_keyring():
+    """Load a supported OS keyring backend without exposing backend errors."""
+    try:
+        keyring = importlib.import_module("keyring")
+    except ImportError:
+        raise RuntimeError(
+            "Keychain API-key sources require the optional keyring dependency; "
+            "install Arkai with the 'keychain' extra"
+        ) from None
+
+    try:
+        backend = keyring.get_keyring()
+        backend_module = type(backend).__module__.lower()
+        supported_backend_prefixes = (
+            "keyring.backends.macos",
+            "keyring.backends.windows",
+            "keyring.backends.secretservice",
+            "keyring.backends.kwallet",
+        )
+        if not backend_module.startswith(supported_backend_prefixes):
+            raise RuntimeError("unsupported keyring backend")
+    except Exception:
+        raise RuntimeError(
+            "Could not access the system keychain; check that a supported keychain is available"
+        ) from None
+    return keyring
+
+
+class _KeychainCredentialCache:
+    """Cache keyring lookups in memory for one provider-resolution operation."""
+
+    def __init__(self, keyring):
+        self._keyring = keyring
+        self._bundle_checked = False
+        self._bundle: dict[tuple[str, str], str] = {}
+        self._legacy: dict[tuple[str, str], str | None] = {}
+        self._lock = threading.RLock()
+
+    def get_password(self, service: str, account: str) -> str | None:
+        """Resolve a key from one bundled keychain item or the legacy item."""
+        reference = (service, account)
+        with self._lock:
+            if not self._bundle_checked:
+                self._load_bundle()
+            bundled_key = self._bundle.get(reference)
+            if bundled_key is not None:
+                return bundled_key
+            if reference not in self._legacy:
+                self._legacy[reference] = self._keyring.get_password(service, account)
+            return self._legacy[reference]
+
+    def clear(self) -> None:
+        """Drop cached secret references when provider resolution is complete."""
+        with self._lock:
+            self._bundle.clear()
+            self._legacy.clear()
+
+    def _load_bundle(self) -> None:
+        self._bundle_checked = True
+        raw_bundle = self._keyring.get_password(_KEYCHAIN_BUNDLE_SERVICE, _KEYCHAIN_BUNDLE_ACCOUNT)
+        if raw_bundle is None:
+            return
+        try:
+            bundle = json.loads(raw_bundle)
+        except (TypeError, json.JSONDecodeError):
+            raise _InvalidKeychainBundle(
+                "Arkai's keychain credential bundle is invalid; replace it with a version 1 bundle"
+            ) from None
+        if (
+            not isinstance(bundle, dict)
+            or set(bundle) != {"version", "credentials"}
+            or isinstance(bundle.get("version"), bool)
+            or bundle.get("version") != 1
+            or not isinstance(bundle.get("credentials"), list)
+        ):
+            raise _InvalidKeychainBundle(
+                "Arkai's keychain credential bundle is invalid; replace it with a version 1 bundle"
+            )
+
+        credentials: dict[tuple[str, str], str] = {}
+        for entry in bundle["credentials"]:
+            if (
+                not isinstance(entry, dict)
+                or set(entry) != {"service", "account", "key"}
+                or not isinstance(entry.get("service"), str)
+                or not entry["service"].strip()
+                or not isinstance(entry.get("account"), str)
+                or not entry["account"].strip()
+                or not isinstance(entry.get("key"), str)
+                or not entry["key"].strip()
+            ):
+                raise _InvalidKeychainBundle(
+                    "Arkai's keychain credential bundle is invalid; replace it with "
+                    "a version 1 bundle"
+                )
+            reference = (entry["service"].strip(), entry["account"].strip())
+            if reference in credentials:
+                raise _InvalidKeychainBundle(
+                    "Arkai's keychain credential bundle contains duplicate entries"
+                )
+            credentials[reference] = entry["key"].strip()
+        self._bundle = credentials
 
 
 def _normalize_base_url(value: object, path: str) -> tuple[str, str]:
@@ -293,7 +405,9 @@ def custom_cloud_models(provider: dict, selected_model: str | None = None) -> li
     return models
 
 
-def custom_cloud_api_key(provider: dict) -> str | None:
+def custom_cloud_api_key(
+    provider: dict, credential_cache: _KeychainCredentialCache | None = None
+) -> str | None:
     """Resolve the optional API key from its configured source."""
     api_key = provider.get("api_key")
     if not api_key:
@@ -311,31 +425,21 @@ def custom_cloud_api_key(provider: dict) -> str | None:
 
     service = api_key["service"]
     account = api_key["account"]
+    owns_cache = credential_cache is None
+    if credential_cache is None:
+        credential_cache = _KeychainCredentialCache(_load_system_keyring())
     try:
-        keyring = importlib.import_module("keyring")
-    except ImportError:
-        raise RuntimeError(
-            "Keychain API-key sources require the optional keyring dependency; "
-            "install Arkai with the 'keychain' extra"
-        ) from None
-
-    try:
-        backend = keyring.get_keyring()
-        backend_module = type(backend).__module__.lower()
-        supported_backend_prefixes = (
-            "keyring.backends.macos",
-            "keyring.backends.windows",
-            "keyring.backends.secretservice",
-            "keyring.backends.kwallet",
-        )
-        if not backend_module.startswith(supported_backend_prefixes):
-            raise RuntimeError("unsupported keyring backend")
-        key = keyring.get_password(service, account)
+        key = credential_cache.get_password(service, account)
+    except _InvalidKeychainBundle as error:
+        raise RuntimeError(str(error)) from None
     except Exception:
         raise RuntimeError(
             f"Could not access the system keychain for custom provider "
             f"{provider['provider_id']!r}; check that a supported keychain is available"
         ) from None
+    finally:
+        if owns_cache:
+            credential_cache.clear()
     if not isinstance(key, str) or not key.strip():
         raise RuntimeError(
             f"No API key found in the system keychain for custom provider "
@@ -347,13 +451,23 @@ def custom_cloud_api_key(provider: dict) -> str | None:
 def custom_cloud_environment(config: dict) -> dict[str, str]:
     """Return resolved credentials under the runtime names used by agent clients."""
     environment: dict[str, str] = {}
-    for provider in config["providers"].values():
-        variable = provider.get("api_key_environment_name")
-        key = custom_cloud_api_key(provider)
-        if not variable or not key:
-            continue
-        environment[variable] = key
-    return environment
+    uses_keychain = any(
+        isinstance(provider.get("api_key"), dict)
+        and provider["api_key"].get("source") == "keychain"
+        for provider in config["providers"].values()
+    )
+    credential_cache = _KeychainCredentialCache(_load_system_keyring()) if uses_keychain else None
+    try:
+        for provider in config["providers"].values():
+            variable = provider.get("api_key_environment_name")
+            key = custom_cloud_api_key(provider, credential_cache)
+            if not variable or not key:
+                continue
+            environment[variable] = key
+        return environment
+    finally:
+        if credential_cache is not None:
+            credential_cache.clear()
 
 
 def custom_cloud_resolved_api_key(provider: dict, environment: dict[str, str]) -> str | None:

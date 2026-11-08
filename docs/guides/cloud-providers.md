@@ -87,5 +87,24 @@ api_key:
   account: gateway
 ```
 
+If several custom providers use keychain credentials, store them in one
+system-keychain item to minimize unlock and access prompts. Run:
+
+```bash
+keyring set arkai/credential-cache v1
+```
+
+At the hidden password prompt, paste a one-line JSON bundle, replacing the
+example keys with the matching service/account pairs and API keys:
+
+```json
+{"version":1,"credentials":[{"service":"arkai/cloud","account":"gateway","key":"..."},{"service":"arkai/cloud","account":"private","key":"..."}]}
+```
+
+The bundle is stored by the OS keychain (macOS Keychain or Linux Secret
+Service). Arkai reads it once per launch and keeps resolved keys in memory
+only for that launch. Existing per-provider keyring items remain supported
+as a fallback, but each distinct item may trigger its own OS prompt.
+
 See the [cloud provider design](../design/cloud-providers.md) for
 credential handling, sandbox network rules, and adapter behavior.
