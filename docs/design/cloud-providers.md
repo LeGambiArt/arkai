@@ -16,7 +16,10 @@ orchestration flow.
   Completions or Anthropic Messages protocol.
 - A custom provider declares model metadata and an API-key source.
   Secrets are referenced from an environment variable or supported system
-  keychain; they are not stored as values in Arkai YAML.
+  keychain; they are not stored as values in Arkai YAML. Token-limit
+  metadata (`context_window`, `max_output_tokens`) accepts plain counts or
+  `k`/`m` size-unit strings, normalized to integer token counts at
+  configuration load by the shared parser in `arkai/utils.py`.
 - Multiple keychain-backed providers can use a versioned credential bundle
   in one OS keyring item. Arkai resolves that item once per launch, then
   keeps the decoded credentials in the launch environment until the agent

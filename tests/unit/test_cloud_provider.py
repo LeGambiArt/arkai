@@ -328,3 +328,60 @@ def test_custom_cloud_models_default_context_window() -> None:
         ]
         == 262144
     )
+
+
+def test_model_metadata_accepts_size_unit_strings() -> None:
+    """Context and output limits accept K/M size units and normalize to token counts."""
+    config = cloud_provider.normalize_custom_cloud_config(
+        {
+            "base_url": "https://gateway.example/v1",
+            "default_provider": "gateway",
+            "providers": {
+                "gateway": {
+                    "models": [
+                        {
+                            "id": "org/model-one",
+                            "context_window": "64k",
+                            "max_output_tokens": "8K",
+                        },
+                        {
+                            "id": "org/model-two",
+                            "context_window": "1M",
+                            "max_output_tokens": " 1m ",
+                        },
+                    ],
+                }
+            },
+        }
+    )
+
+    models = config["providers"]["gateway"]["models"]
+
+    assert [(model["context_window"], model["max_output_tokens"]) for model in models] == [
+        (65536, 8192),
+        (1048576, 1048576),
+    ]
+
+
+@pytest.mark.parametrize(
+    "metadata",
+    [
+        {"context_window": "banana"},
+        {"context_window": "1.5m"},
+        {"context_window": True},
+        {"context_window": -1},
+        {"context_window": 0},
+        {"max_output_tokens": "50x"},
+        {"max_output_tokens": 3.5},
+        {"max_output_tokens": False},
+    ],
+)
+def test_rejects_invalid_model_size_metadata(metadata: dict) -> None:
+    """Size-unit fields only accept positive integers or valid K/M strings."""
+    with pytest.raises(ValueError, match="context_window|max_output_tokens"):
+        cloud_provider.normalize_custom_cloud_config(
+            {
+                "base_url": "https://gateway.example/v1",
+                "providers": {"gateway": {"models": [{"id": "org/model", **metadata}]}},
+            }
+        )

@@ -389,3 +389,30 @@ class TestMessageLevel:
         """Test message level ordering."""
         assert utils.MessageLevel.ERROR.value < utils.MessageLevel.WARN.value
         assert utils.MessageLevel.WARN.value < utils.MessageLevel.INFO.value
+
+
+class TestParseTokenSize:
+    """Tests for parse_token_size — token counts with optional K/M suffixes."""
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            (65536, 65536),
+            ("65536", 65536),
+            ("50k", 51200),
+            ("50K", 51200),
+            (" 50k ", 51200),
+            ("1m", 1048576),
+            ("1M", 1048576),
+            ("1k", 1024),
+        ],
+    )
+    def test_accepts_supported_forms(self, value, expected):
+        assert utils.parse_token_size(value) == expected
+
+    @pytest.mark.parametrize(
+        "value",
+        ["invalid", "", "abc k", "xyz m", "1.5m", "50x", "k", "0", "-1", 0, -1, True, 1.5, None],
+    )
+    def test_rejects_invalid_values(self, value):
+        assert utils.parse_token_size(value) is None

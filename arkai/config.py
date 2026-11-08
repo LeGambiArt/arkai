@@ -64,29 +64,9 @@ MODEL_SETTINGS = {
 def parse_context_size(value: int | str) -> int | None:
     """Parse context size value, supporting integer or string with k/m suffix.
 
-    Supports:
-    - Plain integers (e.g., 65536)
-    - String with 'k' suffix for kilotokens (e.g., "50k" = 51200)
-    - String with 'm' suffix for megatokens (e.g., "1M" = 1048576)
-
-    Args:
-        value: The value to parse (int, str, or other)
-
-    Returns:
-        Parsed integer value, or None if parsing fails.
+    See ``utils.parse_token_size`` for the accepted forms.
     """
-    if isinstance(value, str):
-        try:
-            value = value.strip().lower()
-            if value.endswith("k"):
-                value = int(value[:-1]) * 1024
-            elif value.endswith("m"):
-                value = int(value[:-1]) * 1024 * 1024
-            else:
-                value = int(value)
-        except (ValueError, TypeError):
-            return None
-    return value if value > 0 else None
+    return utils.parse_token_size(value)
 
 
 def exec_cmd(args: dict | None = None) -> None:

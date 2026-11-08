@@ -214,6 +214,37 @@ def step_custom_cloud_provider_without_context_window(context):
     utils.save_yaml(".arkai.yaml", config_data)
 
 
+@given("a custom cloud provider with a model using size-unit metadata")  # ty: ignore[call-non-callable]
+def step_custom_cloud_provider_with_size_unit_model(context):
+    """Configure a custom cloud provider whose model limits use K/M size units."""
+    config_data = {
+        "agent": {
+            "name": "opencode",
+            "cloud": {
+                "custom": {
+                    "base_url": "https://gateway.example/v1",
+                    "default_provider": "gateway",
+                    "providers": {
+                        "gateway": {
+                            "default_model": "org/model-id",
+                            "models": [
+                                {
+                                    "id": "org/model-id",
+                                    "name": "Example model",
+                                    "context_window": "64k",
+                                    "max_output_tokens": "8K",
+                                }
+                            ],
+                        }
+                    },
+                }
+            },
+        },
+        "inference": {"model": "test.gguf"},
+    }
+    utils.save_yaml(".arkai.yaml", config_data)
+
+
 @when('I run "arkai agent start" with "--cloud custom" in a TTY')  # ty: ignore[call-non-callable]
 def step_run_agent_with_custom_cloud(context):
     """Run arkai agent start against the configured custom cloud provider."""
@@ -231,6 +262,18 @@ def step_agent_catalog_uses_default_cloud_window(context):
     config = json.loads(context.agent_config_text)
     model = config["providers"]["gateway"]["models"]["org/model-id"]
     assert model["limit"]["context"] == DEFAULT_CUSTOM_CLOUD_CONTEXT_WINDOW
+
+
+@then("the agent model catalog expands size units to token counts")  # ty: ignore[call-non-callable]
+def step_agent_catalog_expands_size_units(context):
+    """OpenCode's model limits reflect K/M sizes expanded to token counts."""
+    import json
+
+    assert context.exit_code == 0, context.stderr
+    config = json.loads(context.agent_config_text)
+    model = config["providers"]["gateway"]["models"]["org/model-id"]
+    assert model["limit"]["context"] == 65536
+    assert model["limit"]["output"] == 8192
 
 
 @when(  # ty: ignore[call-non-callable]

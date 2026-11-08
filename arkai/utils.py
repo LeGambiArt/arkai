@@ -2,6 +2,7 @@
 
 import os
 import platform
+import re
 import shutil
 import signal
 import subprocess
@@ -347,6 +348,39 @@ def validate_environment(environment: object) -> str | None:
         if isinstance(value, (dict, list)):
             return f"environment value for key {key!r} must be a scalar, got {type(value).__name__}"
     return None
+
+
+_TOKEN_SIZE_PATTERN = re.compile(r"^([0-9]+)([km])?$")
+
+
+def parse_token_size(value: object) -> int | None:
+    """Parse a token count from an integer or a K/M size-unit string.
+
+    Supports:
+    - Plain integers (e.g., 65536)
+    - String with 'k' suffix for kilotokens (e.g., "50k" = 51200)
+    - String with 'm' suffix for megatokens (e.g., "1M" = 1048576)
+
+    Args:
+        value: The value to parse (int, str, or other)
+
+    Returns:
+        Parsed integer value, or None if parsing fails.
+    """
+    if isinstance(value, bool) or not isinstance(value, int):
+        if not isinstance(value, str):
+            return None
+        match = _TOKEN_SIZE_PATTERN.fullmatch(value.strip().lower())
+        if match is None:
+            return None
+        number = int(match.group(1))
+        suffix = match.group(2)
+        if suffix == "k":
+            number *= 1024
+        elif suffix == "m":
+            number *= 1024 * 1024
+        value = number
+    return value if value > 0 else None
 
 
 def resolve_binary(binary_path: str, search_path: bool = True) -> str:

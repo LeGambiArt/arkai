@@ -63,7 +63,11 @@ agent:
 ```
 
 Models without an explicit `context_window` default to 262144 tokens
-(256k) instead of the agent's smaller built-in default.
+(256k) instead of the agent's smaller built-in default. Both
+`context_window` and `max_output_tokens` accept a token count or a size
+unit string with a `k` (`*1024`) or `m` (`*1024*1024`) suffix, so
+`context_window: 64k` and `max_output_tokens: 8K` mean 65536 and 8192
+tokens.
 
 Export the variable before launching, then select the provider with
 `--cloud custom`. If several providers are configured, `default_provider`

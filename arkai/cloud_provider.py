@@ -11,6 +11,8 @@ import threading
 from pathlib import Path
 from urllib.parse import urlsplit
 
+from arkai import utils
+
 _PROVIDER_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]+$")
 _ENVIRONMENT_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 DEFAULT_CUSTOM_CLOUD_CONTEXT_WINDOW = 262144
@@ -184,15 +186,21 @@ def _normalize_models(value: object, path: str, default_model: str | None) -> li
             if field not in entry:
                 continue
             metadata = entry[field]
-            if field in {"name"} and (not isinstance(metadata, str) or not metadata.strip()):
-                raise ValueError(f"{entry_path}.{field} must be a non-empty string")
-            if field in {"context_window", "max_output_tokens"} and (
-                isinstance(metadata, bool) or not isinstance(metadata, int) or metadata <= 0
-            ):
-                raise ValueError(f"{entry_path}.{field} must be a positive integer")
-            if field in {"reasoning", "supports_developer_role"} and not isinstance(metadata, bool):
+            if field == "name":
+                if not isinstance(metadata, str) or not metadata.strip():
+                    raise ValueError(f"{entry_path}.{field} must be a non-empty string")
+                model[field] = metadata.strip()
+            elif field in {"context_window", "max_output_tokens"}:
+                parsed_size = utils.parse_token_size(metadata)
+                if parsed_size is None:
+                    raise ValueError(
+                        f"{entry_path}.{field} must be a positive integer or size like 64k"
+                    )
+                model[field] = parsed_size
+            elif not isinstance(metadata, bool):
                 raise ValueError(f"{entry_path}.{field} must be a boolean")
-            model[field] = metadata.strip() if field == "name" else metadata
+            else:
+                model[field] = metadata
         models.append(model)
 
     if default_model and default_model not in model_ids:
