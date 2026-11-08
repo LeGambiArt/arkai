@@ -281,7 +281,7 @@ class SplashBridge:
             paths: list[Path] = []
             strategy = None
             if hub_cache.is_dir():
-                from huggingface_hub import scan_cache_dir
+                from huggingface_hub import scan_cache_dir  # ty: ignore[import-not-found]
 
                 cache = scan_cache_dir(hub_cache)
                 if cache.warnings:
