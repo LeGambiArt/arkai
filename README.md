@@ -71,13 +71,13 @@ arkai config validate
 For troubleshooting, put `--debug` before the command, for example
 `arkai --debug agent start`.
 
-## More
+## Documentation
 
-- [User guides](https://github.com/LeGambiArt/arkai/tree/main/docs/guides) —
-  configuration, models, agents, sandboxing, plugins, and RAG.
-- [Design documents](https://github.com/LeGambiArt/arkai/tree/main/docs/design) —
-  architecture and implementation details, one feature per document.
-- [Contributing](https://github.com/LeGambiArt/arkai/blob/main/CONTRIBUTING.
-md)
+- [User guides](docs/guides) — configuration, models, agents, sandboxing,
+  plugins, and RAG.
+- [Design documents](docs/design) — architecture and implementation
+  details, one feature per document.
+- [Contributing](CONTRIBUTING.md) - guidelines for contributing to the
+  project
 
-Arkai is licensed under [Apache 2.0](https://github.com/LeGambiArt/arkai/blob/main/LICENSE).
+Arkai is licensed under [Apache 2.0](LICENSE).
