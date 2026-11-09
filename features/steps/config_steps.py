@@ -14,6 +14,19 @@ def step_valid_config(context):
     }
 
 
+@given("a valid .arkai.yaml file with OMP text checking disabled")  # ty: ignore[call-non-callable]
+def step_valid_config_with_omp_text_checking_disabled(context):
+    """Create valid configuration with OMP system text checking disabled."""
+    context.config_file = ".arkai.yaml"
+    context.config_data = {
+        "agent": {
+            "name": "omp",
+            "omp": {"text_checking": False},
+        },
+        "inference": {"backend": "llama-cpp", "model": "test.gguf"},
+    }
+
+
 @given("a valid config file at {filepath}")  # ty: ignore[call-non-callable]
 def step_valid_config_at_path(context, filepath):
     context.config_file = filepath

@@ -16,6 +16,9 @@ DEFAULTS = {
         "cloud": {
             "default": None,
         },
+        "omp": {
+            "text_checking": True,
+        },
     },
     "inference": {
         "backend": "llama-cpp",
@@ -152,6 +155,18 @@ def validate_config(
     if agent_mode not in AGENT_MODES:
         utils.error(f"agent.mode must be one of {', '.join(AGENT_MODES)}")
         valid = False
+
+    omp_config = agent_config.get("omp", {}) if isinstance(agent_config, dict) else {}
+    if omp_config is None:
+        omp_config = {}
+    if not isinstance(omp_config, dict):
+        utils.error("agent.omp must be a mapping")
+        valid = False
+    elif "text_checking" in omp_config:
+        text_checking = omp_config["text_checking"]
+        if text_checking is not None and not isinstance(text_checking, bool):
+            utils.error("agent.omp.text_checking must be a boolean")
+            valid = False
 
     if cloud_config is None:
         cloud_config = {}

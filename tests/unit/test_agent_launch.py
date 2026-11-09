@@ -891,10 +891,10 @@ def test_omp_builds_local_model_and_mcp_configuration(tmp_path: Path, monkeypatc
     settings = agent.utils.load_yaml(str(agent_dir / "config.yml"))
     assert settings["modelRoles"]["default"] == "local-llm/test"
     assert settings["startup"] == {"quiet": True, "setupWizard": False}
-    assert settings["spelling"] == {"typoDetection": False, "autocomplete": False}
+    assert settings["spelling"] == {"typoDetection": True, "autocomplete": True}
     spelling_config = Path(spec.command[spec.command.index("--config") + 1])
     assert agent.utils.load_yaml(str(spelling_config)) == {
-        "spelling": {"typoDetection": False, "autocomplete": False}
+        "spelling": {"typoDetection": True, "autocomplete": True}
     }
     assert spelling_config in spec.cleanup_paths
     mcp = json.loads((agent_dir / "mcp.json").read_text())
@@ -929,7 +929,7 @@ def test_omp_prompt_runs_without_session_and_cleans_stale_mcp(tmp_path: Path, mo
 
     spelling_config = Path(spec.command[spec.command.index("--config") + 1])
     assert agent.utils.load_yaml(str(spelling_config)) == {
-        "spelling": {"typoDetection": False, "autocomplete": False}
+        "spelling": {"typoDetection": True, "autocomplete": True}
     }
     assert spec.command == [
         str(omp_path.resolve()),
@@ -986,6 +986,17 @@ def test_omp_xpc_service_is_limited_to_interactive_macos(tmp_path: Path, monkeyp
         )
 
     assert build.call_args.kwargs["allow_xpc_services"] == []
+
+    cfg = _cfg()
+    cfg["agent"] = {"omp": {"text_checking": False}}
+    with patch.object(agent, "_build_sandbox_cmd", return_value=["arapuca", "run", "--"]) as build:
+        spec = agent_omp.build_launch_spec("/opt/omp/bin/omp", cfg, None, True, None)
+
+    assert build.call_args.kwargs["allow_xpc_services"] == []
+    spelling_config = Path(spec.command[spec.command.index("--config") + 1])
+    assert agent.utils.load_yaml(str(spelling_config)) == {
+        "spelling": {"typoDetection": False, "autocomplete": False}
+    }
 
 
 def test_pi_cloud_uses_global_auth_and_openai_provider(tmp_path: Path, monkeypatch) -> None:
@@ -1539,7 +1550,7 @@ def test_omp_cloud_uses_global_auth_and_does_not_overwrite_local_settings(
     assert auth_file.read_bytes() == b"saved auth data"
     spelling_config = Path(spec.command[spec.command.index("--config") + 1])
     assert agent.utils.load_yaml(str(spelling_config)) == {
-        "spelling": {"typoDetection": False, "autocomplete": False}
+        "spelling": {"typoDetection": True, "autocomplete": True}
     }
     assert spelling_config in spec.cleanup_paths
 
@@ -1651,7 +1662,7 @@ def test_omp_custom_provider_registers_models_and_selects_default(
     )
     assert runtime_config["modelRoles"]["default"] == "arkai-custom/org/model-one"
     assert runtime_config["startup"] == {"quiet": True}
-    assert runtime_config["spelling"] == {"typoDetection": False, "autocomplete": False}
+    assert runtime_config["spelling"] == {"typoDetection": True, "autocomplete": True}
     assert spec.environment["TEAM_MODEL_KEY"] == "provider-secret"
     assert spec.environment["OPENAI_GATEWAY_KEY"] == "openai-secret"
     assert "OPENAI_API_KEY" not in spec.environment

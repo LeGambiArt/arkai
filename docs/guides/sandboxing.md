@@ -19,11 +19,10 @@ Install `arapuca` separately and configure `sandbox.path` if it is not on
 `--env KEY=VALUE`, and `--cwd PATH` overrides. `--no-sandbox` bypasses
 the boundary for that run; use it only when you accept the risk.
 
-Arkai supplies OMP with a private one-shot config overlay that disables
-`spelling.typoDetection` and `spelling.autocomplete`, avoiding Apple's
-system text-checking service in normal use. For interactive OMP sessions on
-macOS, Arkai allows only that service's Mach lookup for compatibility; it
-grants no general XPC or network access.
+Arkai configures OMP's spelling and autocomplete together with
+`agent.omp.text_checking` (enabled by default). For interactive OMP sessions
+on macOS, Arkai allows only the Apple text-checking Mach service when this
+setting is enabled; no general XPC or network access is granted.
 
 Sandbox profiles live under `sandbox.profiles` in the user or project
 YAML configuration. They can define memory, CPU and process limits,
