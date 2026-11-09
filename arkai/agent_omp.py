@@ -15,6 +15,16 @@ from arkai.agent import AgentLaunchSpec, run_launch_spec
 
 OMP_INSTALLER_URL = "https://omp.sh/install"
 OMP_CONFIG_DIR = ".local/state/arkai/omp"
+_OMP_SPELLING_SETTINGS = {"typoDetection": False, "autocomplete": False}
+
+
+def _disable_omp_spelling(settings: dict) -> None:
+    """Disable OMP typo detection and autocomplete in an Arkai-owned config."""
+    spelling = settings.get("spelling")
+    if not isinstance(spelling, dict):
+        spelling = {}
+    spelling.update(_OMP_SPELLING_SETTINGS)
+    settings["spelling"] = spelling
 
 
 def get_install_dir() -> Path:
@@ -30,6 +40,26 @@ def get_core_dir() -> Path:
 def get_agent_dir() -> Path:
     """Return the directory containing OMP's Arkai-managed configuration and data."""
     return get_install_dir() / "agent"
+
+
+def _write_spelling_config_overlay(agent_dir: Path) -> Path:
+    """Write a private one-shot OMP config that disables Apple text checking."""
+    descriptor, filename = tempfile.mkstemp(
+        prefix="arkai-omp-spelling-", suffix=".yml", dir=agent_dir
+    )
+    overlay_path = Path(filename)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as overlay:
+            os.fchmod(overlay.fileno(), 0o600)
+            yaml.safe_dump(
+                {"spelling": _OMP_SPELLING_SETTINGS},
+                overlay,
+                sort_keys=False,
+            )
+    except Exception:
+        overlay_path.unlink(missing_ok=True)
+        raise
+    return overlay_path
 
 
 def get_global_agent_dir() -> Path:
@@ -111,6 +141,7 @@ def _prepare_agent_dir(cfg: dict, wtmcp_port: int | None) -> Path:
     settings = {
         "modelRoles": {"default": f"local-llm/{model_id}"},
         "startup": {"quiet": True, "setupWizard": False},
+        "spelling": dict(_OMP_SPELLING_SETTINGS),
     }
 
     utils.save_yaml(str(agent_dir / "models.yml"), models)
@@ -204,6 +235,7 @@ def _set_custom_default_model(agent_dir: Path, model_reference: str) -> None:
         raise RuntimeError(f"Could not read OMP configuration: {config_path}") from error
     if not isinstance(settings, dict):
         raise RuntimeError(f"OMP configuration must contain a mapping: {config_path}")
+    _disable_omp_spelling(settings)
     model_roles = settings.setdefault("modelRoles", {})
     if not isinstance(model_roles, dict):
         raise RuntimeError(f"OMP modelRoles must contain a mapping: {config_path}")
@@ -329,6 +361,17 @@ def build_launch_spec(
         mcp_config = None
         cleanup_paths = []
 
+    try:
+        spelling_config = _write_spelling_config_overlay(agent_dir)
+    except Exception:
+        for path in cleanup_paths:
+            if path.is_dir():
+                shutil.rmtree(path, ignore_errors=True)
+            else:
+                path.unlink(missing_ok=True)
+        raise
+    cleanup_paths.append(spelling_config)
+
     environment = os.environ.copy()
     if cloud_provider == "custom" and custom_cloud_config is not None:
         for native_key in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
@@ -430,6 +473,7 @@ def build_launch_spec(
                 command.append(native_session_id)
     command.append("--profile")
     command.append("default")
+    command.extend(["--config", str(spelling_config)])
     if is_cloud:
         if cloud_provider == "custom":
             assert selected_provider_id is not None
