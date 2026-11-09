@@ -67,9 +67,12 @@ and a brief description.
 
 ## Releases
 
-Set the package version in `pyproject.toml` and ensure checks pass before
-publishing a GitHub release. Use `contrib/changelog` to gather the release
-notes from the commits since the latest release. `.github/workflows/release.yml`
-builds the package and publishes it to PyPI when a release is published.
+Set the package version in `arkai/__init__.py` (`__version__`) and keep
+`contrib/arkai.spec` (`Version:`) identical in the same change; the version
+in `pyproject.toml` is derived from `arkai.__version__` at build time. Ensure
+checks pass before publishing a GitHub release. Use `contrib/changelog` to
+gather the release notes from the commits since the latest release.
+`.github/workflows/release.yml` builds the package and publishes it to PyPI
+when a release is published.
 Successful publishing also depends on the matching PyPI trusted-publisher and
 GitHub `pypi` environment configuration.
