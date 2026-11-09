@@ -68,7 +68,8 @@ and a brief description.
 ## Releases
 
 Set the package version in `pyproject.toml` and ensure checks pass before
-publishing a GitHub release. `.github/workflows/release.yml` builds the
-package and publishes it to PyPI when a release is published. Successful
-publishing also depends on the matching PyPI trusted-publisher and GitHub
-`pypi` environment configuration.
+publishing a GitHub release. Use `contrib/changelog` to gather the release
+notes from the commits since the latest release. `.github/workflows/release.yml`
+builds the package and publishes it to PyPI when a release is published.
+Successful publishing also depends on the matching PyPI trusted-publisher and
+GitHub `pypi` environment configuration.

@@ -1,5 +1,4 @@
-# Guidance for AI agents
-
+- Never create commits unless the user explicitly asks for a commit in the conversation.
 - Follow the repository's [contribution guidelines](CONTRIBUTING.md).
 - Add or update unit tests under `tests/unit/` for correctness, including negative cases and expected failures.
 - For any change to CLI options or configuration behavior, also add or update `behave` BDD scenarios under `features/` that exercise the user-visible behavior.
@@ -7,7 +6,7 @@
 
 ## Release and version changes
 
-- Compare changes since the latest public release tag; propose release notes that describe the new features and fixes.
+- Gather the commit message body for the release notes by running `contrib/changelog`, which groups the commits since the latest release into Highlights, Bug Fixes, Documentation, and Internal Changes sections; review and adjust the result to describe the new features and fixes accurately.
 - Keep the release version identical in `pyproject.toml` (`[project].version`) and `contrib/arkai.spec` (`Version:`); update both in the same change.
 - Run `./ci/check.sh` and build both distributions with `uv build --python 3.14` before presenting the release for review. Report any checks that could not run rather than implying they passed.
 - Propose the exact release commit message in the conversation. A human must explicitly approve that exact message before any release/version commit is created; general approval to prepare a release is not enough. After approval, create the release commit with `git commit -s`.
