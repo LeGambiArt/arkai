@@ -5,7 +5,7 @@ cloud inference. It can manage model downloads, agent sessions, MCP
 integrations, and sandboxed execution.}
 
 Name:           python3-arkai
-Version:        0.8.1
+Version:        0.9.0
 Release:        %autorelease
 Summary:        Local AI workflow manager for coding agents
 License:        Apache-2.0
