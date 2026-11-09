@@ -952,10 +952,12 @@ def test_omp_sandbox_mounts_binary_and_sets_agent_dir(tmp_path: Path, monkeypatc
     """Sandboxed OMP receives its isolated config path and read-only executable mount."""
     agent_dir = tmp_path / "omp-agent"
     monkeypatch.setattr(agent_omp, "get_agent_dir", lambda: agent_dir)
+    monkeypatch.setattr(agent_omp.platform, "system", lambda: "Darwin")
     with patch.object(agent, "_build_sandbox_cmd", return_value=["arapuca", "run", "--"]) as build:
         spec = agent_omp.build_launch_spec("/opt/omp/bin/omp", _cfg(), None, True, None)
 
     assert "/opt/omp/bin:ro" in build.call_args.args[5]
+    assert build.call_args.kwargs["allow_xpc_services"] == ["mul-xpc (Apple)_OpenStep"]
     assert spec.command[:8] == [
         "arapuca",
         "run",
@@ -966,6 +968,24 @@ def test_omp_sandbox_mounts_binary_and_sets_agent_dir(tmp_path: Path, monkeypatc
         "OMP_SKIP_SETUP=1",
         "/opt/omp/bin/omp",
     ]
+
+
+def test_omp_xpc_service_is_limited_to_interactive_macos(tmp_path: Path, monkeypatch) -> None:
+    """OMP enables text-checking lookup for its macOS TUI, not print-mode prompts."""
+    agent_dir = tmp_path / "omp-agent"
+    monkeypatch.setattr(agent_omp, "get_agent_dir", lambda: agent_dir)
+    monkeypatch.setattr(agent_omp.platform, "system", lambda: "Darwin")
+    with patch.object(agent, "_build_sandbox_cmd", return_value=["arapuca", "run", "--"]) as build:
+        agent_omp.build_launch_spec("/opt/omp/bin/omp", _cfg(), None, True, None)
+
+    assert build.call_args.kwargs["allow_xpc_services"] == ["mul-xpc (Apple)_OpenStep"]
+
+    with patch.object(agent, "_build_sandbox_cmd", return_value=["arapuca", "run", "--"]) as build:
+        agent_omp.build_launch_spec(
+            "/opt/omp/bin/omp", _cfg(), None, True, None, prompt="check spelling"
+        )
+
+    assert build.call_args.kwargs["allow_xpc_services"] == []
 
 
 def test_pi_cloud_uses_global_auth_and_openai_provider(tmp_path: Path, monkeypatch) -> None:

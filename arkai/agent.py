@@ -689,6 +689,7 @@ def _build_sandbox_cmd(
     extra_hosts: list[str] | None = None,
     allow_network_listeners: bool = False,
     allow_keychain: bool = False,
+    allow_xpc_services: list[str] | None = None,
 ) -> list:
     """Build the arapuca sandbox command prefix for an agent invocation.
 
@@ -704,6 +705,7 @@ def _build_sandbox_cmd(
         extra_hosts: Additional HTTPS destinations permitted by the sandbox.
         allow_network_listeners: Allow sandboxed processes to bind network listeners.
         allow_keychain: Allow access to macOS Keychain and preserve the user's HOME.
+        allow_xpc_services: Exact macOS Mach service names permitted for XPC lookup.
 
     Returns:
         List of command tokens ending with "--", ready for the agent command to be appended
@@ -764,6 +766,9 @@ def _build_sandbox_cmd(
         cmd += ["--allow-network-listeners"]
     if allow_keychain:
         cmd += ["--allow-keychain"]
+    if platform.system() == "Darwin":
+        for service in allow_xpc_services or []:
+            cmd += ["--allow-xpc", service]
 
     if platform.system() == "Linux":
         if allow_inference:

@@ -21,7 +21,9 @@ the boundary for that run; use it only when you accept the risk.
 
 Arkai supplies OMP with a private one-shot config overlay that disables
 `spelling.typoDetection` and `spelling.autocomplete`, avoiding Apple's
-system text-checking service without granting additional XPC access.
+system text-checking service in normal use. For interactive OMP sessions on
+macOS, Arkai allows only that service's Mach lookup for compatibility; it
+grants no general XPC or network access.
 
 Sandbox profiles live under `sandbox.profiles` in the user or project
 YAML configuration. They can define memory, CPU and process limits,

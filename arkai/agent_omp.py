@@ -27,6 +27,9 @@ def _disable_omp_spelling(settings: dict) -> None:
     settings["spelling"] = spelling
 
 
+_MACOS_TEXT_CHECKING_SERVICE = "mul-xpc (Apple)_OpenStep"
+
+
 def get_install_dir() -> Path:
     """Return the root directory for Arkai-managed OMP files."""
     return Path(os.path.expanduser("~/.local/state/arkai/omp"))
@@ -422,6 +425,11 @@ def build_launch_spec(
                 tty=prompt is None,
                 allow_network=False,
                 allow_inference=not is_cloud,
+                allow_xpc_services=(
+                    [_MACOS_TEXT_CHECKING_SERVICE]
+                    if prompt is None and platform.system() == "Darwin"
+                    else []
+                ),
                 extra_hosts=(
                     list(
                         dict.fromkeys(

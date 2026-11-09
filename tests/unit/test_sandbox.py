@@ -301,6 +301,22 @@ def test_cloud_sandbox_allows_configured_cloud_hosts(tmp_path, monkeypatch) -> N
     assert "--memory" in command
 
 
+def test_macos_xpc_services_are_forwarded(monkeypatch) -> None:
+    """Arapuca receives exact Mach service names only on macOS."""
+    monkeypatch.setattr(agent_module.utils, "resolve_binary", lambda _: "/bin/arapuca")
+    monkeypatch.setattr(agent_module.platform, "system", lambda: "Darwin")
+
+    command = agent_module._build_sandbox_cmd(
+        {"sandbox": {}},
+        None,
+        None,
+        None,
+        allow_xpc_services=["mul-xpc (Apple)_OpenStep"],
+    )
+
+    assert command[command.index("--allow-xpc") + 1] == "mul-xpc (Apple)_OpenStep"
+
+
 class TestShowCommand:
     """Test sandbox show command output."""
 
