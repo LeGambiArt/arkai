@@ -63,6 +63,7 @@ class TestProfileRetrieval:
         """Should retrieve existing profile."""
         cfg = {
             "sandbox": {
+                "path": "/root/arapuca",
                 "profiles": {
                     "gpu": {
                         "path": "/custom/arapuca",
@@ -71,12 +72,35 @@ class TestProfileRetrieval:
                         "pids": 256,
                         "timeout": 0,
                     }
-                }
+                },
             }
         }
         profile = sandbox._get_profile(cfg, "gpu")
         assert profile is not None
         assert profile["path"] == "/custom/arapuca"
+
+    def test_get_profile_inherits_root_path_when_omitted(self) -> None:
+        """A profile without a path uses the configured sandbox.path."""
+        cfg = {
+            "sandbox": {
+                "path": "/root/arapuca",
+                "profiles": {"gpu": {"memory_mb": 8192}},
+            }
+        }
+
+        profile = sandbox._get_profile(cfg, "gpu")
+
+        assert profile is not None
+        assert profile["path"] == "/root/arapuca"
+
+    def test_get_profile_inherits_default_path_when_root_path_is_unset(self) -> None:
+        """A profile falls back to the standard binary name without a root path."""
+        cfg = {"sandbox": {"profiles": {"gpu": {"memory_mb": 8192}}}}
+
+        profile = sandbox._get_profile(cfg, "gpu")
+
+        assert profile is not None
+        assert profile["path"] == "arapuca"
 
     def test_get_profile_not_exists(self) -> None:
         """Should return None for non-existent profile."""

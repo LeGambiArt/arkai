@@ -27,6 +27,24 @@ def _run_arkai(context, argv):
     context.exit_code = exit_code
 
 
+@given("a sandbox profile without a path and a custom root path")  # ty: ignore[call-non-callable]
+def step_profile_without_path_and_custom_root(context):
+    """Configure a profile that should inherit the root Arapuca executable."""
+    context.config_data = {
+        "sandbox": {
+            "path": "/custom/arapuca",
+            "profiles": {
+                "inherited": {
+                    "memory_mb": 1024,
+                    "cpus": 1,
+                    "pids": 64,
+                    "timeout": 0,
+                }
+            },
+        }
+    }
+
+
 @when('I run "arkai sandbox {cmd}"')  # ty: ignore[call-non-callable]
 def step_run_sandbox_command(context, cmd):
     """Run an arkai sandbox command and capture output."""

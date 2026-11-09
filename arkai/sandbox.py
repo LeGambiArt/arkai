@@ -175,11 +175,19 @@ def _get_profile(cfg: dict, name: str) -> dict | None:
         name: Profile name to retrieve
 
     Returns:
-        Profile dict if found, None otherwise
+        Profile dict with the root sandbox path inherited when omitted,
+        or None when the profile does not exist
     """
-    profiles = cfg.get("sandbox", {}).get("profiles", {})
+    sandbox = cfg.get("sandbox", {})
+    profiles = sandbox.get("profiles", {})
     profile = profiles.get(name)
-    return profile.copy() if profile else None
+    if not profile:
+        return None
+
+    resolved = profile.copy()
+    if not resolved.get("path"):
+        resolved["path"] = sandbox.get("path") or "arapuca"
+    return resolved
 
 
 def _profile_exists(cfg: dict, name: str) -> bool:

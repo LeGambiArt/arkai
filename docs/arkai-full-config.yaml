@@ -109,10 +109,11 @@ sandbox: {} # Default mapping; replace {} with entries from the commented block 
 #   volume: [] # Default: no additional mounts; entries may end in :ro.
 #   environment: null # Default: no additional sandbox environment variables.
   #   profiles: {} # Default: none; replace {} with named profiles to configure them.
-#   # Profile keys use the values shown here when omitted.
+#   # Profiles inherit sandbox.path when path is omitted. Other omitted
+#   # profile values use the defaults shown here.
 #   profiles:
 #     <profile-name>:
-#       path: arapuca
+#       path: null # Default: inherit sandbox.path, then fall back to arapuca.
 #       memory_mb: 2048
 #       cpus: 2
 #       pids: 256

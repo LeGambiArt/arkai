@@ -26,6 +26,12 @@ Feature: Sandbox Profile Management
     Then the exit code is 0
     And the output contains "Default Settings"
 
+  Scenario: Profile inherits the root Arapuca path when omitted
+    Given a sandbox profile without a path and a custom root path
+    When I run "arkai sandbox show inherited"
+    Then the exit code is 0
+    And the output contains "path:      /custom/arapuca"
+
   Scenario: Show active profile when none is set
     When I run "arkai sandbox show active"
     Then the exit code is 0

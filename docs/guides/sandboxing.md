@@ -21,9 +21,9 @@ the boundary for that run; use it only when you accept the risk.
 
 Sandbox profiles live under `sandbox.profiles` in the user or project
 YAML configuration. They can define memory, CPU and process limits,
-timeout, read-only or writable volume mounts, and environment values.
-Define the values you want each profile to use; profiles written directly
-in YAML do not inherit customized root values. Profiles created with
+timeout, read-only or writable volume mounts, and environment values. A
+profile inherits the root `sandbox.path` unless it sets its own path; other
+omitted profile values use Arkai's built-in defaults. Profiles created with
 `arkai sandbox create` start from root defaults unless `--from` is
 supplied. Choose an active profile and inspect its effective settings
 with:
