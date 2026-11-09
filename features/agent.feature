@@ -17,6 +17,12 @@ Feature: Agent Execution
     Then the exit code is 0
     And wtmcp was not started
 
+  Scenario: Agent skips MCP when wtmcp is disabled
+    Given a valid .arkai.yaml file with wtmcp disabled
+    When I run "arkai agent start" in a TTY
+    Then the exit code is 0
+    And wtmcp was not started
+
   Scenario: Agent skips sandbox with --no-sandbox flag
     Given a valid .arkai.yaml file
     When I run "arkai agent start" with "--no-sandbox" in a TTY

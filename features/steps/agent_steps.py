@@ -58,6 +58,17 @@ def step_valid_config_mcp_disabled(context):
     utils.save_yaml(".arkai.yaml", config_data)
 
 
+@given("a valid .arkai.yaml file with wtmcp disabled")  # ty: ignore[call-non-callable]
+def step_valid_config_wtmcp_disabled(context):
+    """Create a valid config file with wtmcp.enabled set to false."""
+    config_data = {
+        "agent": {"name": "opencode"},
+        "inference": {"model": "test.gguf"},
+        "wtmcp": {"enabled": False},
+    }
+    utils.save_yaml(".arkai.yaml", config_data)
+
+
 def _run_agent_in_tty(
     context,
     no_mcp: bool = False,

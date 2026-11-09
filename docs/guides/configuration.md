@@ -37,6 +37,7 @@ key reference, with defaults and descriptions, is in
 | `inference.gpu_layers` | GPU layers for backends that support the setting; defaults to `-1` (all). |
 | `inference.context_size` | Context window; accepts a positive integer or `k`/`m` suffix. |
 | `inference.startup_timeout` | Readiness timeout in seconds; defaults to `600`. |
+| `wtmcp.enabled` | Set `false` to skip starting wtmcp and MCP agent configuration; defaults to `true`. |
 | `wtmcp.path`, `wtmcp.port` | MCP server executable and port; default port is `8080`. |
 | `wtmcp.workdir`, `wtmcp.config` | Optional working directory and base wtmcp config path. |
 | `wtmcp.plugins` | Project-level plugin entries injected into the wtmcp config. |

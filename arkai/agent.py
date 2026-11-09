@@ -413,7 +413,11 @@ def _agent_context(
         )
         sys.exit(2)
 
-    use_mcp = bool(config.get_config_value(cfg, "agent.mcp", True)) and not no_mcp
+    use_mcp = (
+        bool(config.get_config_value(cfg, "wtmcp.enabled", True))
+        and bool(config.get_config_value(cfg, "agent.mcp", True))
+        and not no_mcp
+    )
     use_sandbox = not no_sandbox and not bool(
         config.get_config_value(cfg, "sandbox.disable", False)
     )

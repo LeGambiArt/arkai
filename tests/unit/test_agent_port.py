@@ -219,6 +219,32 @@ def test_agent_context_continues_without_mcp_when_wtmcp_is_missing() -> None:
     warn.assert_called_once_with("wtmcp binary not found; starting agent without MCP.")
 
 
+def test_agent_context_skips_wtmcp_when_disabled_in_config() -> None:
+    """wtmcp.enabled=false skips wtmcp startup and MCP agent configuration."""
+    cfg = {
+        "agent": {"name": "opencode", "path": "/agent", "mcp": True},
+        "inference": {"model": "model.gguf", "port": 9090},
+        "wtmcp": {"enabled": False},
+        "sandbox": {"disable": True},
+    }
+
+    with (
+        patch.object(agent.config, "load_config", return_value=cfg),
+        patch.object(agent.config, "validate_config", return_value=True),
+        patch.object(agent.inference, "is_inference_running", return_value=True),
+        patch.object(agent.inference, "get_inference_model", return_value="active.gguf"),
+        patch.object(agent.utils, "resolve_binary", return_value="/agent"),
+        patch("arkai.wtmcp.is_wtmcp_running", return_value=False) as running,
+        patch("arkai.wtmcp.cmd_wtmcp_start") as start,
+    ):
+        with agent._agent_context("opencode") as context:
+            assert context.use_mcp is False
+            assert context.wtmcp_port is None
+
+    running.assert_not_called()
+    start.assert_not_called()
+
+
 def test_agent_prompt_runs_without_mcp_when_wtmcp_is_missing(capsys) -> None:
     """Prompt mode also warns and dispatches normally when wtmcp is unavailable."""
     cfg = {

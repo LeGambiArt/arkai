@@ -89,7 +89,7 @@ inference:
   #   python_path: null # Default: use Splash's bundled Python executable.
 
 wtmcp: {} # Default mapping; replace {} with entries from the commented block to override.
-# wtmcp:
+#   enabled: true # Default; set false to skip starting wtmcp and MCP agent configuration.
 #   path: wtmcp # Default executable name.
 #   port: 8080 # Default MCP server port.
 #   workdir: null # Default: let wtmcp choose its working directory.

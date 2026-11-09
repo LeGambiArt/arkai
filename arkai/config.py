@@ -25,6 +25,7 @@ DEFAULTS = {
         "startup_timeout": 600,
     },
     "wtmcp": {
+        "enabled": True,
         "port": 8080,
         "path": "wtmcp",
         "config": None,
