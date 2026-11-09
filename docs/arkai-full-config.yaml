@@ -13,6 +13,8 @@ agent:
   # path: null # Default: use the selected agent's executable name from PATH.
   # mcp: true # Default: start wtmcp for agent launches.
   # theme: null # Default: no theme override; used by OpenCode and Pi.
+  # omp:
+  #   text_checking: true # Default: preserve OMP spelling.typoDetection and spelling.autocomplete defaults.
   # cloud: # Cloud-specific settings.
   #   default: null # Set to openai, vertex, or custom; otherwise inferred if exactly one cloud config exists.
   #   # custom defaults to null (no custom provider configuration). Replace

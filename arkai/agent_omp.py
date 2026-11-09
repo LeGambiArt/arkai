@@ -15,16 +15,29 @@ from arkai.agent import AgentLaunchSpec, run_launch_spec
 
 OMP_INSTALLER_URL = "https://omp.sh/install"
 OMP_CONFIG_DIR = ".local/state/arkai/omp"
-_OMP_SPELLING_SETTINGS = {"typoDetection": False, "autocomplete": False}
+_MACOS_TEXT_CHECKING_SERVICE = "mul-xpc (Apple)_OpenStep"
 
 
-def _disable_omp_spelling(settings: dict) -> None:
-    """Disable OMP typo detection and autocomplete in an Arkai-owned config."""
+def _omp_spelling_settings(text_checking: bool) -> dict:
+    """Build matching OMP typo detection and autocomplete settings."""
+    return {"typoDetection": text_checking, "autocomplete": text_checking}
+
+
+def _set_omp_text_checking(settings: dict, text_checking: bool) -> None:
+    """Set both spelling controls to the selected OMP text-checking value."""
     spelling = settings.get("spelling")
     if not isinstance(spelling, dict):
         spelling = {}
-    spelling.update(_OMP_SPELLING_SETTINGS)
+    spelling.update(_omp_spelling_settings(text_checking))
     settings["spelling"] = spelling
+
+
+def _omp_text_checking_enabled(cfg: dict) -> bool:
+    """Return the validated OMP text-checking setting, defaulting to enabled."""
+    value = config.get_config_value(cfg, "agent.omp.text_checking", True)
+    if not isinstance(value, bool):
+        raise RuntimeError("agent.omp.text_checking must be a boolean")
+    return value
 
 
 def get_install_dir() -> Path:
@@ -42,8 +55,8 @@ def get_agent_dir() -> Path:
     return get_install_dir() / "agent"
 
 
-def _write_spelling_config_overlay(agent_dir: Path) -> Path:
-    """Write a private one-shot OMP config that disables Apple text checking."""
+def _write_spelling_config_overlay(agent_dir: Path, text_checking: bool) -> Path:
+    """Write a private one-shot OMP config for its spelling controls."""
     descriptor, filename = tempfile.mkstemp(
         prefix="arkai-omp-spelling-", suffix=".yml", dir=agent_dir
     )
@@ -52,7 +65,7 @@ def _write_spelling_config_overlay(agent_dir: Path) -> Path:
         with os.fdopen(descriptor, "w", encoding="utf-8") as overlay:
             os.fchmod(overlay.fileno(), 0o600)
             yaml.safe_dump(
-                {"spelling": _OMP_SPELLING_SETTINGS},
+                {"spelling": _omp_spelling_settings(text_checking)},
                 overlay,
                 sort_keys=False,
             )
@@ -104,7 +117,7 @@ def get_agent_path(cfg: dict) -> str:
     return utils.resolve_binary(agent_path)
 
 
-def _prepare_agent_dir(cfg: dict, wtmcp_port: int | None) -> Path:
+def _prepare_agent_dir(cfg: dict, wtmcp_port: int | None, text_checking: bool) -> Path:
     """Write OMP's Arkai-local model and optional MCP configuration."""
     from arkai.agent import _get_agent_model_id, _get_model_name
 
@@ -141,7 +154,7 @@ def _prepare_agent_dir(cfg: dict, wtmcp_port: int | None) -> Path:
     settings = {
         "modelRoles": {"default": f"local-llm/{model_id}"},
         "startup": {"quiet": True, "setupWizard": False},
-        "spelling": dict(_OMP_SPELLING_SETTINGS),
+        "spelling": _omp_spelling_settings(text_checking),
     }
 
     utils.save_yaml(str(agent_dir / "models.yml"), models)
@@ -226,7 +239,7 @@ def _merge_custom_providers(
         raise
 
 
-def _set_custom_default_model(agent_dir: Path, model_reference: str) -> None:
+def _set_custom_default_model(agent_dir: Path, model_reference: str, text_checking: bool) -> None:
     """Set OMP's startup role without restricting the interactive provider picker."""
     config_path = agent_dir / "config.yml"
     try:
@@ -235,7 +248,7 @@ def _set_custom_default_model(agent_dir: Path, model_reference: str) -> None:
         raise RuntimeError(f"Could not read OMP configuration: {config_path}") from error
     if not isinstance(settings, dict):
         raise RuntimeError(f"OMP configuration must contain a mapping: {config_path}")
-    _disable_omp_spelling(settings)
+    _set_omp_text_checking(settings, text_checking)
     model_roles = settings.setdefault("modelRoles", {})
     if not isinstance(model_roles, dict):
         raise RuntimeError(f"OMP modelRoles must contain a mapping: {config_path}")
@@ -275,6 +288,7 @@ def build_launch_spec(
     """Create OMP configuration and return its process launch specification."""
     from arkai.agent import _build_sandbox_cmd
 
+    text_checking = _omp_text_checking_enabled(cfg)
     cloud_services = list(dict.fromkeys(service.lower() for service in cloud_services or []))
     is_cloud = bool(cloud_services)
     from arkai.agent import _cloud_provider
@@ -337,7 +351,7 @@ def build_launch_spec(
                     selected_custom_model,
                 )
                 assert selected_custom_model_reference is not None
-                _set_custom_default_model(agent_dir, selected_custom_model_reference)
+                _set_custom_default_model(agent_dir, selected_custom_model_reference, text_checking)
             except Exception:
                 shutil.rmtree(agent_dir, ignore_errors=True)
                 raise
@@ -357,12 +371,12 @@ def build_launch_spec(
         if mcp_config is not None:
             cleanup_paths.append(mcp_config)
     else:
-        agent_dir = _prepare_agent_dir(cfg, wtmcp_port)
+        agent_dir = _prepare_agent_dir(cfg, wtmcp_port, text_checking)
         mcp_config = None
         cleanup_paths = []
 
     try:
-        spelling_config = _write_spelling_config_overlay(agent_dir)
+        spelling_config = _write_spelling_config_overlay(agent_dir, text_checking)
     except Exception:
         for path in cleanup_paths:
             if path.is_dir():
@@ -422,6 +436,11 @@ def build_launch_spec(
                 tty=prompt is None,
                 allow_network=False,
                 allow_inference=not is_cloud,
+                allow_xpc_services=(
+                    [_MACOS_TEXT_CHECKING_SERVICE]
+                    if prompt is None and platform.system() == "Darwin" and text_checking
+                    else []
+                ),
                 extra_hosts=(
                     list(
                         dict.fromkeys(

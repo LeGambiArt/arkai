@@ -5,6 +5,12 @@ Feature: Configuration Management
     Then the exit code is 0
     And the output contains "Configuration valid"
 
+  Scenario: Validate OMP text-checking configuration
+    Given a valid .arkai.yaml file with OMP text checking disabled
+    When I run "arkai config validate"
+    Then the exit code is 0
+    And the output contains "Configuration valid"
+
   Scenario: Validate configuration with explicit file
     Given a valid config file at /tmp/test-config.yaml
     When I run "arkai config validate --file /tmp/test-config.yaml"
