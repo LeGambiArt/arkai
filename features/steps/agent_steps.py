@@ -355,6 +355,8 @@ def step_run_agent_prompt_with_local_flag(context):
     with (
         patch.object(agent.utils, "resolve_binary", return_value="/usr/bin/fake-agent"),
         patch.object(agent, "_dispatch_agent", side_effect=capture_dispatch),
+        patch.object(inference, "is_inference_running", return_value=True),
+        patch.object(inference, "get_inference_model", return_value="test.gguf"),
     ):
         context.run_command(["arkai", "agent", "prompt", "--local", "hello"])
 
