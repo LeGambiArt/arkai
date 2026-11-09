@@ -1,0 +1,79 @@
+#!/bin/sh
+# Generate the commit message body for a new Arkai release.
+#
+# Usage: contrib/changelog [SINCE..UNTIL]
+#
+# Collects the commits made since the last release (the most recent
+# "v*" tag when present, otherwise the last "chore(release): bump
+# version" commit) and groups their subjects by conventional-commit
+# type into release notes.
+#
+# The message body is written to standard output, without the release
+# commit's brief summary line, ready to be used with `git commit -s -F -`.
+set -eu
+
+# Optional explicit revision range overrides release detection.
+if [ "$#" -gt 1 ]; then
+    echo "usage: $0 [SINCE..UNTIL]" >&2
+    exit 2
+fi
+
+if [ "$#" -eq 1 ]; then
+    range=$1
+else
+    # Prefer the latest release tag; fall back to the last release
+    # commit when the repository has no tags yet.
+    last_tag=$(git tag --list 'v*' --sort=-creatordate | head -n 1 || true)
+    if [ -n "$last_tag" ]; then
+        last_release=$last_tag
+    else
+        last_release=$(git log --format='%H' \
+            --grep='^chore(release): bump version' \
+            | head -n 1 || true)
+    fi
+    if [ -n "$last_release" ]; then
+        range="${last_release}..HEAD"
+    else
+        range=HEAD
+    fi
+fi
+
+# Strip the conventional-commit prefix ("type:" or "type(scope):").
+clean_subject() {
+    sed -E 's/^[a-zA-Z]+(\([^)]*\))?: //'
+}
+
+# Lower-case the first character of each line.
+lower_first() {
+    awk '{
+        if (length($0) > 0) {
+            print tolower(substr($0, 1, 1)) substr($0, 2)
+        } else {
+            print
+        }
+    }'
+}
+
+subjects() {
+    git log --no-merges --format='%s' "$range" | grep -E "$1" || true
+}
+
+section() {
+    label=$1
+    entries=$2
+    if [ -n "$entries" ]; then
+        printf '%s:\n' "$label"
+        printf '%s\n' "$entries" | sed 's/^/- /'
+        printf '\n'
+    fi
+}
+
+feat_entries=$(subjects '^feat' | clean_subject | lower_first)
+fix_entries=$(subjects '^fix' | clean_subject | lower_first)
+doc_entries=$(subjects '^docs?' | clean_subject | lower_first)
+chore_entries=$(subjects '^(chore|ci|build|refactor|test|perf)' | clean_subject | lower_first)
+
+section 'Highlights' "$feat_entries"
+section 'Bug Fixes' "$fix_entries"
+section 'Documentation' "$doc_entries"
+section 'Internal Changes' "$chore_entries"
