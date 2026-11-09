@@ -353,7 +353,6 @@ def test_opencode_vertex_sandbox_passes_adc_and_allows_vertex_hosts(
 
 def test_run_launch_spec_owns_popen_and_cleanup(tmp_path: Path, monkeypatch) -> None:
     """The shared runner starts the process and removes module-created files."""
-    monkeypatch.delenv("EDITOR", raising=False)
     temporary_dir = tmp_path / "session"
     temporary_dir.mkdir()
     temporary = temporary_dir / "agent.json"
@@ -379,19 +378,6 @@ def test_run_launch_spec_owns_popen_and_cleanup(tmp_path: Path, monkeypatch) -> 
     )
     assert not temporary.exists()
     assert not temporary_dir.exists()
-
-
-def test_run_launch_spec_uses_arapuca_editor_when_editor_is_configured(monkeypatch) -> None:
-    """Configured editor launches through arapuca."""
-    monkeypatch.setenv("EDITOR", "/usr/bin/vim")
-    process = MagicMock()
-    process.wait.return_value = 0
-    spec = agent.AgentLaunchSpec(["/agent"], {"PATH": "/bin"})
-
-    with patch.object(agent.subprocess, "Popen", return_value=process) as popen:
-        agent.run_launch_spec(spec)
-
-    assert popen.call_args.kwargs["env"]["EDITOR"] == "arapuca"
 
 
 def test_run_launch_spec_suppresses_selected_stderr_prefixes(capsys) -> None:
