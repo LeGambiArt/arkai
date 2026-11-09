@@ -1,8 +1,19 @@
 """Tests for agent-specific inference server ports."""
 
-from unittest.mock import patch
+import os
+import sys
+from unittest.mock import MagicMock, patch
 
-from arkai import agent, agent_codex, agent_crush, agent_omp, agent_opencode, agent_pi, inference
+from arkai import (
+    agent,
+    agent_codex,
+    agent_crush,
+    agent_omp,
+    agent_opencode,
+    agent_pi,
+    agent_session,
+    inference,
+)
 
 
 def test_agent_start_passes_explicit_port_to_inference() -> None:
@@ -631,6 +642,91 @@ def test_cloud_mode_uses_explicit_default_when_multiple_configurations_exist() -
 
     running.assert_not_called()
     start.assert_not_called()
+
+
+def test_agent_cli_parses_local_flag() -> None:
+    """--local is accepted by both agent start and agent prompt parsers."""
+    import argparse
+
+    parser = argparse.ArgumentParser()
+    subparsers = parser.add_subparsers(dest="command")
+    agent.ingest_cli_options(subparsers)
+
+    start_args = parser.parse_args(["agent", "start", "--local"])
+    prompt_args = parser.parse_args(["agent", "prompt", "--local", "hello"])
+
+    assert start_args.local is True
+    assert prompt_args.local is True
+
+
+def test_local_inference_overrides_cloud_mode() -> None:
+    """--local forces local inference even when agent.mode is cloud."""
+    cfg = {
+        "agent": {
+            "name": "opencode",
+            "path": "/agent",
+            "mcp": False,
+            "mode": "cloud",
+            "cloud": {"default": "openai", "openai": {}},
+        },
+        "inference": {"model": "test.gguf"},
+        "sandbox": {"disable": True},
+    }
+    with (
+        patch.object(agent.config, "load_config", return_value=cfg),
+        patch.object(agent.config, "validate_config", return_value=True),
+        patch.object(agent.inference, "is_inference_running", return_value=True),
+        patch.object(agent.inference, "get_inference_model", return_value="test.gguf"),
+        patch.object(agent.utils, "resolve_binary", return_value="/agent"),
+    ):
+        with agent._agent_context("opencode", local_inference=True) as context:
+            assert context.cloud_services == []
+            assert context.cloud_model is None
+            assert context.cloud_config is None
+
+
+def test_local_inference_ignores_saved_session_cloud_services() -> None:
+    """--local drops cloud services saved in a resumed session's options."""
+    saved_session = {
+        "id": "550e8400-e29b-41d4-a716-446655440000",
+        "name": "cloud-session",
+        "agent": "opencode",
+        "working_directory": os.getcwd(),
+        "native_session_id": None,
+        "launch_options": {"cloud_services": ["custom"]},
+        "status": "paused",
+    }
+    cfg = {
+        "agent": {
+            "name": "opencode",
+            "path": "/agent",
+            "mcp": False,
+            "mode": "cloud",
+            "cloud": {
+                "custom": {
+                    "base_url": "https://gateway.example/v1",
+                    "default_provider": "gateway",
+                    "providers": {"gateway": {"default_model": "org/model"}},
+                }
+            },
+        },
+        "inference": {"model": "test.gguf"},
+        "sandbox": {"disable": True},
+    }
+    with (
+        patch.object(sys.stdin, "isatty", return_value=True),
+        patch.object(agent.config, "load_config", return_value=cfg),
+        patch.object(agent_session, "find_session", return_value=dict(saved_session)),
+        patch.object(agent_session, "save_session"),
+        patch.object(agent, "_dispatch_agent"),
+        patch.object(agent, "_agent_context") as context_factory,
+    ):
+        context_factory.return_value.__enter__.return_value = MagicMock(
+            cloud_services=[], cloud_model=None, use_mcp=False, use_sandbox=False, cfg=cfg
+        )
+        agent.cmd_agent(local_inference=True, session_name="cloud-session")
+        assert context_factory.call_args.kwargs["local_inference"] is True
+        assert context_factory.call_args.kwargs["cloud_services"] is None
 
 
 def test_custom_cloud_requires_model_and_supported_agent() -> None:

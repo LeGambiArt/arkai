@@ -78,6 +78,7 @@ def _run_agent_in_tty(
     no_start_inference: bool = False,
     strata_empty_model_list: bool = False,
     cloud_services: list | None = None,
+    local_inference: bool = False,
 ) -> None:
     """Run agent with a mocked TTY and capture output."""
     old_stdout = sys.stdout
@@ -158,6 +159,7 @@ def _run_agent_in_tty(
                 agent_name=agent_name,
                 no_start_inference=no_start_inference,
                 cloud_services=cloud_services,
+                local_inference=local_inference,
             )
         except SystemExit as e:
             context.exit_code = e.code if e.code else 1
@@ -334,6 +336,40 @@ def step_configured_cloud_provider_used_for_prompt(context):
     """Assert agent prompt selected the configured default cloud service."""
     assert context.exit_code == 0, context.stderr
     assert context.prompt_cloud_services == ["custom"]
+
+
+@when('I run "arkai agent start" with "--local" in a TTY')  # ty: ignore[call-non-callable]
+def step_run_agent_with_local_flag(context):
+    """Run arkai agent start with --local overriding cloud mode."""
+    _run_agent_in_tty(context, no_sandbox=True, local_inference=True)
+
+
+@when('I run "arkai agent prompt" with "--local"')  # ty: ignore[call-non-callable]
+def step_run_agent_prompt_with_local_flag(context):
+    """Run the public prompt command with --local and capture its services."""
+
+    def capture_dispatch(agent_context, prompt=None, capture_stdout=False):
+        context.prompt_cloud_services = agent_context.cloud_services
+        return "local answer"
+
+    with (
+        patch.object(agent.utils, "resolve_binary", return_value="/usr/bin/fake-agent"),
+        patch.object(agent, "_dispatch_agent", side_effect=capture_dispatch),
+    ):
+        context.run_command(["arkai", "agent", "prompt", "--local", "hello"])
+
+
+@then("the agent uses local inference")  # ty: ignore[call-non-callable]
+def step_agent_uses_local_inference(context):
+    """Assert agent start launched without any cloud service."""
+    assert context.agent_launch_options["cloud_services"] == []
+
+
+@then("the agent prompt uses local inference")  # ty: ignore[call-non-callable]
+def step_agent_prompt_uses_local_inference(context):
+    """Assert agent prompt selected no cloud service."""
+    assert context.exit_code == 0, context.stderr
+    assert context.prompt_cloud_services == []
 
 
 @then("the agent model catalog uses the default cloud context window")  # ty: ignore[call-non-callable]

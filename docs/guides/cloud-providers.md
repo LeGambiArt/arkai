@@ -12,6 +12,9 @@ To make both `agent start` and `agent prompt` use cloud inference by default,
 set `agent.mode` to `cloud` and choose a service with `agent.cloud.default`.
 The default mode is `local`; passing `--cloud` selects cloud inference for
 that invocation and overrides `agent.cloud.default`.
+Passing `--local` forces local inference for that invocation and
+overrides `agent.mode`, even when it is set to `cloud` or a session
+was previously launched with a cloud provider.
 When exactly one cloud configuration is present, Arkai uses it automatically.
 If several are configured, set `agent.cloud.default` to choose one.
 

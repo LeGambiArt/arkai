@@ -25,7 +25,7 @@ key reference, with defaults and descriptions, is in
 | Key | Purpose |
 | --- | --- |
 | `agent.name` | Default agent: `opencode`, `crush`, `claude`, `codex`, `pi`, or `omp`. |
-| `agent.mode` | Inference mode: `local` (default) or `cloud`. A `--cloud` option selects cloud mode for that run. |
+| `agent.mode` | Inference mode: `local` (default) or `cloud`. A `--cloud` option selects cloud mode for that run; `--local` forces local mode. |
 | `agent.cloud.default` | Cloud service for `agent.mode: cloud`; if omitted, Arkai infers it when exactly one cloud configuration is present. |
 | `agent.path` | Optional path to the agent executable. |
 | `agent.mcp` | Whether agent launches start the configured MCP integration; defaults to enabled. |

@@ -67,6 +67,16 @@ Feature: Agent Execution
     Then the exit code is 1
     And the error contains "agent.mode is 'cloud' but agent.cloud.default is not configured"
 
+  Scenario: Agent start forces local inference with --local
+    Given a custom cloud provider configured as the default
+    When I run "arkai agent start" with "--local" in a TTY
+    Then the agent uses local inference
+
+  Scenario: Agent prompt forces local inference with --local
+    Given a custom cloud provider configured as the default
+    When I run "arkai agent prompt" with "--local"
+    Then the agent prompt uses local inference
+
   Scenario: Custom cloud model size units are expanded in the model catalog
     Given a custom cloud provider with a model using size-unit metadata
     When I run "arkai agent start" with "--cloud custom" in a TTY

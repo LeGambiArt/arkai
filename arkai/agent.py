@@ -40,6 +40,7 @@ def exec_cmd(args: argparse.Namespace | None = None) -> None:
                 args.port,  # ty: ignore[unresolved-attribute]
                 args.backend,  # ty: ignore[unresolved-attribute]
                 getattr(args, "cloud", None),
+                getattr(args, "local", False),
                 session_name=args.session_name,  # ty: ignore[unresolved-attribute]
             )
         case "prompt":
@@ -58,6 +59,7 @@ def exec_cmd(args: argparse.Namespace | None = None) -> None:
                 args.port,  # ty: ignore[unresolved-attribute]
                 args.backend,  # ty: ignore[unresolved-attribute]
                 getattr(args, "cloud", None),
+                getattr(args, "local", False),
             )
         case "install":
             cmd_agent_install(args.agent_name)  # ty: ignore[unresolved-attribute]
@@ -142,6 +144,11 @@ def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
         help="Use a cloud AI provider instead of local inference",
     )
     agent_start_parser.add_argument(
+        "--local",
+        action="store_true",
+        help="Force local inference, overriding agent.mode",
+    )
+    agent_start_parser.add_argument(
         "-b", "--backend", help="Override inference backend from config"
     )
     agent_prompt_parser = agent_subparsers.add_parser(
@@ -156,6 +163,11 @@ def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
         choices=config.CLOUD_SERVICES,
         metavar="SERVICE",
         help="Use a cloud AI provider instead of local inference",
+    )
+    agent_prompt_parser.add_argument(
+        "--local",
+        action="store_true",
+        help="Force local inference, overriding agent.mode",
     )
     agent_prompt_parser.add_argument(
         "-b", "--backend", help="Override inference backend from config"
@@ -289,6 +301,7 @@ def _agent_context(
     sandbox_environment: dict | None = None,
     backend: str | None = None,
     cloud_services: list[str] | None = None,
+    local_inference: bool = False,
 ) -> Generator[AgentContext, None, None]:
     """Set up and tear down agent infrastructure.
 
@@ -308,7 +321,7 @@ def _agent_context(
         sandbox_volume: List of volumes to mount in the sandbox
         sandbox_environment: Dict of environment variables to set in the sandbox
         backend: Override inference backend from config
-        cloud_services: Cloud provider names; Codex supports OpenAI only.
+        local_inference: Force local inference, overriding agent.mode
 
     Yields:
         AgentContext with all infrastructure ready
@@ -321,6 +334,8 @@ def _agent_context(
     agent_mode = config.get_config_value(cfg, "agent.mode", "local")
     if agent_mode not in config.AGENT_MODES:
         raise RuntimeError(f"agent.mode must be one of {', '.join(config.AGENT_MODES)}")
+    if local_inference:
+        cloud_services = []
     if cloud_services is None:
         if agent_mode == "cloud":
             configured_cloud = config.get_config_value(cfg, "agent.cloud.default")
@@ -908,6 +923,7 @@ def cmd_agent(
     port: int | None = None,
     backend: str | None = None,
     cloud_services: list[str] | None = None,
+    local_inference: bool = False,
     session_name: str | None = None,
 ) -> None:
     """Start interactive agent session (requires TTY).
@@ -923,7 +939,7 @@ def cmd_agent(
         sandbox_cwd: Override the directory mounted and set as cwd in the sandbox
         sandbox_profile: Use specific sandbox profile for this run
         sandbox_volume: List of volumes to mount in the sandbox
-        sandbox_environment: Dict of environment variables to set in the sandbox
+        local_inference: Force local inference, overriding agent.mode
 
     Raises:
         RuntimeError: If not in TTY or config invalid
@@ -979,7 +995,8 @@ def cmd_agent(
         sandbox_cwd = saved_workdir
         sandbox_profile = sandbox_profile or saved_options.get("sandbox_profile")
         sandbox_volume = sandbox_volume or saved_options.get("sandbox_volume")
-        cloud_services = cloud_services or saved_options.get("cloud_services")
+        if not local_inference:
+            cloud_services = cloud_services or saved_options.get("cloud_services")
         recorded_environment = set(saved_options.get("environment_keys", []))
         provided_environment = set(sandbox_environment or {})
         missing_environment = sorted(recorded_environment - provided_environment)
@@ -1028,6 +1045,7 @@ def cmd_agent(
             sandbox_environment=sandbox_environment,
             backend=backend,
             cloud_services=cloud_services,
+            local_inference=local_inference,
         ) as ctx:
             launch_options = session.setdefault("launch_options", {})
             launch_options["no_mcp"] = no_mcp or not ctx.use_mcp
@@ -1130,6 +1148,7 @@ def cmd_agent_prompt(
     port: int | None = None,
     backend: str | None = None,
     cloud_services: list[str] | None = None,
+    local_inference: bool = False,
 ) -> None:
     """Run agent non-interactively with a prompt.
 
@@ -1150,7 +1169,7 @@ def cmd_agent_prompt(
         sandbox_profile: Use specific sandbox profile for this run
         sandbox_volume: List of volumes to mount in the sandbox
         sandbox_environment: Dict of environment variables to set in the sandbox
-        output_file: Path to write agent output to; if None, print to stdout
+        local_inference: Force local inference, overriding agent.mode
 
     Raises:
         RuntimeError: If no prompt provided or config invalid
@@ -1188,6 +1207,7 @@ def cmd_agent_prompt(
         sandbox_environment=sandbox_environment,
         backend=backend,
         cloud_services=cloud_services,
+        local_inference=local_inference,
     ) as ctx:
         result = _dispatch_agent(ctx, prompt, capture_stdout=True)
 
