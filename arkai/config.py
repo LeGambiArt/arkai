@@ -41,9 +41,10 @@ DEFAULTS = {
         "profiles": {},
     },
     "vectordb": {
-        "vendor": "chromadb",
+        "vendor": "qdrant",
+        "engine": "auto",
         "port": 8082,
-        "path": "chroma",
+        "image": None,
         "database_dir": None,
     },
     "rag": {
@@ -241,10 +242,17 @@ def validate_config(
         utils.error(f"vectordb.port must be 1024-65535, got {vectordb_port}")
         valid = False
 
-    # Check vectordb vendor
-    vectordb_vendor = get_config_value(config, "vectordb.vendor", "chromadb")
-    if vectordb_vendor != "chromadb":
-        utils.error(f"vectordb.vendor must be 'chromadb', got {vectordb_vendor}")
+    # Check vectordb vendor and engine
+    vectordb_vendor = get_config_value(config, "vectordb.vendor", "qdrant")
+    if vectordb_vendor not in ("chromadb", "qdrant"):
+        utils.error(f"vectordb.vendor must be 'chromadb' or 'qdrant', got {vectordb_vendor}")
+        valid = False
+
+    vectordb_engine = get_config_value(config, "vectordb.engine", "auto")
+    if vectordb_engine not in ("auto", "podman", "apple", "docker"):
+        utils.error(
+            f"vectordb.engine must be 'auto', 'podman', 'apple' or 'docker', got {vectordb_engine}"
+        )
         valid = False
 
     # Check RAG configuration

@@ -123,10 +123,11 @@ sandbox: {} # Default mapping; replace {} with entries from the commented block 
 
 vectordb: {} # Default mapping; replace {} with entries from the commented block to override.
 # vectordb:
-#   vendor: chromadb # Default and only supported vendor.
-#   port: 8082 # Default ChromaDB server port.
-#   path: chroma # Default executable name.
-#   database_dir: null # Default: ~/.local/share/arkai/chromadb.
+#   vendor: qdrant # Vector database vendor: qdrant (default) or chromadb.
+#   engine: auto # Container engine: auto (podman, then Apple container, then docker), podman, apple, or docker.
+#   port: 8082 # Default host port published for the vectordb container.
+#   image: null # Default: per-vendor image (docker.io/qdrant/qdrant:latest or docker.io/chromadb/chroma:latest).
+#   database_dir: null # Default: ~/.local/share/arkai/<vendor> (e.g. qdrant, chromadb).
 
 rag: {} # Default mapping; replace {} with entries from the commented block to override.
 # rag:

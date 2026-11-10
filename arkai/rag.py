@@ -209,16 +209,18 @@ def cmd_rag_ingest(db_name: str, file_path: str, chunk_size: int | None = None) 
     if vectordb_port is None:
         raise RuntimeError("Could not determine vectordb port")
 
-    tenant = "default"
-    database = "default"
-
-    collection_id = _get_collection_id(vectordb_port, tenant, database, db_name)
-    if collection_id is None:
-        raise RuntimeError(f"Collection '{db_name}' not found")
-
     utils.info("Loading embedding model...")
     embedding_model = config.get_config_value(cfg, "rag.embedding_model")
     embedding_model_instance = _load_embedding_model(embedding_model)
+
+    if not chunks:
+        utils.info("Ingestion complete: 0 chunks, 0 words")
+        return
+
+    first_embedding = _embed_text(chunks[0].content, embedding_model_instance)
+    if not any(c.get("name") == db_name for c in vectordb.list_collections(vectordb_port)):
+        vectordb.create_collection(vectordb_port, db_name, vector_size=len(first_embedding))
+        utils.info(f"Created collection '{db_name}'")
 
     utils.info(f"Storing {len(chunks)} chunks in collection '{db_name}'...")
 
@@ -227,25 +229,22 @@ def cmd_rag_ingest(db_name: str, file_path: str, chunk_size: int | None = None) 
         total_words += chunk.metadata.get("word_count", 0)
 
         chunk_id = f"{db_name}-{chunk_idx}"
-        api_url = (
-            f"http://127.0.0.1:{vectordb_port}/api/v2/tenants/{tenant}/"
-            f"databases/{database}/collections/{collection_id}/add"
+        embedding = (
+            first_embedding
+            if chunk_idx == 0
+            else _embed_text(chunk.content, embedding_model_instance)
         )
 
-        embedding = _embed_text(chunk.content, embedding_model_instance)
-
-        payload = {
-            "ids": [chunk_id],
-            "documents": [chunk.content],
-            "embeddings": [embedding],
-            "metadatas": [chunk.metadata],
-        }
-
         try:
-            response = requests.post(api_url, json=payload, timeout=5)
-            if response.status_code not in (200, 201):
-                utils.warn(f"Failed to store chunk {chunk_idx}: {response.text}")
-        except requests.RequestException as e:
+            vectordb.add_documents(
+                vectordb_port,
+                db_name,
+                [chunk_id],
+                [chunk.content],
+                [embedding],
+                [chunk.metadata],
+            )
+        except RuntimeError as e:
             utils.warn(f"Error storing chunk {chunk_idx}: {e}")
 
         # Progress indicator with ANSI escape codes for in-place update
@@ -295,7 +294,7 @@ def cmd_rag_search(db_name: str, query: str, k: int | None = None) -> None:
 def _search_documents(
     db_name: str, query: str, k: int | None, cfg: dict, progress: _AskProgress | None = None
 ) -> list[SearchResult]:
-    """Retrieve passages from Arkai's default Chroma database."""
+    """Retrieve passages from Arkai's default RAG database."""
     if not vectordb.is_vectordb_running():
         raise RuntimeError("Vectordb server is not running. Start with 'arkai vectordb start'")
     if not config.validate_config(cfg, require_model=False, warn_missing_model=False):
@@ -309,12 +308,6 @@ def _search_documents(
     vectordb_port = vectordb.get_vectordb_port()
     if vectordb_port is None:
         raise RuntimeError("Could not determine vectordb port")
-
-    tenant = "default"
-    database = "default"
-    collection_id = _get_collection_id(vectordb_port, tenant, database, db_name)
-    if collection_id is None:
-        raise RuntimeError(f"Collection '{db_name}' not found")
 
     if progress is None:
         utils.info("Loading embedding model...")
@@ -333,41 +326,11 @@ def _search_documents(
     else:
         progress.update("Searching documents")
 
-    api_url = (
-        f"http://127.0.0.1:{vectordb_port}/api/v2/tenants/{tenant}/"
-        f"databases/{database}/collections/{collection_id}/query"
-    )
-    payload = {
-        "query_embeddings": [query_embedding],
-        "n_results": k,
-        "include": ["documents", "metadatas", "distances"],
-    }
     try:
-        response = requests.post(api_url, json=payload, timeout=5)
-    except requests.RequestException as e:
+        results = vectordb.search_documents(vectordb_port, db_name, query_embedding, k)
+    except RuntimeError as e:
         raise RuntimeError(f"Search error: {e}") from e
-    if response.status_code != 200:
-        raise RuntimeError(f"Search failed: {response.text}")
-    try:
-        data = response.json()
-        documents = data["documents"][0]
-        metadatas = data["metadatas"][0]
-        distances = data["distances"][0]
-        if (
-            not isinstance(documents, list)
-            or not isinstance(metadatas, list)
-            or not isinstance(distances, list)
-        ):
-            raise TypeError("invalid result lists")
-        if len(documents) != len(metadatas) or len(documents) != len(distances):
-            raise ValueError("mismatched result lengths")
-        return [
-            SearchResult(doc, meta if isinstance(meta, dict) else {}, distance)
-            for doc, meta, distance in zip(documents, metadatas, distances)
-            if isinstance(doc, str) and doc.strip()
-        ]
-    except (KeyError, IndexError, TypeError, ValueError, json.JSONDecodeError) as e:
-        raise RuntimeError("Invalid response from vectordb") from e
+    return [SearchResult(doc, meta, distance) for doc, meta, distance in results]
 
 
 _ASK_SYSTEM_PROMPT = (
@@ -533,40 +496,6 @@ def cmd_rag_ask(
             print(f"  [{index}] {_source_label(result.metadata)}")
             for line in result.document.splitlines():
                 print(f"      {line}")
-
-
-def _get_collection_id(port: int, tenant: str, database: str, collection_name: str) -> str | None:
-    """Get collection ID by name from Chromadb V2 API.
-
-    Args:
-        port: Port of vectordb server
-        tenant: Tenant name
-        database: Database name
-        collection_name: Name of collection to find
-
-    Returns:
-        Collection UUID or None if not found
-    """
-    api_url = f"http://127.0.0.1:{port}/api/v2/tenants/{tenant}/databases/{database}/collections"
-
-    try:
-        response = requests.get(api_url, timeout=5)
-        if response.status_code != 200:
-            return None
-
-        try:
-            collections = response.json()
-        except json.JSONDecodeError:
-            return None
-
-        if isinstance(collections, list):
-            for collection in collections:
-                if isinstance(collection, dict) and collection.get("name") == collection_name:
-                    return collection.get("id")
-
-        return None
-    except requests.RequestException:
-        return None
 
 
 def _load_embedding_model(

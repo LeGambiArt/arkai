@@ -40,7 +40,7 @@ def step_ingest_test_document(context):
 
 @when('I run "arkai rag ingest {db_name} {file_path}"')  # ty: ignore[call-non-callable]
 def step_run_rag_ingest(context, db_name, file_path):
-    """Run rag ingest command with mocked requests."""
+    """Run rag ingest command with mocked vectordb dispatch."""
     context.stdout = ""
     context.stderr = ""
     context.exit_code = 0
@@ -49,18 +49,16 @@ def step_run_rag_ingest(context, db_name, file_path):
         patch("arkai.rag.config.validate_config", return_value=True),
         patch("arkai.rag.vectordb.is_vectordb_running", return_value=True),
         patch("arkai.rag.vectordb.get_vectordb_port", return_value=8082),
-        patch("arkai.rag.requests.get") as mock_get,
-        patch("arkai.rag.requests.post") as mock_post,
+        patch("arkai.rag.vectordb._vendor", return_value="qdrant"),
+        patch("arkai.rag.vectordb.list_collections") as mock_list,
+        patch("arkai.rag.vectordb.create_collection") as mock_create,
+        patch("arkai.rag.vectordb.add_documents") as mock_add,
         patch("arkai.rag._load_embedding_model") as mock_load_model,
+        patch("arkai.rag._embed_text", return_value=[0.1, 0.2]),
     ):
-        mock_get_response = MagicMock()
-        mock_get_response.status_code = 200
-        mock_get_response.json.return_value = [{"name": db_name, "id": "test-collection-uuid"}]
-        mock_get.return_value = mock_get_response
-
-        mock_post_response = MagicMock()
-        mock_post_response.status_code = 201
-        mock_post.return_value = mock_post_response
+        mock_list.return_value = [{"name": db_name, "id": db_name}]
+        mock_create.return_value = None
+        mock_add.return_value = None
 
         mock_model = MagicMock()
         mock_load_model.return_value = mock_model
@@ -77,7 +75,7 @@ def step_run_rag_ingest(context, db_name, file_path):
 
 @when('I run "arkai rag query {db_name} {query}"')  # ty: ignore[call-non-callable]
 def step_run_rag_query(context, db_name, query):
-    """Run rag query command with mocked requests."""
+    """Run rag query command with mocked vectordb dispatch."""
     context.stdout = ""
     context.stderr = ""
     context.exit_code = 0
@@ -86,23 +84,20 @@ def step_run_rag_query(context, db_name, query):
         patch("arkai.rag.config.validate_config", return_value=True),
         patch("arkai.rag.vectordb.is_vectordb_running", return_value=True),
         patch("arkai.rag.vectordb.get_vectordb_port", return_value=8082),
+        patch("arkai.rag.vectordb._vendor", return_value="qdrant"),
         patch("arkai.rag.requests.get") as mock_get,
-        patch("arkai.rag.requests.post") as mock_post,
+        patch("arkai.rag.vectordb.search_documents") as mock_search,
         patch("arkai.rag._load_embedding_model") as mock_load_model,
+        patch("arkai.rag._embed_text", return_value=[0.1, 0.2]),
     ):
         mock_get_response = MagicMock()
         mock_get_response.status_code = 200
-        mock_get_response.json.return_value = [{"name": db_name, "id": "test-collection-uuid"}]
+        mock_get_response.json.return_value = {"data": [{"id": "running-model"}]}
         mock_get.return_value = mock_get_response
 
-        mock_post_response = MagicMock()
-        mock_post_response.status_code = 200
-        mock_post_response.json.return_value = {
-            "documents": [["Sample content from document"]],
-            "metadatas": [[{"source": "test.txt", "chunk_index": 0}]],
-            "distances": [[0.1]],
-        }
-        mock_post.return_value = mock_post_response
+        mock_search.return_value = [
+            ("Sample content from document", {"source": "test.txt", "chunk_index": 0}, 0.1)
+        ]
 
         mock_model = MagicMock()
         mock_load_model.return_value = mock_model

@@ -18,4 +18,4 @@ Feature: Server status monitoring
     When I run "arkai status"
     Then the exit code is 0
     And the output contains "Vectordb: running"
-    And the output contains "Port: 8082"
+    And the output contains "qdrant via podman"

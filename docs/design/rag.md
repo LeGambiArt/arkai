@@ -14,7 +14,9 @@ not claim that model-generated answers or citations are authoritative.
 2. The processor extracts text and creates overlapping chunks using
    configured chunk size and overlap.
 3. Arkai embeds chunks and stores their text and source metadata in the
-   chosen Chroma collection.
+   chosen collection of the running vector database (Qdrant by default,
+   ChromaDB opt-in; missing collections are created at ingest time using
+   the embedding dimension).
 4. A query embeds the question and retrieves the configured number of
    passages.
 5. `rag ask` estimates a passage context budget, sends selected sources
@@ -35,6 +37,7 @@ production.
 ## Implementation map
 
 - RAG command, retrieval, and prompt assembly: `arkai/rag.py`
+- Vendor-neutral vectordb operations: `arkai/vectordb.py`
 - Format processing and chunk creation: `arkai/document_processor.py`
 - Embedding/model and inference calls: `arkai/rag.py`
 - Unit/BDD coverage: `tests/unit/test_rag.py`,

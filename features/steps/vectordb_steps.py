@@ -37,9 +37,22 @@ def step_vectordb_running(context):
     _patch_vectordb_start(context)
 
 
+@then("the vectordb container image is the default qdrant image")  # ty: ignore[call-non-callable]
+def step_verify_vectordb_container_image(context):
+    """Verify the engine was asked to run the default qdrant image."""
+    image = getattr(context, "vectordb_container_image", None)
+    assert image == "docker.io/qdrant/qdrant:latest", f"unexpected image: {image}"
+
+
+@when("the container engine VM is not running")  # ty: ignore[call-non-callable]
+def step_container_engine_vm_not_running(context):
+    """Mark the container engine VM as stopped for the next start attempt."""
+    context.container_engine_vm_stopped = True
+
+
 @when('I run "arkai vectordb start"')  # ty: ignore[call-non-callable]
 def step_run_vectordb_start(context):
-    """Run vectordb start command with mocked subprocess."""
+    """Run vectordb start command with mocked container engine."""
     from arkai import vectordb as vectordb_module
 
     context.stdout = ""
@@ -47,22 +60,41 @@ def step_run_vectordb_start(context):
     context.exit_code = 0
 
     with (
-        patch("arkai.vectordb.subprocess.Popen") as mock_popen,
-        patch("arkai.vectordb.requests.get") as mock_get,
-        patch("arkai.vectordb.config.validate_config", return_value=True),
-        patch("arkai.vectordb.utils.is_port_in_use", return_value=False),
-        patch("arkai.vectordb.utils.resolve_binary", return_value="/usr/bin/chroma"),
-        patch("arkai.vectordb.utils.write_pid"),
-        patch("arkai.vectordb.utils.save_yaml"),
+        patch.object(vectordb_module.container_engine, "resolve_engine") as mock_resolve,
+        patch.object(vectordb_module.container_engine, "ensure_engine_ready") as mock_ready,
+        patch.object(vectordb_module.container_engine, "run_container") as mock_run,
+        patch.object(vectordb_module.requests, "get") as mock_get,
+        patch.object(vectordb_module, "config") as mock_config,
+        patch.object(vectordb_module.utils, "is_port_in_use", return_value=False),
+        patch.object(vectordb_module.utils, "write_pid"),
+        patch.object(vectordb_module.utils, "save_yaml"),
     ):
-        # patch("arkai.vectordb.is_vectordb_running", return_value=False),
-        mock_process = MagicMock()
-        mock_process.pid = 12345
-        mock_popen.return_value = mock_process
+        mock_resolve.return_value = "podman"
+        if getattr(context, "container_engine_vm_stopped", False):
+            mock_ready.side_effect = RuntimeError(
+                "Container engine 'podman' is not ready: start it with 'podman machine start'"
+            )
+        else:
+            mock_ready.return_value = None
+        mock_run.return_value = None
 
         mock_response = MagicMock()
         mock_response.status_code = 200
         mock_get.return_value = mock_response
+
+        mock_config.load_config.return_value = {
+            "vectordb": {"vendor": "qdrant", "engine": "auto", "port": 8082}
+        }
+        mock_config.validate_config.return_value = True
+        values = {
+            "vectordb.port": 8082,
+            "vectordb.vendor": "qdrant",
+            "vectordb.image": None,
+            "vectordb.database_dir": None,
+        }
+        mock_config.get_config_value.side_effect = lambda cfg, key, default=None: values.get(
+            key, default
+        )
 
         try:
             vectordb.cmd_vectordb_start()
@@ -71,6 +103,11 @@ def step_run_vectordb_start(context):
             context.stderr = str(e)
             context.exit_code = 1
             context.vectordb_running = False
+
+        # Record which container image the engine was asked to run
+        context.vectordb_container_image = (
+            mock_run.call_args.kwargs.get("image") if mock_run.called else None
+        )
 
         # Mock is_vector_running to return True
         context.vectordb_running_patch = patch.object(
@@ -82,17 +119,21 @@ def step_run_vectordb_start(context):
 
 @when('I run "arkai vectordb stop"')  # ty: ignore[call-non-callable]
 def step_run_vectordb_stop(context):
-    """Run vectordb stop command with mocked subprocess."""
+    """Run vectordb stop command with mocked container engine."""
+    from arkai import vectordb as vectordb_module
+
     context.stdout = ""
     context.stderr = ""
     context.exit_code = 0
 
     with (
-        patch("arkai.vectordb.utils.read_pid", return_value=12345),
-        patch("arkai.vectordb.utils.kill_process", return_value=True),
-        patch("arkai.vectordb.utils.wait_for_process_stop", return_value=True),
-        patch("arkai.vectordb.os.path.exists", return_value=False),
+        patch.object(vectordb_module.container_engine, "ENGINES", ("podman", "apple", "docker")),
+        patch.object(vectordb_module.container_engine, "resolve_engine", return_value="podman"),
+        patch.object(vectordb_module.container_engine, "stop_container") as mock_stop,
+        patch.object(vectordb_module, "_read_state", return_value={"engine": "podman"}),
     ):
+        mock_stop.return_value = None
+
         try:
             vectordb.cmd_vectordb_stop()
             context.stdout = "Vectordb server stopped"
@@ -124,12 +165,13 @@ def step_run_vectordb_list(context):
     context.stderr = ""
     context.exit_code = 0
 
-    with patch("arkai.vectordb.requests.get") as mock_get:
+    with (
+        patch.object(vectordb, "_vendor", return_value="qdrant"),
+        patch("arkai.vectordb.requests.get") as mock_get,
+    ):
         mock_response = MagicMock()
         mock_response.status_code = 200
-        mock_response.json.return_value = [
-            {"name": "test-db", "id": "uuid-1"},
-        ]
+        mock_response.json.return_value = {"result": {"collections": [{"name": "test-db"}]}}
         mock_get.return_value = mock_response
 
         try:
@@ -142,18 +184,16 @@ def step_run_vectordb_list(context):
 
 @when('I run "arkai vectordb initdb {db_name}"')  # ty: ignore[call-non-callable]
 def step_run_vectordb_initdb(context, db_name):
-    """Run vectordb initdb command with mocked subprocess."""
+    """Run vectordb initdb command with mocked requests."""
     context.stdout = ""
     context.stderr = ""
     context.exit_code = 0
 
     with (
-        patch("arkai.vectordb.requests.post") as mock_post,
-        patch("arkai.vectordb.utils.warn"),
+        patch.object(vectordb, "list_collections", return_value=[]),
+        patch.object(vectordb, "create_collection") as mock_create,
     ):
-        mock_response = MagicMock()
-        mock_response.status_code = 200
-        mock_post.return_value = mock_response
+        mock_create.return_value = None
 
         try:
             vectordb.cmd_vectordb_initdb(db_name)
@@ -171,14 +211,9 @@ def step_run_vectordb_drop(context, db_name):
     context.exit_code = 0
 
     with (
-        patch("arkai.vectordb.requests.get") as mock_get,
+        patch.object(vectordb, "_vendor", return_value="qdrant"),
         patch("arkai.vectordb.requests.delete") as mock_delete,
     ):
-        mock_get_response = MagicMock()
-        mock_get_response.status_code = 200
-        mock_get_response.json.return_value = [{"name": db_name, "id": "test-collection-uuid"}]
-        mock_get.return_value = mock_get_response
-
         mock_delete_response = MagicMock()
         mock_delete_response.status_code = 200
         mock_delete.return_value = mock_delete_response

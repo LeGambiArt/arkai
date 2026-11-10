@@ -49,15 +49,13 @@ def step_run_status(context):
                 stack.enter_context(
                     patch.object(
                         utils,
-                        "read_pid",
-                        return_value=20050,
-                    )
-                )
-                stack.enter_context(
-                    patch.object(
-                        utils,
                         "load_yaml",
-                        return_value={"port": 8082, "databases": []},
+                        return_value={
+                            "port": 8082,
+                            "vendor": "qdrant",
+                            "engine": "podman",
+                            "databases": [],
+                        },
                     )
                 )
 

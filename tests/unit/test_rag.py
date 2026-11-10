@@ -66,8 +66,8 @@ def test_ask_cli_dispatches_all_options() -> None:
     ask.assert_called_once_with("manuals", "What changed?", 3, 9090, 256, True, 1024, "low")
 
 
-@pytest.fixture
-def rag_services():
+@pytest.fixture(params=["qdrant", "chromadb"])
+def rag_services(request):
     cfg = {
         "rag": {"max_search_results": 15, "embedding_model": None},
         "inference": {"port": 8081, "context_size": 65536},
@@ -86,27 +86,51 @@ def rag_services():
     answer_response.json.return_value = {
         "choices": [{"message": {"content": "The answer is 42 [1]."}}]
     }
+    if request.param == "qdrant":
+        # Qdrant flavor: search returns chroma-style tuples from the dispatch.
+        search_response.json.return_value = {
+            "result": [
+                {
+                    "score": 0.9,
+                    "payload": {
+                        "document": "The manual says the answer is 42.",
+                        "source": "guide.pdf",
+                        "page": 3,
+                        "chunk_index": 0,
+                    },
+                },
+                {
+                    "score": 0.8,
+                    "payload": {"document": "More about the answer.", "source": "faq.md"},
+                },
+            ]
+        }
     with (
         patch.object(rag.config, "load_config", return_value=cfg),
         patch.object(rag.config, "validate_config", return_value=True),
         patch.object(rag.vectordb, "is_vectordb_running", return_value=True),
         patch.object(rag.vectordb, "get_vectordb_port", return_value=8082),
+        patch.object(rag.vectordb, "_vendor", return_value=request.param),
         patch.object(rag.inference, "is_inference_running", return_value=False),
         patch.object(rag.requests, "get", side_effect=[model_response, collection]) as get,
         patch.object(rag.requests, "post", side_effect=[search_response, answer_response]) as post,
         patch.object(rag, "_load_embedding_model"),
         patch.object(rag, "_embed_text", return_value=[0.1, 0.2]),
     ):
-        yield cfg, search_response, answer_response, get, post
+        yield cfg, search_response, answer_response, get, post, request.param
 
 
 def test_ask_retrieves_and_sends_cited_context(rag_services, capsys) -> None:
-    _, _, _, get, post = rag_services
+    _, _, _, get, post, vendor = rag_services
     rag.cmd_rag_ask("manuals", "What is the answer?", k=2, show_context=True)
 
     assert get.call_args_list[0].args[0] == "http://127.0.0.1:8081/v1/models"
-    assert post.call_args_list[0].args[0].endswith("/collections/coll-id/query")
-    assert post.call_args_list[0].kwargs["json"]["n_results"] == 2
+    if vendor == "chromadb":
+        assert post.call_args_list[0].args[0].endswith("/collections/coll-id/query")
+        assert post.call_args_list[0].kwargs["json"]["n_results"] == 2
+    else:
+        assert post.call_args_list[0].args[0].endswith("/collections/manuals/points/search")
+        assert post.call_args_list[0].kwargs["json"]["limit"] == 2
     assert post.call_args_list[1].args[0] == "http://127.0.0.1:8081/v1/chat/completions"
     payload = post.call_args_list[1].kwargs["json"]
     assert payload["model"] == "running-model"
@@ -124,7 +148,7 @@ def test_ask_retrieves_and_sends_cited_context(rag_services, capsys) -> None:
 
 
 def test_ask_uses_selected_inference_port(rag_services) -> None:
-    _, _, _, get, post = rag_services
+    _, _, _, get, post, _vendor = rag_services
     rag.cmd_rag_ask("manuals", "Question", inference_port=9090)
     assert get.call_args_list[0].args[0] == "http://127.0.0.1:9090/v1/models"
     assert post.call_args_list[1].args[0] == "http://127.0.0.1:9090/v1/chat/completions"
@@ -136,7 +160,8 @@ def test_ask_uses_larger_default_retrieval_and_context_budgets(rag_services) -> 
 
     search_payload = rag_services[4].call_args_list[0].kwargs["json"]
     assert rag.config.DEFAULTS["rag"]["max_search_results"] == 15
-    assert search_payload["n_results"] == 15
+    key = "n_results" if rag_services[5] == "chromadb" else "limit"
+    assert search_payload[key] == 15
     assert build_context.call_args.args[1] == 32768
 
 
@@ -176,7 +201,7 @@ def test_ask_can_override_splash_reasoning_and_output_budget(rag_services) -> No
 
 
 def test_ask_trims_context_and_only_cites_sent_passages(rag_services, capsys) -> None:
-    _, _, _, _, post = rag_services
+    _, _, _, _, post, _vendor = rag_services
     rag.cmd_rag_ask("manuals", "Question", max_context_tokens=36, show_context=True)
     user_message = post.call_args_list[1].kwargs["json"]["messages"][1]["content"]
     assert "[1] Source:" in user_message
@@ -191,15 +216,18 @@ def test_ask_trims_context_and_only_cites_sent_passages(rag_services, capsys) ->
 
 
 def test_ask_never_sends_request_without_results(rag_services) -> None:
-    _, search, _, _, post = rag_services
-    search.json.return_value = {"documents": [[]], "metadatas": [[]], "distances": [[]]}
+    _, search, _, _, post, vendor = rag_services
+    if vendor == "chromadb":
+        search.json.return_value = {"documents": [[]], "metadatas": [[]], "distances": [[]]}
+    else:
+        search.json.return_value = {"result": []}
     with pytest.raises(RuntimeError, match="No matching passages"):
         rag.cmd_rag_ask("manuals", "Question")
     assert post.call_count == 1
 
 
 def test_ask_reports_unavailable_inference_server(rag_services) -> None:
-    _, _, _, get, post = rag_services
+    _, _, _, get, post, _vendor = rag_services
     get.side_effect = rag.requests.ConnectionError("refused")
     with pytest.raises(RuntimeError, match="arkai inference start"):
         rag.cmd_rag_ask("manuals", "Question")
@@ -207,7 +235,7 @@ def test_ask_reports_unavailable_inference_server(rag_services) -> None:
 
 
 def test_ask_rejects_invalid_search_response(rag_services) -> None:
-    _, search, _, _, post = rag_services
+    _, search, _, _, post, _vendor = rag_services
     search.json.return_value = {"documents": [["text"]], "metadatas": [[]], "distances": [[]]}
     with pytest.raises(RuntimeError, match="Invalid response from vectordb"):
         rag.cmd_rag_ask("manuals", "Question")

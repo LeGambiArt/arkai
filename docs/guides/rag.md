@@ -1,9 +1,9 @@
 # Ask questions over local documents
 
 Arkai's optional retrieval-augmented generation workflow ingests
-supported documents into ChromaDB, retrieves relevant passages, and sends
-them to a running inference server. Install the optional dependencies; the
-`rag` extra includes a supported ChromaDB release and its `chroma` CLI:
+supported documents into a vector database, retrieves relevant passages,
+and sends them to a running inference server. Install the optional
+dependencies:
 
 ```bash
 python -m pip install 'arkai[rag]'
@@ -11,9 +11,11 @@ python -m pip install 'arkai[rag]'
 
 From a source checkout, install with `python -m pip install -e '.[rag]'`.
 
-Use a Python 3.10–3.14 environment. The supported vector database,
-ChromaDB, has a dependency that does not currently provide a compatible
-Python 3.15 wheel.
+Use a Python 3.10–3.14 environment. The `rag` extra no longer installs a
+vector database package: the database server runs as a container
+(Qdrant by default, ChromaDB opt-in) under podman, Apple's container
+runtime, or docker. See the [vector database guide](vector-database.md)
+for engine requirements.
 
 Start and initialize the vector database, then ingest and ask:
 
@@ -24,6 +26,10 @@ arkai rag ingest manuals docs/guide.pdf
 arkai inference start
 arkai rag ask manuals "What does the guide recommend?"
 ```
+
+Ingesting into a collection that does not exist creates it, using the
+embedding dimension of the configured embedding model (Qdrant needs the
+dimension at creation time; ChromaDB infers it from the first ingest).
 
 `rag ask` uses the configured embedding model and inference endpoint,
 prints an answer plus numbered source passages, and does not start or

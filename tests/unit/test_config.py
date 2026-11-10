@@ -1,3 +1,5 @@
+import pytest
+
 from arkai import config, utils
 
 
@@ -410,6 +412,36 @@ class TestConfigValidation:
                 "context_size": "invalid",
             },
         }
+        assert config.validate_config(cfg) is False
+
+
+class TestValidateVectordbVendorEngine:
+    BASE_CFG = {
+        "agent": {"name": "opencode"},
+        "inference": {"model": "test.gguf"},
+    }
+
+    def _cfg_with_vectordb(self, vectordb: dict) -> dict:
+        return {**self.BASE_CFG, "vectordb": vectordb}
+
+    @pytest.mark.parametrize("vendor", ["chromadb", "qdrant"])
+    def test_supported_vendors_are_valid(self, vendor: str) -> None:
+        """Both supported vendors pass validation."""
+        assert config.validate_config(self._cfg_with_vectordb({"vendor": vendor})) is True
+
+    def test_unsupported_vendor_is_rejected(self) -> None:
+        """An unknown vendor fails validation."""
+        cfg = self._cfg_with_vectordb({"vendor": "weaviate"})
+        assert config.validate_config(cfg) is False
+
+    @pytest.mark.parametrize("engine", ["auto", "podman", "apple", "docker"])
+    def test_supported_engines_are_valid(self, engine: str) -> None:
+        """All supported engine settings pass validation."""
+        assert config.validate_config(self._cfg_with_vectordb({"engine": engine})) is True
+
+    def test_unsupported_engine_is_rejected(self) -> None:
+        """An unknown engine fails validation."""
+        cfg = self._cfg_with_vectordb({"engine": "containerd"})
         assert config.validate_config(cfg) is False
 
 

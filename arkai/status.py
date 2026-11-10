@@ -69,13 +69,13 @@ def cmd_status() -> None:
     # Check vectordb server
     vectordb_running = vectordb_module.is_vectordb_running()
     if vectordb_running:
-        pid = utils.read_pid(vectordb_module.get_vectordb_pid_path())
-        utils.info(f"✓ Vectordb: running (PID {pid})")
         try:
             state = utils.load_yaml(vectordb_module.get_vectordb_state_path())
             port = state.get("port", 8082)
+            vendor = state.get("vendor", "unknown")
+            engine = state.get("engine", "unknown")
             databases = state.get("databases", [])
-            utils.info(f"  Port: {port}")
+            utils.info(f"✓ Vectordb: running ({vendor} via {engine}, port {port})")
             if databases:
                 utils.info(f"  Databases: {', '.join(databases)}\n")
             else:
