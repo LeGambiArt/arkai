@@ -1,4 +1,5 @@
 import os
+from unittest.mock import patch
 
 from behave import given, then, when
 
@@ -94,6 +95,41 @@ def step_valid_config_with_multiple_models(context):
     }
 
 
+@given('the config editor sets "{key}" to {value} and saves')  # ty: ignore[call-non-callable]
+def step_config_editor_sets_and_saves(context, key, value):
+    """Install a scripted editor that applies one change and saves."""
+    from arkai import config_editor
+    from arkai.config_editor import nested_set
+
+    def script(target, merged, user, project, target_path):
+        try:
+            value_ = int(value)
+        except ValueError:
+            value_ = value.strip('"')
+        nested_set(target, key, value_)
+        return True
+
+    patch_obj = patch.object(config_editor, "run_editor", side_effect=script)
+    patch_obj.start()
+    context.editor_start_config = (
+        dict(context.config_data) if context.config_data is not None else None
+    )
+    context.add_cleanup(patch_obj.stop)
+
+
+@given("the config editor aborts without saving")  # ty: ignore[call-non-callable]
+def step_config_editor_aborts(context):
+    """Install a scripted editor that quits without saving."""
+    from arkai import config_editor
+
+    patch_obj = patch.object(config_editor, "run_editor", return_value=False)
+    patch_obj.start()
+    context.editor_start_config = (
+        dict(context.config_data) if context.config_data is not None else None
+    )
+    context.add_cleanup(patch_obj.stop)
+
+
 @when('I run "arkai config {cmd}"')  # ty: ignore[call-non-callable]
 def step_run_config(context, cmd):
     parts = cmd.split()
@@ -136,3 +172,38 @@ def step_check_config_created(context):
     assert "agent" in cfg, "Missing agent key"
     assert "inference" in cfg, "Missing inference key"
     assert cfg["inference"].get("backend") == "llama-cpp", "Missing default inference backend"
+
+
+@then("the file .arkai.yaml is unchanged")  # ty: ignore[call-non-callable]
+def step_check_config_unchanged(context):
+    data = context.config_data
+    assert data is not None, ".arkai.yaml content was lost"
+    assert data == context.editor_start_config, (
+        f".arkai.yaml changed: {context.editor_start_config} -> {data}"
+    )
+
+
+@then("the file .arkai.yaml has inference port {port:d}")  # ty: ignore[call-non-callable]
+def step_check_config_inference_port(context, port):
+    assert context.config_data is not None, ".arkai.yaml was not created"
+    assert context.config_data["inference"]["port"] == port
+
+
+@then('the file .arkai.yaml has agent name "{name}"')  # ty: ignore[call-non-callable]
+def step_check_config_agent_name(context, name):
+    assert context.config_data is not None, ".arkai.yaml was not created"
+    assert context.config_data["agent"]["name"] == name
+
+
+@then('the file {path} has agent name "{name}"')  # ty: ignore[call-non-callable]
+def step_check_file_agent_name(context, path, name):
+    if path == "<config_home>/arkai.yaml":
+        path = os.path.join(utils.get_config_home(), "arkai.yaml")
+    assert str(path) in context.existing_files, f"{path} was not created"
+    cfg = utils.load_yaml(path)
+    assert cfg["agent"]["name"] == name
+
+
+@then("the file .arkai.yaml does not exist")  # ty: ignore[call-non-callable]
+def step_check_config_not_created(context):
+    assert ".arkai.yaml" not in context.existing_files, ".arkai.yaml was unexpectedly created"

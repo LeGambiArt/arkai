@@ -77,13 +77,22 @@ def parse_context_size(value: int | str) -> int | None:
     return utils.parse_token_size(value)
 
 
-def exec_cmd(args: dict | None = None) -> None:
+def exec_cmd(args: argparse.Namespace | None = None) -> None:
     """Select 'config' command to execute."""
     match args.config_cmd:  # ty: ignore[unresolved-attribute]
         case "validate":
             cmd_config_validate(args.file)  # ty: ignore[unresolved-attribute]
         case "init":
-            cmd_config_init()
+            cmd_config_init(
+                args.tui,  # ty: ignore[unresolved-attribute]
+                args.init_global,  # ty: ignore[unresolved-attribute]
+                args.init_project,  # ty: ignore[unresolved-attribute]
+            )
+        case "edit":
+            cmd_config_edit(
+                args.edit_global,  # ty: ignore[unresolved-attribute]
+                args.edit_project,  # ty: ignore[unresolved-attribute]
+            )
 
 
 def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
@@ -96,7 +105,37 @@ def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
     config_subparsers = config_parser.add_subparsers(dest="config_cmd", required=True)
     validate_parser = config_subparsers.add_parser("validate", help="Validate configuration")
     validate_parser.add_argument("--file", help="Config file to validate (default: .arkai.yaml)")
-    config_subparsers.add_parser("init", help="Initialize configuration file")
+    init_parser = config_subparsers.add_parser("init", help="Initialize configuration file")
+    init_parser.add_argument(
+        "--tui",
+        action="store_true",
+        help="Customize the new configuration in a terminal UI",
+    )
+    init_parser.add_argument(
+        "--global",
+        dest="init_global",
+        action="store_true",
+        help="Initialize the user (global) configuration file",
+    )
+    init_parser.add_argument(
+        "--project",
+        dest="init_project",
+        action="store_true",
+        help="Initialize the project .arkai.yaml (default)",
+    )
+    edit_parser = config_subparsers.add_parser("edit", help="Edit configuration in a terminal UI")
+    edit_parser.add_argument(
+        "--global",
+        dest="edit_global",
+        action="store_true",
+        help="Edit the user (global) configuration file",
+    )
+    edit_parser.add_argument(
+        "--project",
+        dest="edit_project",
+        action="store_true",
+        help="Edit the project .arkai.yaml",
+    )
 
 
 def load_config(project_dir: str = ".") -> dict:
@@ -392,12 +431,26 @@ def cmd_config_validate(config_file: str | None = None) -> None:
     utils.info(f"Configuration valid: {config_file}")
 
 
-def cmd_config_init() -> None:
-    """Initialize a new configuration file in current directory.
+def cmd_config_init(
+    tui: bool = False, init_global: bool = False, init_project: bool = False
+) -> None:
+    """Initialize a new configuration file.
 
-    Fails if .arkai.yaml already exists.
+    Default scope is the project ``.arkai.yaml``; ``--global`` targets the
+    user configuration file. Fails if the target file already exists.
+
+    Args:
+        tui: Customize the new configuration in a terminal UI before writing.
+        init_global: Initialize the user (global) configuration file.
+        init_project: Initialize the project .arkai.yaml (default).
     """
-    config_file = ".arkai.yaml"
+    if init_global and init_project:
+        raise RuntimeError("--global and --project are mutually exclusive")
+
+    if init_global:
+        config_file = os.path.join(utils.get_config_home(), "arkai.yaml")
+    else:
+        config_file = ".arkai.yaml"
 
     if os.path.exists(config_file):
         raise RuntimeError(f"Configuration file already exists: {config_file}")
@@ -425,5 +478,59 @@ def cmd_config_init() -> None:
         },
     }
 
+    if tui:
+        from arkai import config_editor
+
+        global_path = os.path.join(utils.get_config_home(), "arkai.yaml")
+        if init_global:
+            user = {}
+            project = utils.load_yaml(".arkai.yaml") or {} if os.path.exists(".arkai.yaml") else {}
+        else:
+            user = utils.load_yaml(global_path) or {} if os.path.exists(global_path) else {}
+            project = {}
+        merged = utils.merge_configs(utils.merge_configs(copy.deepcopy(DEFAULTS), user), project)
+        if not config_editor.run_editor(default_config, merged, user, project, config_file):
+            utils.warn("Initialization cancelled; no configuration file written")
+            return
+
     utils.save_yaml(config_file, default_config)
     utils.info(f"Configuration initialized: {config_file}")
+
+
+def cmd_config_edit(edit_global: bool = False, edit_project: bool = False) -> None:
+    """Edit configuration in the terminal field editor.
+
+    Default target is the project ``.arkai.yaml`` when it exists, else the
+    user configuration file. The global file is created on save if missing.
+    """
+    if edit_global and edit_project:
+        raise RuntimeError("--global and --project are mutually exclusive")
+
+    global_path = os.path.join(utils.get_config_home(), "arkai.yaml")
+    project_path = ".arkai.yaml"
+
+    if edit_project:
+        if not os.path.exists(project_path):
+            raise RuntimeError(
+                "No project configuration file found; run 'arkai config init' or use --global"
+            )
+        target_path = project_path
+    elif edit_global:
+        target_path = global_path
+    else:
+        target_path = project_path if os.path.exists(project_path) else global_path
+
+    if target_path == global_path:
+        user = utils.load_yaml(global_path) or {} if os.path.exists(global_path) else {}
+        project = {}
+    else:
+        user = utils.load_yaml(global_path) or {} if os.path.exists(global_path) else {}
+        project = utils.load_yaml(project_path) or {} if os.path.exists(project_path) else {}
+    target = user if target_path == global_path else project
+    merged = utils.merge_configs(utils.merge_configs(copy.deepcopy(DEFAULTS), user), project)
+
+    from arkai import config_editor
+
+    if config_editor.run_editor(target, merged, user, project, target_path):
+        utils.save_yaml(target_path, target)
+        utils.info(f"Configuration saved: {target_path}")

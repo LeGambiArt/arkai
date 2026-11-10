@@ -16,9 +16,57 @@ arkai config validate
 arkai config validate --file /path/to/arkai.yaml
 ```
 
-`config init` refuses to replace an existing `.arkai.yaml`. The complete
-key reference, with defaults and descriptions, is in
-[arkai-full-config.yaml](../arkai-full-config.yaml).
+`config init` refuses to replace an existing `.arkai.yaml`. Use
+`config init --global` to initialize the user configuration file instead of
+the project file; `--project` is the default scope, and `--global --project`
+together is an error. The complete key reference, with defaults and
+descriptions, is in [arkai-full-config.yaml](../arkai-full-config.yaml).
+
+## Editing configuration interactively
+
+`arkai config edit` opens a terminal field editor for the configuration
+file. Fields with a fixed set of allowed values (agent name, backend, mode,
+booleans) are picked from a list, never typed; free-form fields validate as
+you submit them.
+
+```bash
+arkai config edit            # .arkai.yaml if it exists, else the global file
+arkai config edit --project  # .arkai.yaml
+arkai config edit --global   # ~/.config/arkai/arkai.yaml
+```
+
+With no flag, the project file is edited when it exists, otherwise the
+global file. `--project` requires an existing `.arkai.yaml`; the global file
+is created on save if missing. `--global` and `--project` together is an
+error. When editing the global file, the project configuration is ignored:
+the editor shows and saves only global values, so a project override stays
+in `.arkai.yaml` and keeps winning over your global edit until you remove
+it there.
+
+Each field row shows the effective value and a source tag:
+
+- `[default]` — no file sets the key; the built-in default applies
+- `[global]` — the key comes from the user configuration file
+- `[project]` — the key comes from `.arkai.yaml` and wins over the others
+  (shown only when editing the project file)
+
+Key bindings: `↑`/`↓` (or `j`/`k`) move, `Enter` edits the selected field,
+`r` resets it to the default by deleting the key from the file being edited,
+`s` saves and exits, `q` quits without saving, `?` shows help. Choice and
+boolean fields offer `(unset)` when the default is empty; selecting it
+removes the key. For free-form text fields, submitting an empty value
+deletes the key.
+
+Saving rewrites the whole file, so YAML comments are not preserved. Only
+scalar settings are editable in the UI; complex mappings such as
+`inference.profiles`, `sandbox.profiles`, volumes, and plugin lists pass
+through untouched and must be edited in the YAML file directly.
+
+`arkai config init --tui` initializes a new file (project by default,
+`--global` for the user file) and opens the same editor pre-filled with the
+seed values so it can be customized before it is written. Aborting with `q`
+writes nothing and prints a cancellation warning; rerun the command to try
+again.
 
 ## Common settings
 

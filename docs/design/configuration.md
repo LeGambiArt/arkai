@@ -27,6 +27,21 @@ startup requires a model.
 sampling values over inference-level defaults. Commands that accept a
 model override apply it before validation.
 
+## Interactive field editor
+
+The interactive field editor (`arkai/config_editor.py`) is schema-driven: a
+`Field` registry (`FIELD_GROUPS`) lists every editable scalar key with its
+kind, choices, and bounds, and is the extension point for future collection
+editors such as `inference.profiles` or `sandbox.profiles` groups. Layer
+resolution reuses the `load_config` precedence (defaults < user < project)
+to tag each field's effective-value source. The curses UI is isolated in
+`run_editor` behind a pure-logic/pure-UI split: `cmd_config_edit` and
+`cmd_config_init --tui` both drive the same editor (edit loads an existing
+target dict; init passes the seed dict and writes only on save), and file
+writes happen only in those two command handlers. If `validate_config`
+gains new scalar constraints, the registry entries must be updated in the
+same change so the editor cannot write values validation would reject.
+
 ## Evolution rules
 
 - Keep defaults and validation in `arkai/config.py` aligned with the
@@ -44,7 +59,8 @@ model override apply it before validation.
 
 - Loading, defaults, validation, and model profile resolution:
   `arkai/config.py`
+- Interactive field editor: `arkai/config_editor.py`
 - YAML merge and filesystem paths: `arkai/utils.py`
-- Unit coverage: `tests/unit/test_config.py`
+- Unit coverage: `tests/unit/test_config.py`, `tests/unit/test_config_editor.py`
 - CLI behavior: `features/config.feature`
 - User instructions: [Configuration](../guides/configuration.md)

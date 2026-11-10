@@ -84,3 +84,49 @@ Feature: Configuration Management
     When I run "arkai config validate"
     Then the exit code is not 0
     And the error contains "context_size must be positive integer"
+
+  Scenario: Edit project configuration with the TUI
+    Given a valid .arkai.yaml file
+    And the config editor sets "inference.port" to 9000 and saves
+    When I run "arkai config edit"
+    Then the exit code is 0
+    And the output contains "Configuration saved"
+    And the file .arkai.yaml has inference port 9000
+
+  Scenario: Aborting the config editor leaves the file unchanged
+    Given a valid .arkai.yaml file
+    And the config editor aborts without saving
+    When I run "arkai config edit"
+    Then the exit code is 0
+    And the file .arkai.yaml is unchanged
+
+  Scenario: Editing the project configuration without a project file fails
+    Given no .arkai.yaml file exists
+    And the config editor sets "inference.port" to 9000 and saves
+    When I run "arkai config edit --project"
+    Then the exit code is 1
+    And the error contains "No project configuration file"
+
+  Scenario: Initialize project configuration interactively
+    Given no .arkai.yaml file exists
+    And the config editor sets "agent.name" to "crush" and saves
+    When I run "arkai config init --tui"
+    Then the exit code is 0
+    And the output contains "Configuration initialized"
+    And the file .arkai.yaml has agent name "crush"
+
+  Scenario: Aborting interactive initialization writes no file
+    Given no .arkai.yaml file exists
+    And the config editor aborts without saving
+    When I run "arkai config init --tui"
+    Then the exit code is 0
+    And the error contains "no configuration file written"
+    And the file .arkai.yaml does not exist
+
+  Scenario: Initialize global configuration interactively
+    Given no .arkai.yaml file exists
+    And the config editor sets "agent.name" to "crush" and saves
+    When I run "arkai config init --tui --global"
+    Then the exit code is 0
+    And the file <config_home>/arkai.yaml has agent name "crush"
+    And the file .arkai.yaml does not exist
