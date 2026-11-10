@@ -100,31 +100,31 @@ def _suppress_embedding_output(enabled: bool):
 
 def exec_cmd(args: argparse.Namespace | types.SimpleNamespace | None = None) -> None:
     """Select 'rag' command to execute."""
-    if args.rag_cmd != "ask":  # ty: ignore[unresolved-attribute]
+    if args.rag_cmd != "ask":  # ty: ignore[missing-union-attribute]
         utils.warn("RAG commands are not fully functional yet.")
-    match args.rag_cmd:  # ty: ignore[unresolved-attribute]
+    match args.rag_cmd:  # ty: ignore[missing-union-attribute]
         case "ingest":
             cmd_rag_ingest(
-                args.db_name,  # ty: ignore[unresolved-attribute]
-                args.file_path,  # ty: ignore[unresolved-attribute]
-                args.chunk_size,  # ty: ignore[unresolved-attribute]
+                args.db_name,  # ty: ignore[missing-union-attribute]
+                args.file_path,  # ty: ignore[missing-union-attribute]
+                args.chunk_size,  # ty: ignore[missing-union-attribute]
             )
         case "query":
             cmd_rag_search(
-                args.db_name,  # ty: ignore[unresolved-attribute]
-                args.query,  # ty: ignore[unresolved-attribute]
-                args.results,  # ty: ignore[unresolved-attribute]
+                args.db_name,  # ty: ignore[missing-union-attribute]
+                args.query,  # ty: ignore[missing-union-attribute]
+                args.results,  # ty: ignore[missing-union-attribute]
             )
         case "ask":
             cmd_rag_ask(
-                args.db_name,  # ty: ignore[unresolved-attribute]
-                args.question,  # ty: ignore[unresolved-attribute]
-                args.results,  # ty: ignore[unresolved-attribute]
-                args.inference_port,  # ty: ignore[unresolved-attribute]
-                args.max_context_tokens,  # ty: ignore[unresolved-attribute]
-                args.show_context,  # ty: ignore[unresolved-attribute]
-                args.max_output_tokens,  # ty: ignore[unresolved-attribute]
-                args.reasoning_effort,  # ty: ignore[unresolved-attribute]
+                args.db_name,  # ty: ignore[missing-union-attribute]
+                args.question,  # ty: ignore[missing-union-attribute]
+                args.results,  # ty: ignore[missing-union-attribute]
+                args.inference_port,  # ty: ignore[missing-union-attribute]
+                args.max_context_tokens,  # ty: ignore[missing-union-attribute]
+                args.show_context,  # ty: ignore[missing-union-attribute]
+                args.max_output_tokens,  # ty: ignore[missing-union-attribute]
+                args.reasoning_effort,  # ty: ignore[missing-union-attribute]
             )
 
 

@@ -8,40 +8,36 @@ from arkai import config as config_module
 from arkai import utils
 
 
-def exec_cmd(args: dict | None = None) -> None:
+def exec_cmd(args: argparse.Namespace) -> None:
     """Select 'sandbox' command to execute."""
-    match args.sandbox_cmd:  # ty: ignore[unresolved-attribute]
+    match args.sandbox_cmd:
         case "create":
             create_env = (
-                {
-                    k: v
-                    for e in args.environment  # ty: ignore[unresolved-attribute]
-                    for k, _, v in [e.partition("=")]
-                }
-                if args.environment  # ty: ignore[unresolved-attribute]
+                {k: v for e in args.environment for k, _, v in [e.partition("=")]}
+                if args.environment
                 else None
             )
             cmd_sandbox_create(
-                args.name,  # ty: ignore[unresolved-attribute]
-                args.from_profile,  # ty: ignore[unresolved-attribute]
-                args.path,  # ty: ignore[unresolved-attribute]
-                args.memory,  # ty: ignore[unresolved-attribute]
-                args.cpus,  # ty: ignore[unresolved-attribute]
-                args.pids,  # ty: ignore[unresolved-attribute]
-                args.timeout,  # ty: ignore[unresolved-attribute]
-                args.volumes,  # ty: ignore[unresolved-attribute]
+                args.name,
+                args.from_profile,
+                args.path,
+                args.memory,
+                args.cpus,
+                args.pids,
+                args.timeout,
+                args.volumes,
                 create_env,
             )
         case "delete":
-            cmd_sandbox_delete(args.name)  # ty: ignore[unresolved-attribute]
+            cmd_sandbox_delete(args.name)
         case "show":
-            cmd_sandbox_show(args.profile_name)  # ty: ignore[unresolved-attribute]
+            cmd_sandbox_show(args.profile_name)
         case "list":
             cmd_sandbox_list()
         case "set-default":
-            cmd_sandbox_set_default(args.name)  # ty: ignore[unresolved-attribute]
+            cmd_sandbox_set_default(args.name)
         case "active":
-            cmd_sandbox_active(args.profile_name)  # ty: ignore[unresolved-attribute]
+            cmd_sandbox_active(args.profile_name)
 
 
 def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:

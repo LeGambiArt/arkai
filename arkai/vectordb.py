@@ -36,11 +36,11 @@ VENDOR_ENV = {"qdrant": {}, "chromadb": {"IS_PERSISTENT": "TRUE"}}
 _CHROMA_API = "/api/v2/tenants/default/databases/default"
 
 
-def exec_cmd(args: dict | None = None) -> None:
+def exec_cmd(args: argparse.Namespace) -> None:
     """Select 'vectordb' command to execute."""
-    match args.vectordb_cmd:  # ty: ignore[unresolved-attribute]
+    match args.vectordb_cmd:
         case "start":
-            cmd_vectordb_start(args.port)  # ty: ignore[unresolved-attribute]
+            cmd_vectordb_start(args.port)
         case "stop":
             cmd_vectordb_stop()
         case "status":
@@ -48,9 +48,9 @@ def exec_cmd(args: dict | None = None) -> None:
         case "list":
             cmd_vectordb_list()
         case "initdb":
-            cmd_vectordb_initdb(args.db_name)  # ty: ignore[unresolved-attribute]
+            cmd_vectordb_initdb(args.db_name)
         case "drop":
-            cmd_vectordb_drop(args.db_name)  # ty: ignore[unresolved-attribute]
+            cmd_vectordb_drop(args.db_name)
 
 
 def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:

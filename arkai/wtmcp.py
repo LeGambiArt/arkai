@@ -9,27 +9,27 @@ import time
 from arkai import config, utils
 
 
-def exec_cmd(args: dict | None) -> None:
+def exec_cmd(args: argparse.Namespace) -> None:
     """Select 'wtmcp' command to execute."""
-    match args.wtmcp_cmd:  # ty: ignore[unresolved-attribute]
+    match args.wtmcp_cmd:
         case "start":
             cmd_wtmcp_start(
-                args.path,  # ty: ignore[unresolved-attribute]
-                args.port,  # ty: ignore[unresolved-attribute]
-                args.enable_plugins,  # ty: ignore[unresolved-attribute]
-                args.disable_plugins,  # ty: ignore[unresolved-attribute]
-                args.wtmcp_config,  # ty: ignore[unresolved-attribute]
+                args.path,
+                args.port,
+                args.enable_plugins,
+                args.disable_plugins,
+                args.wtmcp_config,
             )
         case "stop":
-            cmd_wtmcp_stop(args.port)  # ty: ignore[unresolved-attribute]
+            cmd_wtmcp_stop(args.port)
         case "status":
-            cmd_wtmcp_status(args.port)  # ty: ignore[unresolved-attribute]
+            cmd_wtmcp_status(args.port)
         case "list":
-            cmd_wtmcp_list(args.port)  # ty: ignore[unresolved-attribute]
+            cmd_wtmcp_list(args.port)
         case "enable":
-            cmd_wtmcp_enable(args.plugin)  # ty: ignore[unresolved-attribute]
+            cmd_wtmcp_enable(args.plugin)
         case "disable":
-            cmd_wtmcp_disable(args.plugin)  # ty: ignore[unresolved-attribute]
+            cmd_wtmcp_disable(args.plugin)
 
 
 def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:

@@ -79,19 +79,19 @@ def parse_context_size(value: int | str) -> int | None:
 
 def exec_cmd(args: argparse.Namespace | None = None) -> None:
     """Select 'config' command to execute."""
-    match args.config_cmd:  # ty: ignore[unresolved-attribute]
+    match args.config_cmd:  # ty: ignore[missing-union-attribute]
         case "validate":
-            cmd_config_validate(args.file)  # ty: ignore[unresolved-attribute]
+            cmd_config_validate(args.file)  # ty: ignore[missing-union-attribute]
         case "init":
             cmd_config_init(
-                args.tui,  # ty: ignore[unresolved-attribute]
-                args.init_global,  # ty: ignore[unresolved-attribute]
-                args.init_project,  # ty: ignore[unresolved-attribute]
+                args.tui,  # ty: ignore[missing-union-attribute]
+                args.init_global,  # ty: ignore[missing-union-attribute]
+                args.init_project,  # ty: ignore[missing-union-attribute]
             )
         case "edit":
             cmd_config_edit(
-                args.edit_global,  # ty: ignore[unresolved-attribute]
-                args.edit_project,  # ty: ignore[unresolved-attribute]
+                args.edit_global,  # ty: ignore[missing-union-attribute]
+                args.edit_project,  # ty: ignore[missing-union-attribute]
             )
 
 

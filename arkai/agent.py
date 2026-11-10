@@ -22,47 +22,47 @@ def exec_cmd(args: argparse.Namespace | None = None) -> None:
         if getattr(args, "environment", None)
         else None
     )
-    match args.agent_cmd:  # ty: ignore[unresolved-attribute]
+    match args.agent_cmd:  # ty: ignore[missing-union-attribute]
         case "start":
-            if args.list_session:  # ty: ignore[unresolved-attribute]
-                cmd_agent_list_sessions(args.agent, args.cwd)  # ty: ignore[unresolved-attribute]
+            if args.list_session:  # ty: ignore[missing-union-attribute]
+                cmd_agent_list_sessions(args.agent, args.cwd)  # ty: ignore[missing-union-attribute]
                 return
             cmd_agent(
-                args.agent,  # ty: ignore[unresolved-attribute]
-                args.model,  # ty: ignore[unresolved-attribute]
-                args.no_inference,  # ty: ignore[unresolved-attribute]
-                args.no_mcp,  # ty: ignore[unresolved-attribute]
-                args.no_sandbox,  # ty: ignore[unresolved-attribute]
-                args.cwd,  # ty: ignore[unresolved-attribute]
-                args.sandbox,  # ty: ignore[unresolved-attribute]
-                args.volumes,  # ty: ignore[unresolved-attribute]
+                args.agent,  # ty: ignore[missing-union-attribute]
+                args.model,  # ty: ignore[missing-union-attribute]
+                args.no_inference,  # ty: ignore[missing-union-attribute]
+                args.no_mcp,  # ty: ignore[missing-union-attribute]
+                args.no_sandbox,  # ty: ignore[missing-union-attribute]
+                args.cwd,  # ty: ignore[missing-union-attribute]
+                args.sandbox,  # ty: ignore[missing-union-attribute]
+                args.volumes,  # ty: ignore[missing-union-attribute]
                 agent_env,
-                args.port,  # ty: ignore[unresolved-attribute]
-                args.backend,  # ty: ignore[unresolved-attribute]
+                args.port,  # ty: ignore[missing-union-attribute]
+                args.backend,  # ty: ignore[missing-union-attribute]
                 getattr(args, "cloud", None),
                 getattr(args, "local", False),
-                session_name=args.session_name,  # ty: ignore[unresolved-attribute]
+                session_name=args.session_name,  # ty: ignore[missing-union-attribute]
             )
         case "prompt":
             cmd_agent_prompt(
-                args.prompt_text,  # ty: ignore[unresolved-attribute]
-                args.agent,  # ty: ignore[unresolved-attribute]
-                args.model,  # ty: ignore[unresolved-attribute]
-                args.no_inference,  # ty: ignore[unresolved-attribute]
-                args.no_mcp,  # ty: ignore[unresolved-attribute]
-                args.no_sandbox,  # ty: ignore[unresolved-attribute]
-                args.cwd,  # ty: ignore[unresolved-attribute]
-                args.sandbox,  # ty: ignore[unresolved-attribute]
-                args.volumes,  # ty: ignore[unresolved-attribute]
+                args.prompt_text,  # ty: ignore[missing-union-attribute]
+                args.agent,  # ty: ignore[missing-union-attribute]
+                args.model,  # ty: ignore[missing-union-attribute]
+                args.no_inference,  # ty: ignore[missing-union-attribute]
+                args.no_mcp,  # ty: ignore[missing-union-attribute]
+                args.no_sandbox,  # ty: ignore[missing-union-attribute]
+                args.cwd,  # ty: ignore[missing-union-attribute]
+                args.sandbox,  # ty: ignore[missing-union-attribute]
+                args.volumes,  # ty: ignore[missing-union-attribute]
                 agent_env,
-                args.output,  # ty: ignore[unresolved-attribute]
-                args.port,  # ty: ignore[unresolved-attribute]
-                args.backend,  # ty: ignore[unresolved-attribute]
+                args.output,  # ty: ignore[missing-union-attribute]
+                args.port,  # ty: ignore[missing-union-attribute]
+                args.backend,  # ty: ignore[missing-union-attribute]
                 getattr(args, "cloud", None),
                 getattr(args, "local", False),
             )
         case "install":
-            cmd_agent_install(args.agent_name)  # ty: ignore[unresolved-attribute]
+            cmd_agent_install(args.agent_name)  # ty: ignore[missing-union-attribute]
 
 
 def _add_agent_common_args(parser: argparse.ArgumentParser) -> None:

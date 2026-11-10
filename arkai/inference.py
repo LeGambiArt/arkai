@@ -17,22 +17,22 @@ from arkai.inference_backend import get_backend
 from arkai.inference_strata import StrataBackend
 
 
-def exec_cmd(args: dict | None = None) -> None:
+def exec_cmd(args: argparse.Namespace) -> None:
     """Select 'inference' command to execute."""
-    match args.inference_cmd:  # ty: ignore[unresolved-attribute]
+    match args.inference_cmd:
         case "start":
             cmd_inference_start(
-                args.model,  # ty: ignore[unresolved-attribute]
-                args.gpu_layers,  # ty: ignore[unresolved-attribute]
-                args.context,  # ty: ignore[unresolved-attribute]
-                args.port,  # ty: ignore[unresolved-attribute]
-                backend=args.backend,  # ty: ignore[unresolved-attribute]
-                allow_provisioning=args.allow_provisioning,  # ty: ignore[unresolved-attribute]
+                args.model,
+                args.gpu_layers,
+                args.context,
+                args.port,
+                backend=args.backend,
+                allow_provisioning=args.allow_provisioning,
             )
         case "stop":
-            cmd_inference_stop(args.port)  # ty: ignore[unresolved-attribute]
+            cmd_inference_stop(args.port)
         case "status":
-            cmd_inference_status(args.port)  # ty: ignore[unresolved-attribute]
+            cmd_inference_status(args.port)
 
 
 def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
