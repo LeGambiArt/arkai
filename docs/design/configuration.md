@@ -31,10 +31,14 @@ model override apply it before validation.
 
 The interactive field editor (`arkai/config_editor.py`) is schema-driven: a
 `Field` registry (`FIELD_GROUPS`) lists every editable scalar key with its
-kind, choices, and bounds, and is the extension point for future collection
-editors such as `inference.profiles` or `sandbox.profiles` groups. Layer
-resolution reuses the `load_config` precedence (defaults < user < project)
-to tag each field's effective-value source. The curses UI is isolated in
+kind, choices, and bounds. Collection editors for `inference.profiles` and
+`sandbox.profiles` are declared via `CollectionSpec` (title, prefix, member
+`Field`s, required member keys) in `COLLECTIONS`; the field-list rows open a
+profile-list modal (add/delete/edit), and a member modal per profile.
+Profile-name validation reuses `arkai.sandbox._is_valid_profile_name` so the
+TUI and the runtime share one rule; volume and environment entries are
+validated with `utils.validate_volumes`/`validate_environment`; member source
+tags reuse the same layer precedence. The curses UI is isolated in
 `run_editor` behind a pure-logic/pure-UI split: `cmd_config_edit` and
 `cmd_config_init --tui` both drive the same editor (edit loads an existing
 target dict; init passes the seed dict and writes only on save), and file

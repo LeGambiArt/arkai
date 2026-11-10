@@ -93,6 +93,15 @@ Feature: Configuration Management
     And the output contains "Configuration saved"
     And the file .arkai.yaml has inference port 9000
 
+  Scenario: Edit creates an inference profile and preserves other configuration
+    Given a valid .arkai.yaml file
+    And the config editor adds inference profile "fast" with model "test.gguf" and saves
+    When I run "arkai config edit"
+    Then the exit code is 0
+    And the output contains "Configuration saved"
+    And the file .arkai.yaml has inference profile "fast" with model "test.gguf"
+    And the file .arkai.yaml has inference model "test.gguf"
+
   Scenario: Aborting the config editor leaves the file unchanged
     Given a valid .arkai.yaml file
     And the config editor aborts without saving

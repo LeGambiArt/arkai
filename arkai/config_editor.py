@@ -1,9 +1,10 @@
 """Curses field editor for configuration files.
 
 Data-driven scalar-field registry plus pure, UI-free helpers so all logic is
-unit-testable; the curses UI is isolated in ``run_editor``. Complex mappings
-(profiles, volumes, plugin lists) are never touched by the editor: only
-registry keys are mutated in the loaded dict.
+unit-testable; the curses UI is isolated in ``run_editor``. Scalar registry
+keys and the ``inference.profiles`` / ``sandbox.profiles`` collections are
+edited through ``CollectionSpec`` modals; all mutations land in the loaded
+target dict, which the caller writes back to disk.
 """
 
 import copy
@@ -12,6 +13,7 @@ from typing import Any
 
 from arkai import utils
 from arkai.config import DEFAULTS
+from arkai.sandbox import _is_valid_profile_name
 
 UNSET_LABEL = "(unset)"
 
@@ -103,6 +105,58 @@ FIELD_GROUPS: dict[str, list[Field]] = {
 ALL_FIELDS: tuple[Field, ...] = tuple(field for fields in FIELD_GROUPS.values() for field in fields)
 
 
+@dataclasses.dataclass(frozen=True)
+class CollectionSpec:
+    """One profile collection edited through a dedicated modal."""
+
+    title: str  # "Model profiles" | "Sandbox profiles"
+    prefix: str  # "inference.profiles" | "sandbox.profiles"
+    members: tuple[Field, ...]  # member-local Field keys ("model", "memory_mb", ...)
+    required: tuple[str, ...]  # member keys that must be non-empty on creation
+
+
+def _member(name: str, kind: str, minimum: float | None = None) -> Field:
+    return Field(name, name.replace("_", " ").capitalize(), kind, minimum=minimum)
+
+
+INFERENCE_PROFILE_MEMBERS: tuple[Field, ...] = tuple(
+    _member(name, "float", minimum=0) if name != "model" else _member(name, "str")
+    for name in (
+        "model",
+        "temperature",
+        "top_p",
+        "top_k",
+        "min_p",
+        "presence_penalty",
+        "frequency_penalty",
+        "repetition_penalty",
+    )
+)
+
+SANDBOX_PROFILE_MEMBERS: tuple[Field, ...] = (
+    _member("path", "str"),
+    _member("memory_mb", "int", minimum=1),
+    _member("cpus", "int", minimum=1),
+    _member("pids", "int", minimum=1),
+    _member("timeout", "int", minimum=0),
+)
+
+COLLECTIONS: list[CollectionSpec] = [
+    CollectionSpec(
+        title="Model profiles",
+        prefix="inference.profiles",
+        members=INFERENCE_PROFILE_MEMBERS,
+        required=("model",),
+    ),
+    CollectionSpec(
+        title="Sandbox profiles",
+        prefix="sandbox.profiles",
+        members=SANDBOX_PROFILE_MEMBERS,
+        required=(),
+    ),
+]
+
+
 def _dynamic_choices(name: str) -> tuple[str, ...]:
     """Resolve a dynamic choice provider by name (lazy imports avoid cycles)."""
     if name == "agents":
@@ -173,18 +227,53 @@ def key_present(d: dict, key: str) -> bool:
     return nested_get(d, key) is not _MISSING
 
 
+def _layer_source(user: dict, project: dict, key: str) -> str:
+    """Return the effective-value source layer for one dotted key."""
+    if key_present(project, key):
+        return "project"
+    if key_present(user, key):
+        return "global"
+    return "default"
+
+
 def resolve_field_sources(user: dict, project: dict) -> dict[str, str]:
     """Map every registry key to its effective-value source layer."""
-    return {
-        field.key: (
-            "project"
-            if key_present(project, field.key)
-            else "global"
-            if key_present(user, field.key)
-            else "default"
+    return {field.key: _layer_source(user, project, field.key) for field in ALL_FIELDS}
+
+
+def validate_profile_name(existing: list[str], name: str) -> str | None:
+    """Validate a proposed profile name; None when valid, else an error."""
+    if not _is_valid_profile_name(name):
+        return (
+            "name must be alphanumeric/underscore and not 'default' or 'active'"
+            if name
+            else "name must not be empty"
         )
-        for field in ALL_FIELDS
-    }
+    if name in existing:
+        return f"profile {name!r} already exists"
+    return None
+
+
+def validate_volume_entry(existing: list, entry: str) -> str | None:
+    """Validate one volume entry against the existing list; None when valid."""
+    return utils.validate_volumes(existing + [entry])
+
+
+def validate_env_entry(raw: str) -> tuple[bool, str, str, str]:
+    """Parse and validate a ``KEY=VALUE`` entry.
+
+    Returns ``(ok, message, key, value)``; key and value are empty when
+    parsing failed.
+    """
+    key, separator, value = raw.partition("=")
+    if not separator:
+        return False, "entry must be in KEY=VALUE form", "", ""
+    if not key:
+        return False, "key must not be empty", "", ""
+    message = utils.validate_environment({key: value})
+    if message:
+        return False, message, "", ""
+    return True, "", key, value
 
 
 def validate_input(field: Field, raw: str) -> tuple[bool, str, Any]:
@@ -334,6 +423,10 @@ class _EditorState:
             rows.append(("group", group, None))
             for field in fields:
                 rows.append(("field", field.label, field))
+            prefix = group.split()[0].lower()
+            for spec in COLLECTIONS:
+                if spec.prefix.split(".", 1)[0] == prefix:
+                    rows.append(("collection", spec.title, spec))
         return rows
 
     # -- rendering --
@@ -359,9 +452,17 @@ class _EditorState:
             elif key in (curses.KEY_DOWN, ord("j")):
                 self._move(1)
             elif key in (curses.KEY_ENTER, 10, 13):
-                self._edit_field(stdscr)
+                kind, _, _row = self.rows[self.cursor]
+                if kind == "collection":
+                    self._edit_collection(stdscr, _row)
+                else:
+                    self._edit_field(stdscr)
             elif key == ord("r"):
-                self._reset_field()
+                kind, _, _row = self.rows[self.cursor]
+                if kind == "collection":
+                    self.status = "reset applies to fields, not profile lists"
+                else:
+                    self._reset_field()
             elif key == ord("s"):
                 self.saved = True
                 return
@@ -446,7 +547,7 @@ class _EditorState:
         curses = self.curses
         if idx == self.cursor:
             return curses.A_REVERSE | curses.A_BOLD
-        if row_kind == "group":
+        if row_kind in ("group", "collection"):
             return curses.A_DIM
         source = self.sources.get(field.key, "default")
         return self.source_attrs.get(source, 0)
@@ -454,6 +555,14 @@ class _EditorState:
     def _row_text(self, field, label) -> str:
         if field is None:
             return label
+        if isinstance(field, CollectionSpec):
+            profiles = nested_get(self.merged, field.prefix)
+            if isinstance(profiles, dict):
+                count = sum(1 for v in profiles.values() if isinstance(v, dict))
+            else:
+                count = 0
+            value = f"{count} profiles" if count else "none"
+            return f"{label}  ....  {value}"
         value = nested_get(self.merged, field.key)
         if value is _MISSING or value is None:
             value = UNSET_LABEL
@@ -492,6 +601,18 @@ class _EditorState:
             win.addstr(rows - 1, cols - 2, "┘", attr)
         except curses.error:
             pass  # clipping at screen edges
+
+    def _begin_modal(self, stdscr) -> None:
+        """Clear child-modal leftovers before drawing a modal over stdscr.
+
+        Nested modals (member editor, prompts) write directly to the
+        physical screen; when they close, the parent modal would leave
+        their pixels on screen because it only refreshes its own window.
+        Marking stdscr for a full repaint erases them while keeping its
+        own content (the field list) visible around the modal.
+        """
+        stdscr.redrawwin()
+        stdscr.noutrefresh()
 
     def _draw_help(self, stdscr, height, width) -> None:
         lines = [
@@ -620,14 +741,20 @@ class _EditorState:
             nested_set(self.target, field.key, _coerce_option(field, option))
         self._refresh_layers()
 
-    def _edit_text(self, stdscr, field) -> None:
+    def _apply_profile_create(self, spec: CollectionSpec, name: str, members: dict) -> None:
+        nested_set(self.target, f"{spec.prefix}.{name}", members)
+        self._refresh_layers()
+
+    def _apply_profile_delete(self, spec: CollectionSpec, name: str) -> None:
+        nested_delete(self.target, f"{spec.prefix}.{name}")
+        self._refresh_layers()
+
+    def _prompt_text(
+        self, stdscr, title: str, initial: str, note: str = "", key_hint: str = ""
+    ) -> str | None:
+        """Single-line input modal; returns the buffer, or None on Esc."""
         curses = self.curses
-        current = nested_get(self.merged, field.key)
-        if current is _MISSING or current is None:
-            buffer = ""
-        else:
-            buffer = "true" if current is True else "false" if current is False else str(current)
-        note = self.status
+        buffer = initial
         height, width = stdscr.getmaxyx()
         box_h = 6 if not note else 7
         box_w = min(64, width - 2)
@@ -640,19 +767,19 @@ class _EditorState:
             while True:
                 win.erase()
                 self._draw_unicode_box(win)
-                win.addstr(0, 2, field.label[: box_w - 3], self._modal_attr() | curses.A_REVERSE)
+                win.addstr(0, 2, title[: box_w - 3], self._modal_attr() | curses.A_REVERSE)
                 if note:
                     win.addstr(1, 1, note[: box_w - 2], curses.A_DIM)
-                win.addstr(2, 2, f"{field.key}:", curses.A_DIM)
+                if key_hint:
+                    win.addstr(2, 2, f"{key_hint}:", curses.A_DIM)
                 win.addstr(3, 2, buffer[: box_w - 3])
                 win.addstr(box_h - 1, 2, "Enter apply · Esc cancel"[: box_w - 3], curses.A_DIM)
                 win.refresh()
                 key = win.getch()
                 if key in (curses.KEY_ENTER, 10, 13):
-                    self._apply_text(field, buffer)
-                    return
+                    return buffer
                 if key == 27:  # Esc
-                    return
+                    return None
                 if key in (curses.KEY_BACKSPACE, 127, 8):
                     buffer = buffer[:-1]
                 elif key == curses.KEY_RESIZE:
@@ -661,6 +788,18 @@ class _EditorState:
                     buffer += chr(key)
         finally:
             curses.curs_set(0)
+
+    def _edit_text(self, stdscr, field) -> None:
+        current = nested_get(self.merged, field.key)
+        if current is _MISSING or current is None:
+            buffer = ""
+        else:
+            buffer = "true" if current is True else "false" if current is False else str(current)
+        buffer = self._prompt_text(
+            stdscr, field.label, buffer, note=self.status, key_hint=field.key
+        )
+        if buffer is not None:
+            self._apply_text(field, buffer)
 
     def _apply_text(self, field, buffer: str) -> None:
         if field.kind == "str":
@@ -687,3 +826,392 @@ class _EditorState:
         nested_delete(self.target, field.key)
         self._refresh_layers()
         self.status = f"{field.key} reset; effective value falls back to the next layer"
+
+    # -- collection editors --
+
+    def _collection_profiles(self, spec: CollectionSpec) -> list[tuple[str, dict]]:
+        """Return (name, profile) pairs for dict entries, in file order."""
+        profiles = nested_get(self.merged, spec.prefix)
+        if not isinstance(profiles, dict):
+            return []
+        return [(name, p) for name, p in profiles.items() if isinstance(p, dict)]
+
+    def _target_profile_names(self, spec: CollectionSpec) -> list[str]:
+        profiles = nested_get(self.target, spec.prefix)
+        if not isinstance(profiles, dict):
+            return []
+        return list(profiles.keys())
+
+    def _profile_summary(self, spec: CollectionSpec, profile: dict) -> str:
+        if spec.prefix == "inference.profiles":
+            model = profile.get("model")
+            return str(model) if model is not None else "-"
+        return f"{profile.get('cpus', '-')} cpus / {profile.get('memory_mb', '-')} MB"
+
+    def _edit_collection(self, stdscr, spec: CollectionSpec) -> None:
+        curses = self.curses
+        cursor = 0
+        note = ""
+        while True:
+            profiles = self._collection_profiles(spec)
+            cursor = max(0, min(cursor, max(0, len(profiles) - 1)))
+            height, width = stdscr.getmaxyx()
+            box_h = min(max(len(profiles), 1) + 6, height - 2)
+            box_w = min(64, width - 2)
+            top = max(1, (height - box_h) // 2)
+            left = max(0, (width - box_w) // 2)
+            win = curses.newwin(box_h, box_w, top, left)
+            self._begin_modal(stdscr)
+            win.keypad(True)
+            win.erase()
+            self._draw_unicode_box(win)
+            win.addstr(0, 2, spec.title[: box_w - 3], self._modal_attr() | curses.A_REVERSE)
+            visible = box_h - 5
+            offset = 0
+            if cursor >= offset + visible:
+                offset = cursor - visible + 1
+            if not profiles:
+                win.addstr(1, 2, "(no profiles)"[: box_w - 3], curses.A_DIM)
+            else:
+                for i, (name, profile) in enumerate(profiles[offset : offset + visible]):
+                    text = f"{name}  ....  {self._profile_summary(spec, profile)}"
+                    attr = curses.A_REVERSE | curses.A_BOLD if offset + i == cursor else 0
+                    win.addstr(i + 1, 2, text[: box_w - 3], attr)
+            if note:
+                win.addstr(box_h - 3, 1, note[: box_w - 2], curses.A_DIM)
+            footer = "↑/↓ move · Enter edit · a add · d delete · Esc back"
+            win.addstr(box_h - 1, 2, footer[: box_w - 3], curses.A_DIM)
+            win.refresh()
+            key = win.getch()
+            if key in (curses.KEY_UP, ord("k")):
+                cursor = max(0, cursor - 1)
+            elif key in (curses.KEY_DOWN, ord("j")):
+                cursor = min(max(0, len(profiles) - 1), cursor + 1)
+            elif key in (curses.KEY_ENTER, 10, 13):
+                if profiles:
+                    self._edit_profile_members(stdscr, spec, profiles[cursor][0])
+                    self._refresh_layers()
+            elif key == ord("a"):
+                added = self._prompt_add_profile(stdscr, spec)
+                if added is not None:
+                    name, _ = added
+                    self._edit_profile_members(stdscr, spec, name)
+                    self._refresh_layers()
+                    missing = self._missing_required(spec, name)
+                    if missing:
+                        self._apply_profile_delete(spec, name)
+                        note = f"profile {name} discarded: {', '.join(missing)} is required"
+                    elif not nested_get(self.target, f"{spec.prefix}.{name}"):
+                        # Left the member editor without changing anything:
+                        # don't keep an empty profile in the file.
+                        self._apply_profile_delete(spec, name)
+            elif key == ord("d"):
+                if not profiles:
+                    continue
+                name = profiles[cursor][0]
+                confirm = self._prompt_text(
+                    stdscr, "Delete profile", "", note=f"type y to delete {name}"
+                )
+                if confirm == "y":
+                    self._apply_profile_delete(spec, name)
+                    if any(n == name for n, _ in self._collection_profiles(spec)):
+                        note = (
+                            "deleted from this file; still defined in another configuration layer"
+                        )
+                    else:
+                        note = f"profile {name} deleted"
+            elif key == 27:  # Esc
+                return
+            elif key == curses.KEY_RESIZE:
+                continue
+
+    def _missing_required(self, spec: CollectionSpec, name: str) -> list[str]:
+        """Required member keys absent (or empty) from the profile in target."""
+        profile = nested_get(self.target, f"{spec.prefix}.{name}")
+        if not isinstance(profile, dict):
+            return list(spec.required)
+        return [k for k in spec.required if not profile.get(k)]
+
+    def _prompt_add_profile(self, stdscr, spec: CollectionSpec) -> tuple[str, bool] | None:
+        """Prompt for a new profile name and create it; None on abort.
+
+        Returns ``(name, created_now)``. The caller opens the full member
+        editor so every option is visible; profiles created now are
+        discarded when required members are still missing on exit.
+        """
+        while True:
+            name = self._prompt_text(stdscr, "Profile name", "")
+            if name is None or name == "":
+                return None
+            error = validate_profile_name(self._target_profile_names(spec), name)
+            if error:
+                self.status = f"Invalid name: {error}"
+                continue
+            break
+        self._apply_profile_create(spec, name, {})
+        return name, True
+
+    def _edit_profile_members(self, stdscr, spec: CollectionSpec, name: str) -> None:
+        curses = self.curses
+        members = list(spec.members)
+        extra = ()
+        if spec.prefix == "sandbox.profiles":
+            extra = ("volume", "environment")
+        cursor = 0
+        note = ""
+        while True:
+            total = len(members) + len(extra)
+            cursor = max(0, min(cursor, total - 1))
+            height, width = stdscr.getmaxyx()
+            box_h = min(total + 6, height - 2)
+            box_w = min(64, width - 2)
+            top = max(1, (height - box_h) // 2)
+            left = max(0, (width - box_w) // 2)
+            win = curses.newwin(box_h, box_w, top, left)
+            self._begin_modal(stdscr)
+            win.keypad(True)
+            win.erase()
+            self._draw_unicode_box(win)
+            win.addstr(
+                0,
+                2,
+                f"{spec.title} — {name}"[: box_w - 3],
+                self._modal_attr() | curses.A_REVERSE,
+            )
+            rows: list[tuple[str, str, str, str]] = []  # (kind, member_key, text, tag)
+            for member in members:
+                dotted = f"{spec.prefix}.{name}.{member.key}"
+                text, tag = self._member_row_text(spec, name, member)
+                rows.append(("member", member.key, f"{member.label}  ....  {text}  [{tag}]", tag))
+            for extra_key in extra:
+                dotted = f"{spec.prefix}.{name}.{extra_key}"
+                text, tag = self._extra_row_text(spec, name, extra_key)
+                label = extra_key.capitalize()
+                rows.append((extra_key, extra_key, f"{label}  ....  {text}  [{tag}]", tag))
+            visible = box_h - 5
+            offset = max(0, min(cursor - visible + 1, max(0, total - visible)))
+            for i, (_, _, text, tag) in enumerate(rows[offset : offset + visible]):
+                attr = (
+                    curses.A_REVERSE | curses.A_BOLD
+                    if offset + i == cursor
+                    else self.source_attrs.get(tag, 0)
+                )
+                win.addstr(i + 1, 2, text[: box_w - 3], attr)
+            missing = self._missing_required(spec, name)
+            if missing:
+                note = note or (f"required: {', '.join(missing)} — profile is discarded on exit")
+            if note:
+                win.addstr(box_h - 3, 1, note[: box_w - 2], curses.A_DIM)
+            footer = "↑/↓ move · Enter edit · r reset · Esc back"
+            win.addstr(box_h - 1, 2, footer[: box_w - 3], curses.A_DIM)
+            win.refresh()
+            key = win.getch()
+            if key in (curses.KEY_UP, ord("k")):
+                cursor = max(0, cursor - 1)
+            elif key in (curses.KEY_DOWN, ord("j")):
+                cursor = min(total - 1, cursor + 1)
+            elif key in (curses.KEY_ENTER, 10, 13):
+                kind, member_key, _, _tag = rows[cursor]
+                if kind in ("volume", "environment"):
+                    self._edit_extra(stdscr, spec, name, kind)
+                else:
+                    self._edit_profile_member(stdscr, spec, name, member_key)
+            elif key == ord("r"):
+                kind, member_key, _, _tag = rows[cursor]
+                dotted = f"{spec.prefix}.{name}.{member_key}"
+                nested_delete(self.target, dotted)
+                self._refresh_layers()
+                note = f"{member_key} reset; effective value falls back to the next layer"
+            elif key == 27:  # Esc
+                return
+            elif key == curses.KEY_RESIZE:
+                continue
+
+    def _member_row_text(self, spec: CollectionSpec, name: str, member: Field):
+        """Return (display value, source tag) for a scalar member row."""
+        dotted = f"{spec.prefix}.{name}.{member.key}"
+        value = nested_get(self.merged, dotted)
+        if value is not _MISSING and value is not None:
+            if isinstance(value, bool):
+                value = "true" if value else "false"
+            return str(value), _layer_source(self.user, self.project, dotted)
+        # Absent: sandbox members inherit the root sandbox value.
+        if spec.prefix == "sandbox.profiles":
+            root = nested_get(self.merged, f"sandbox.{member.key}")
+            if root is not _MISSING and root is not None:
+                return str(root), "default"
+        return UNSET_LABEL, _layer_source(self.user, self.project, dotted)
+
+    def _extra_row_text(self, spec: CollectionSpec, name: str, extra_key: str):
+        """Return (display value, source tag) for volume/environment rows."""
+        dotted = f"{spec.prefix}.{name}.{extra_key}"
+        value = nested_get(self.merged, dotted)
+        tag = _layer_source(self.user, self.project, dotted)
+        if value is _MISSING or value is None:
+            root = nested_get(self.merged, f"sandbox.{extra_key}")
+            if root is not _MISSING and root is not None:
+                value, tag = root, "default"
+            else:
+                value = []
+        if extra_key == "volume":
+            n = len(value) if isinstance(value, list) else 0
+            return (f"{n} entries" if n else "none"), tag
+        n = len(value) if isinstance(value, dict) else 0
+        return (f"{n} variables" if n else "none"), tag
+
+    def _edit_profile_member(self, stdscr, spec: CollectionSpec, name: str, member_key: str):
+        member = next(m for m in spec.members if m.key == member_key)
+        dotted = f"{spec.prefix}.{name}.{member_key}"
+        # Pre-fill with the profile's own value from target; empty when inherited.
+        current = nested_get(self.target, dotted)
+        initial = "" if current is _MISSING or current is None else str(current)
+        raw = self._prompt_text(stdscr, member.label, initial, key_hint=dotted)
+        if raw is None:
+            return
+        if raw == "":
+            if member.kind == "str":
+                nested_delete(self.target, dotted)
+                self._refresh_layers()
+            return
+        ok, message, value = validate_input(member, raw)
+        if not ok:
+            self.status = f"Invalid value: {message}"
+            return
+        nested_set(self.target, dotted, value)
+        self._refresh_layers()
+
+    def _edit_extra(self, stdscr, spec: CollectionSpec, name: str, kind: str) -> None:
+        dotted = f"{spec.prefix}.{name}.{kind}"
+        if kind == "volume":
+            self._edit_volume_list(stdscr, dotted)
+        else:
+            self._edit_environment(stdscr, dotted)
+
+    def _edit_volume_list(self, stdscr, dotted: str) -> None:
+        curses = self.curses
+        cursor = 0
+        note = ""
+        while True:
+            entries = nested_get(self.target, dotted)
+            if not isinstance(entries, list):
+                entries = []
+            cursor = max(0, min(cursor, max(0, len(entries) - 1)))
+            height, width = stdscr.getmaxyx()
+            box_h = min(max(len(entries), 1) + 6, height - 2)
+            box_w = min(64, width - 2)
+            top = max(1, (height - box_h) // 2)
+            left = max(0, (width - box_w) // 2)
+            win = curses.newwin(box_h, box_w, top, left)
+            self._begin_modal(stdscr)
+            win.keypad(True)
+            win.erase()
+            self._draw_unicode_box(win)
+            win.addstr(0, 2, "Volumes"[: box_w - 3], self._modal_attr() | curses.A_REVERSE)
+            visible = box_h - 5
+            offset = max(0, min(cursor - visible + 1, max(0, len(entries) - visible)))
+            if not entries:
+                win.addstr(1, 2, "(no volumes)"[: box_w - 3], curses.A_DIM)
+            else:
+                for i, entry in enumerate(entries[offset : offset + visible]):
+                    attr = curses.A_REVERSE | curses.A_BOLD if offset + i == cursor else 0
+                    win.addstr(i + 1, 2, str(entry)[: box_w - 3], attr)
+            if note:
+                win.addstr(box_h - 3, 1, note[: box_w - 2], curses.A_DIM)
+            footer = "↑/↓ move · a add · d delete · Esc back"
+            win.addstr(box_h - 1, 2, footer[: box_w - 3], curses.A_DIM)
+            win.refresh()
+            key = win.getch()
+            if key in (curses.KEY_UP, ord("k")):
+                cursor = max(0, cursor - 1)
+            elif key in (curses.KEY_DOWN, ord("j")):
+                cursor = min(max(0, len(entries) - 1), cursor + 1)
+            elif key == ord("a"):
+                entry = self._prompt_text(stdscr, "Volume (/path or ~/path, optional :ro)", "")
+                if entry is None or entry == "":
+                    continue
+                error = validate_volume_entry(entries, entry)
+                if error:
+                    note = f"Invalid volume: {error}"
+                    continue
+                entries.append(entry)
+                nested_set(self.target, dotted, entries)
+                self._refresh_layers()
+            elif key == ord("d"):
+                if not entries:
+                    continue
+                del entries[cursor]
+                nested_set(self.target, dotted, entries)
+                self._refresh_layers()
+                cursor = min(cursor, max(0, len(entries) - 1))
+            elif key == 27:  # Esc
+                return
+            elif key == curses.KEY_RESIZE:
+                continue
+
+    def _edit_environment(self, stdscr, dotted: str) -> None:
+        curses = self.curses
+        cursor = 0
+        note = ""
+        while True:
+            env = nested_get(self.target, dotted)
+            if not isinstance(env, dict):
+                env = {}
+            keys = list(env.keys())
+            cursor = max(0, min(cursor, max(0, len(keys) - 1)))
+            height, width = stdscr.getmaxyx()
+            box_h = min(max(len(keys), 1) + 6, height - 2)
+            box_w = min(64, width - 2)
+            top = max(1, (height - box_h) // 2)
+            left = max(0, (width - box_w) // 2)
+            win = curses.newwin(box_h, box_w, top, left)
+            self._begin_modal(stdscr)
+            win.keypad(True)
+            win.erase()
+            self._draw_unicode_box(win)
+            win.addstr(0, 2, "Environment"[: box_w - 3], self._modal_attr() | curses.A_REVERSE)
+            visible = box_h - 5
+            offset = max(0, min(cursor - visible + 1, max(0, len(keys) - visible)))
+            if not keys:
+                win.addstr(1, 2, "(no variables)"[: box_w - 3], curses.A_DIM)
+            else:
+                for i, k in enumerate(keys[offset : offset + visible]):
+                    text = f"{k} = {env[k]}"
+                    attr = curses.A_REVERSE | curses.A_BOLD if offset + i == cursor else 0
+                    win.addstr(i + 1, 2, text[: box_w - 3], attr)
+            if note:
+                win.addstr(box_h - 3, 1, note[: box_w - 2], curses.A_DIM)
+            footer = "↑/↓ move · a add · d delete · Esc back"
+            win.addstr(box_h - 1, 2, footer[: box_w - 3], curses.A_DIM)
+            win.refresh()
+            key = win.getch()
+            if key in (curses.KEY_UP, ord("k")):
+                cursor = max(0, cursor - 1)
+            elif key in (curses.KEY_DOWN, ord("j")):
+                cursor = min(max(0, len(keys) - 1), cursor + 1)
+            elif key == ord("a"):
+                raw = self._prompt_text(stdscr, "KEY=VALUE", "")
+                if raw is None or raw == "":
+                    continue
+                ok, message, k, value = validate_env_entry(raw)
+                if not ok:
+                    note = f"Invalid entry: {message}"
+                    continue
+                env[k] = value
+                nested_set(self.target, dotted, env)
+                self._refresh_layers()
+                note = f"{k} updated" if k in keys else f"{k} added"
+            elif key == ord("d"):
+                if not keys:
+                    continue
+                k = keys[cursor]
+                del env[k]
+                if env:
+                    nested_set(self.target, dotted, env)
+                else:
+                    nested_delete(self.target, dotted)
+                self._refresh_layers()
+                cursor = min(cursor, max(0, len(keys) - 2))
+            elif key == 27:  # Esc
+                return
+            elif key == curses.KEY_RESIZE:
+                continue

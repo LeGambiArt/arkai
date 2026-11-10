@@ -8,14 +8,19 @@ from arkai import config, config_editor, utils
 from arkai.config_editor import (
     _MISSING,
     ALL_FIELDS,
+    COLLECTIONS,
     Field,
     _dynamic_choices,
+    _layer_source,
     key_present,
     nested_delete,
     nested_get,
     nested_set,
     resolve_field_sources,
+    validate_env_entry,
     validate_input,
+    validate_profile_name,
+    validate_volume_entry,
 )
 
 
@@ -169,22 +174,28 @@ class TestRegistryInvariants:
         assert not config_editor.allows_unset(mode)
 
 
+def _make_state(target=None, user=None, project=None):
+    """Build an _EditorState without curses (fixture for mutation tests)."""
+    state = config_editor._EditorState.__new__(config_editor._EditorState)
+    state.curses = None
+    state.user = user if user is not None else {}
+    state.project = project if project is not None else {}
+    state.target = target if target is not None else state.project
+    state.target_path = ".arkai.yaml"
+    state.saved = False
+    state.status = ""
+    state.cursor = 0
+    state.offset = 0
+    state.merged = copy.deepcopy(config.DEFAULTS)
+    state.sources = resolve_field_sources(state.user, state.project)
+    state.rows = state._build_rows()
+    return state
+
+
 class TestEditorStateRefresh:
     def test_apply_choice_updates_effective_value_and_source(self):
         """Applied edits must show in the list (merged) and re-tag sources."""
-        state = config_editor._EditorState.__new__(config_editor._EditorState)
-        state.curses = None
-        state.user = {}
-        state.project = {}
-        state.target = state.project
-        state.target_path = ".arkai.yaml"
-        state.saved = False
-        state.status = ""
-        state.cursor = 0
-        state.offset = 0
-        state.merged = copy.deepcopy(config.DEFAULTS)
-        state.sources = resolve_field_sources({}, {})
-        state.rows = state._build_rows()
+        state = _make_state()
 
         port = next(f for f in ALL_FIELDS if f.key == "inference.port")
         state._apply_choice(port, "9000")
@@ -194,6 +205,127 @@ class TestEditorStateRefresh:
         state._apply_choice(port, config_editor.UNSET_LABEL)
         assert nested_get(state.merged, "inference.port") == config.DEFAULTS["inference"]["port"]
         assert state.sources["inference.port"] == "default"
+
+
+class TestLayerSource:
+    def test_only_project(self):
+        assert _layer_source({}, {"a": {"b": 1}}, "a.b") == "project"
+
+    def test_only_user(self):
+        assert _layer_source({"a": {"b": 1}}, {}, "a.b") == "global"
+
+    def test_project_wins(self):
+        assert _layer_source({"a": {"b": 1}}, {"a": {"b": 2}}, "a.b") == "project"
+
+    def test_neither(self):
+        assert _layer_source({}, {}, "a.b") == "default"
+
+
+class TestCollectionRegistry:
+    def test_member_keys_unique_per_spec(self):
+        for spec in COLLECTIONS:
+            keys = [m.key for m in spec.members]
+            assert len(keys) == len(set(keys)), f"duplicate members in {spec.prefix}"
+
+    def test_inference_members_match_model_settings(self):
+        inference = next(s for s in COLLECTIONS if s.prefix == "inference.profiles")
+        sampling = {m.key for m in inference.members} - {"model"}
+        assert sampling == config.MODEL_SETTINGS
+
+    def test_required_subset_of_members(self):
+        for spec in COLLECTIONS:
+            keys = {m.key for m in spec.members}
+            assert set(spec.required) <= keys
+
+    def test_no_scalar_key_inside_collection_namespace(self):
+        for spec in COLLECTIONS:
+            for field in ALL_FIELDS:
+                assert not field.key.startswith(spec.prefix + "."), (
+                    f"scalar key {field.key} collides with {spec.prefix}"
+                )
+
+
+class TestValidateProfileName:
+    def test_accepts_valid(self):
+        assert validate_profile_name([], "dev_1") is None
+
+    @pytest.mark.parametrize("name", ["", "bad name", "default", "active", "Active"])
+    def test_rejects_invalid(self, name):
+        assert validate_profile_name([], name) is not None
+
+    def test_rejects_duplicate(self):
+        assert validate_profile_name(["dev"], "dev") is not None
+
+
+class TestValidateVolumeEntry:
+    def test_accepts_absolute_and_home_ro(self):
+        assert validate_volume_entry([], "/a") is None
+        assert validate_volume_entry([], "~/b:ro") is None
+
+    def test_rejects_relative(self):
+        assert validate_volume_entry([], "relative") is not None
+
+    def test_rejects_bad_flag(self):
+        assert validate_volume_entry([], "/a:rw") is not None
+
+    def test_rejects_conflicting_duplicate(self):
+        assert validate_volume_entry(["/a"], "/a:ro") is not None
+
+
+class TestValidateEnvEntry:
+    def test_accepts_simple(self):
+        assert validate_env_entry("K=v") == (True, "", "K", "v")
+
+    def test_value_may_contain_equals(self):
+        assert validate_env_entry("K=v=w") == (True, "", "K", "v=w")
+
+    def test_rejects_missing_separator(self):
+        assert validate_env_entry("novalue")[0] is False
+
+    def test_rejects_empty_key(self):
+        assert validate_env_entry("=v")[0] is False
+
+
+class TestProfileStateMutations:
+    def test_apply_profile_create(self):
+        state = _make_state()
+        spec = COLLECTIONS[0]
+        state._apply_profile_create(spec, "fast", {"model": "test.gguf"})
+        assert nested_get(state.target, "inference.profiles.fast") == {"model": "test.gguf"}
+        assert nested_get(state.merged, "inference.profiles.fast.model") == "test.gguf"
+
+    def test_apply_profile_delete_prunes_empty_parent(self):
+        state = _make_state()
+        spec = COLLECTIONS[1]
+        state._apply_profile_create(spec, "dev", {})
+        state._apply_profile_delete(spec, "dev")
+        # DEFAULTS carries sandbox.profiles: {} so the effective value stays
+        # an empty dict; the target file must not retain the pruned chain.
+        assert "sandbox" not in state.target
+        assert nested_get(state.merged, "sandbox.profiles") == {}
+
+    def test_missing_required_reports_empty_members(self):
+        state = _make_state()
+        spec = COLLECTIONS[0]  # inference: required ("model",)
+        state._apply_profile_create(spec, "fast", {})
+        assert state._missing_required(spec, "fast") == ["model"]
+        nested_set(state.target, "inference.profiles.fast.model", "m")
+        assert state._missing_required(spec, "fast") == []
+
+    def test_missing_required_absent_profile(self):
+        state = _make_state()
+        assert state._missing_required(COLLECTIONS[0], "nope") == ["model"]
+
+    def test_member_delete_falls_back_to_root_value(self):
+        state = _make_state(project={"sandbox": {"memory_mb": 1024}})
+        nested_set(state.target, "sandbox.profiles.dev", {"memory_mb": 512})
+        nested_delete(state.target, "sandbox.profiles.dev.memory_mb")
+        state._refresh_layers()
+        # The emptied profile and its pruned parent are gone from the file;
+        # the effective value falls back to the root sandbox setting.
+        assert "profiles" not in state.target["sandbox"]
+        assert nested_get(state.merged, "sandbox.profiles.dev.memory_mb") is _MISSING
+        assert nested_get(state.merged, "sandbox.memory_mb") == 1024
 
 
 def _config_home(tmp_path, monkeypatch):
@@ -285,6 +417,23 @@ class TestCmdConfigEdit:
         with patch.object(config_editor, "run_editor", side_effect=script):
             self._run(["edit"])
         assert project_path.read_text() == original
+
+    def test_edit_saves_inference_profile_alongside_existing_keys(self, tmp_path, monkeypatch):
+        _config_home(tmp_path, monkeypatch)
+        monkeypatch.chdir(tmp_path)
+        project_path = tmp_path / ".arkai.yaml"
+        utils.save_yaml(str(project_path), {"inference": {"model": "base.gguf", "custom_key": 1}})
+
+        def script(target, merged, user, project, target_path):
+            nested_set(target, "inference.profiles.p1", {"model": "m"})
+            return True
+
+        with patch.object(config_editor, "run_editor", side_effect=script):
+            self._run(["edit"])
+        saved = utils.load_yaml(str(project_path))
+        assert saved["inference"]["model"] == "base.gguf"
+        assert saved["inference"]["custom_key"] == 1
+        assert saved["inference"]["profiles"]["p1"]["model"] == "m"
 
 
 class TestCmdConfigInit:

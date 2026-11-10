@@ -57,10 +57,32 @@ boolean fields offer `(unset)` when the default is empty; selecting it
 removes the key. For free-form text fields, submitting an empty value
 deletes the key.
 
-Saving rewrites the whole file, so YAML comments are not preserved. Only
-scalar settings are editable in the UI; complex mappings such as
-`inference.profiles`, `sandbox.profiles`, volumes, and plugin lists pass
-through untouched and must be edited in the YAML file directly.
+Saving rewrites the whole file, so YAML comments are not preserved. Other
+keys present in the file (plugin lists, agent cloud providers) pass through
+untouched.
+
+### Editing profiles
+
+The field list includes a "Model profiles" row after the inference fields
+and a "Sandbox profiles" row after the sandbox fields. `Enter` on either
+opens the profile list for the file being edited, where `a` adds a profile,
+`d` deletes the selected one (type `y` to confirm), `Enter` edits its
+members, and `Esc` goes back. Deleting a profile that is also defined in
+another configuration layer removes it only from the file being edited.
+
+Profile names are alphanumeric plus underscore; `default` and `active` are
+reserved. Adding a profile prompts for its name and then opens the full
+member editor with every option listed; a new profile whose required
+members (the model, for model profiles) are still empty when you leave the
+editor is discarded. Sandbox profiles start empty. Sandbox members left
+unset inherit the root `sandbox` values and are shown tagged `[default]`;
+setting a member stores it in the profile, and `r` on a member removes it
+again.
+
+Sandbox profiles also expose `volume` and `environment` editors. Volumes are
+entered as `/path` or `~/path`, optionally suffixed `:ro`; duplicates with
+conflicting flags are rejected. Environment entries are entered as
+`KEY=VALUE` and overwrite an existing key.
 
 `arkai config init --tui` initializes a new file (project by default,
 `--global` for the user file) and opens the same editor pre-filled with the

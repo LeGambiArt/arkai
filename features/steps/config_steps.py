@@ -117,6 +117,24 @@ def step_config_editor_sets_and_saves(context, key, value):
     context.add_cleanup(patch_obj.stop)
 
 
+@given('the config editor adds inference profile "{name}" with model "{model}" and saves')  # ty: ignore[call-non-callable]
+def step_config_editor_adds_profile_and_saves(context, name, model):
+    """Install a scripted editor that creates one profile and saves."""
+    from arkai import config_editor
+    from arkai.config_editor import nested_set
+
+    def script(target, merged, user, project, target_path):
+        nested_set(target, f"inference.profiles.{name}", {"model": model})
+        return True
+
+    patch_obj = patch.object(config_editor, "run_editor", side_effect=script)
+    patch_obj.start()
+    context.editor_start_config = (
+        dict(context.config_data) if context.config_data is not None else None
+    )
+    context.add_cleanup(patch_obj.stop)
+
+
 @given("the config editor aborts without saving")  # ty: ignore[call-non-callable]
 def step_config_editor_aborts(context):
     """Install a scripted editor that quits without saving."""
@@ -207,3 +225,16 @@ def step_check_file_agent_name(context, path, name):
 @then("the file .arkai.yaml does not exist")  # ty: ignore[call-non-callable]
 def step_check_config_not_created(context):
     assert ".arkai.yaml" not in context.existing_files, ".arkai.yaml was unexpectedly created"
+
+
+@then('the file .arkai.yaml has inference profile "{name}" with model "{model}"')  # ty: ignore[call-non-callable]
+def step_check_config_inference_profile(context, name, model):
+    assert context.config_data is not None, ".arkai.yaml was not created"
+    profile = context.config_data["inference"]["profiles"][name]
+    assert profile["model"] == model
+
+
+@then('the file .arkai.yaml has inference model "{model}"')  # ty: ignore[call-non-callable]
+def step_check_config_inference_model(context, model):
+    assert context.config_data is not None, ".arkai.yaml was not created"
+    assert context.config_data["inference"]["model"] == model
