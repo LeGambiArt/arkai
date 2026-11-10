@@ -10,7 +10,7 @@ model and the supporting services it needs.
 
 ## Requirements
 
-- Python 3.10–3.14
+- Python 3.10+
 - `git` for Git-backed model downloads; Hugging Face repositories with
   large weight files may also require Git LFS.
 - For local inference, an installed inference backend. The default is
@@ -34,7 +34,7 @@ To install from the GitHub repository:
 ```bash
 git clone https://github.com/LeGambiArt/arkai.git
 cd arkai
-python3.14 -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install .
 ```

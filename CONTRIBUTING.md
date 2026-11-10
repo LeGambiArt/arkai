@@ -7,11 +7,11 @@ relevant tests and documentation updates.
 
 ## Development setup
 
-Arkai supports Python 3.10–3.14. From a checkout, create a virtual
+Arkai requires Python 3.10+. From a checkout, create a virtual
 environment and install the development and optional RAG dependencies:
 
 ```bash
-python3.14 -m venv .venv
+python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install -e '.[dev,rag]'
 ```

@@ -7,7 +7,7 @@ name = "arkai"
 dynamic = ["version"]
 description = "Local AI inference workflow management"
 readme = "README.md"
-requires-python = ">=3.10,<3.15"
+requires-python = ">=3.10"
 license = {text = "Apache License 2.0"}
 authors = [{name = "arkai contributors"}]
 

@@ -11,7 +11,7 @@ python -m pip install 'arkai[rag]'
 
 From a source checkout, install with `python -m pip install -e '.[rag]'`.
 
-Use a Python 3.10–3.14 environment. The `rag` extra no longer installs a
+Use a Python 3.10+ environment. The `rag` extra no longer installs a
 vector database package: the database server runs as a container
 (Qdrant by default, ChromaDB opt-in) under podman, Apple's container
 runtime, or docker. See the [vector database guide](vector-database.md)
