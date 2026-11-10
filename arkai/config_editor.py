@@ -485,7 +485,7 @@ class _EditorState:
         bottom = min(self.offset + list_height, len(rows))
         for y, idx in enumerate(range(self.offset, bottom), start=2):
             row_kind, label, field = rows[idx]
-            text = self._row_text(field, label)
+            text = self._row_text(field, label, width)
             attr = self._row_attr(row_kind, field, idx)
             try:
                 stdscr.addstr(y, 0, text[: width - 1], attr)
@@ -552,8 +552,10 @@ class _EditorState:
         source = self.sources.get(field.key, "default")
         return self.source_attrs.get(source, 0)
 
-    def _row_text(self, field, label) -> str:
-        if field is None:
+    def _row_text(self, field, label, width: int = 0) -> str:
+        if field is None:  # group header row
+            if width > len(label) + 2:
+                return f"{label} {'─' * (width - len(label) - 2)}"
             return label
         if isinstance(field, CollectionSpec):
             profiles = nested_get(self.merged, field.prefix)
