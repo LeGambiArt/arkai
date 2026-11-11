@@ -756,10 +756,10 @@ def test_custom_cloud_requires_model_and_supported_agent() -> None:
     base_config["agent"]["cloud"]["custom"]["providers"]["gateway"]["default_model"] = "org/model"
     with patch.object(agent.config, "load_config", return_value=base_config):
         try:
-            with agent._agent_context("crush", cloud_services=["custom"]):
+            with agent._agent_context("claude", cloud_services=["custom"]):
                 pass
         except RuntimeError as error:
-            assert "opencode, pi, and omp" in str(error)
+            assert "crush, opencode, pi, and omp" in str(error)
         else:
             raise AssertionError("Expected custom cloud to reject unsupported agents")
 
@@ -957,6 +957,25 @@ def test_crush_agent_dispatches_cloud_services() -> None:
 
     assert launcher.call_args.kwargs["cloud_services"] == ["openai"]
     assert launcher.call_args.kwargs["cloud_model"] == "openai/model-v2"
+
+
+def test_crush_agent_dispatches_custom_cloud_configuration() -> None:
+    """Crush receives the resolved custom provider configuration on dispatch."""
+    custom_config = {"default_provider": "gateway", "providers": {}}
+    ctx = agent.AgentContext(
+        agent_name="crush",
+        agent_path="/bin/crush",
+        cloud_services=["custom"],
+        cloud_model="gateway/org-model",
+        cloud_config=custom_config,
+        cloud_api_environment={"TEAM_MODEL_KEY": "secret"},
+    )
+    with patch.object(agent_crush, "start", return_value=None) as launcher:
+        agent._dispatch_agent(ctx)
+
+    assert launcher.call_args.kwargs["cloud_services"] == ["custom"]
+    assert launcher.call_args.kwargs["cloud_config"] is custom_config
+    assert launcher.call_args.kwargs["cloud_api_environment"] == {"TEAM_MODEL_KEY": "secret"}
 
 
 def test_codex_agent_dispatches_openai_cloud_provider() -> None:

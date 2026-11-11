@@ -22,7 +22,8 @@ The built-in choices are `openai`, `vertex`, and `custom`. Cloud launches
 do not start the local inference backend. Each agent adapter translates
 the provider selection into that agent's native configuration and
 authentication format; provider support can vary by agent. Codex does not
-currently support `--cloud vertex`.
+currently support `--cloud vertex`, and Claude does not support cloud
+launches. Crush, OpenCode, Pi, and OMP support all three cloud services.
 
 ## OpenAI
 

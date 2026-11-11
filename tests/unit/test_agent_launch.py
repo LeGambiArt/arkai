@@ -806,6 +806,95 @@ def test_crush_vertex_cloud_passes_adc_and_provider_environment(
             path.unlink(missing_ok=True)
 
 
+def test_crush_custom_cloud_translates_providers_and_keys(tmp_path: Path, monkeypatch) -> None:
+    """Crush custom cloud runs map Arkai providers onto Crush's native format."""
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    monkeypatch.setattr(agent_crush, "_get_config_dir", lambda: sessions)
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    monkeypatch.setenv("TEAM_MODEL_KEY", "secret")
+    monkeypatch.setenv("OPENAI_GATEWAY_KEY", "gateway-secret")
+    cfg = _custom_cloud_cfg()
+
+    spec = agent_crush.build_launch_spec(
+        "/agent", cfg, None, False, None, cloud_services=["custom"]
+    )
+
+    crush_config_dir = Path(spec.environment["CRUSH_GLOBAL_CONFIG"])
+    config_data = json.loads((crush_config_dir / "crush.json").read_text())
+    assert config_data["providers"]["arkai-custom"] == {
+        "id": "arkai-custom",
+        "name": "Example Gateway",
+        "type": "openai-compat",
+        "base_url": "https://gateway.example/v1",
+        "discover_models": False,
+        "api_key": "$TEAM_MODEL_KEY",
+        "models": [
+            {
+                "id": "org/model-one",
+                "name": "Model One",
+                "context_window": 65536,
+                "default_max_tokens": 8192,
+                "can_reason": True,
+            },
+            {"id": "org/model-two", "name": "Model Two", "context_window": 262144},
+        ],
+    }
+    assert config_data["providers"]["openai"]["type"] == "openai-compat"
+    assert config_data["providers"]["openai"]["api_key"] == "$OPENAI_GATEWAY_KEY"
+    assert config_data["providers"]["anthropic"]["type"] == "messages"
+    assert config_data["providers"]["anthropic"]["models"] == [
+        {"id": "claude-model-id", "name": "Claude model", "context_window": 262144}
+    ]
+    assert config_data["models"] == {
+        "large": {"model": "org/model-one", "provider": "arkai-custom"},
+        "small": {"model": "org/model-one", "provider": "arkai-custom"},
+    }
+    assert "local-llm" not in config_data["providers"]
+    assert spec.environment["TEAM_MODEL_KEY"] == "secret"
+    assert spec.environment["OPENAI_GATEWAY_KEY"] == "gateway-secret"
+    assert "OPENAI_API_KEY" not in spec.environment
+    assert "ANTHROPIC_API_KEY" not in spec.environment
+    assert spec.command == ["/agent"]
+    for path in spec.cleanup_paths:
+        if path.is_dir():
+            path.rmdir()
+        else:
+            path.unlink(missing_ok=True)
+
+
+def test_crush_custom_cloud_sandbox_allows_provider_hosts(tmp_path: Path, monkeypatch) -> None:
+    """Sandboxed Crush custom runs allow only the configured provider hosts."""
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    monkeypatch.setattr(agent_crush, "_get_config_dir", lambda: sessions)
+    monkeypatch.setattr(agent_crush.platform, "system", lambda: "Linux")
+    monkeypatch.setenv("TEAM_MODEL_KEY", "secret")
+    monkeypatch.setenv("OPENAI_GATEWAY_KEY", "gateway-secret")
+    cfg = _custom_cloud_cfg()
+
+    with patch.object(
+        agent, "_build_sandbox_cmd", return_value=["arapuca", "run", "--"]
+    ) as build_sandbox:
+        spec = agent_crush.build_launch_spec(
+            "/agent", cfg, None, True, None, cloud_services=["custom"]
+        )
+
+    assert build_sandbox.call_args.kwargs["extra_hosts"] == [
+        "gateway.example:443",
+        "openai-gateway.example:443",
+        "anthropic-gateway.example:443",
+    ]
+    assert build_sandbox.call_args.kwargs["allow_inference"] is False
+    assert build_sandbox.call_args.args[6]["TEAM_MODEL_KEY"] == "secret"
+    for path in spec.cleanup_paths:
+        if path.is_dir():
+            path.rmdir()
+        else:
+            path.unlink(missing_ok=True)
+
+
 def test_crush_normalizes_vertex_claude_api_date_model_ids(tmp_path: Path, monkeypatch) -> None:
     """Anthropic-style dated model IDs are converted to Vertex's `@` syntax."""
     sessions = tmp_path / "sessions"

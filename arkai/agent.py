@@ -374,9 +374,9 @@ def _agent_context(
     cloud_model = model if use_cloud else None
     if "custom" in cloud_services:
         custom_cloud_config = cloud_provider.custom_cloud_config_from_arkai(cfg)
-        if agent_name not in {"opencode", "pi", "omp"}:
+        if agent_name not in {"crush", "opencode", "pi", "omp"}:
             raise RuntimeError(
-                "--cloud custom currently supports only the opencode, pi, and omp agents"
+                "--cloud custom currently supports only the crush, opencode, pi, and omp agents"
             )
         cloud_model = cloud_provider.select_custom_cloud_model(custom_cloud_config, model)
         cloud_api_environment = cloud_provider.custom_cloud_environment(custom_cloud_config)

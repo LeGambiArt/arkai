@@ -182,6 +182,86 @@ def _run_agent_in_tty(
     sys.stdout = old_stdout
     sys.stderr = old_stderr
     context.stdout = stdout_capture.getvalue()
+
+
+def _run_crush_agent_in_tty(
+    context,
+    no_mcp: bool = False,
+    no_sandbox: bool = False,
+    cloud_services: list | None = None,
+) -> None:
+    """Run the Crush agent with a mocked TTY and capture its generated config."""
+    from arkai import agent_crush
+
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+    stdout_capture = StringIO()
+    stderr_capture = StringIO()
+
+    sys.stdout = stdout_capture
+    sys.stderr = stderr_capture
+    context.exit_code = 0
+
+    mock_proc = MagicMock()
+    mock_proc.pid = 9999
+    mock_proc.wait.return_value = 0
+
+    session_record = {
+        "id": "550e8400-e29b-41d4-a716-446655440000",
+        "name": None,
+        "agent": "crush",
+        "working_directory": os.getcwd(),
+        "native_session_id": None,
+        "launch_options": {},
+        "status": "starting",
+    }
+
+    config_dir = Path(tempfile.mkdtemp(prefix="crush-behave-"))
+
+    def capture_write_text(self, data, *args, **kwargs):
+        if self.name == "crush.json":
+            context.crush_config_text = data
+        return None
+
+    with (
+        patch.object(sys.stdin, "isatty", return_value=True),
+        patch.object(inference, "is_inference_running", return_value=True),
+        patch.object(wtmcp, "is_wtmcp_running", return_value=False),
+        patch.object(utils, "resolve_binary", return_value="/usr/bin/fake-agent"),
+        patch("subprocess.Popen", return_value=mock_proc),
+        patch.object(agent_crush, "_native_session_ids", return_value=[]),
+        patch.object(agent_crush, "_get_config_dir", return_value=config_dir),
+        patch.object(agent_crush.Path, "write_text", autospec=True) as write_text,
+        patch.dict(os.environ, {"TEAM_MODEL_KEY": "behave-secret"}),
+        patch.object(agent_session, "create_session", return_value=session_record),
+        patch.object(agent_session, "save_session"),
+        patch.object(agent_session, "get_session_dir", return_value=config_dir),
+        patch.object(
+            Path,
+            "mkdir",
+            lambda self, *args, **kwargs: os.makedirs(self, exist_ok=True),
+        ),
+        patch.object(Path, "chmod", lambda self, *args, **kwargs: None),
+    ):
+        write_text.side_effect = capture_write_text
+        try:
+            agent.cmd_agent(
+                no_mcp=no_mcp,
+                no_sandbox=no_sandbox,
+                agent_name="crush",
+                cloud_services=cloud_services,
+            )
+        except SystemExit as e:
+            context.exit_code = e.code if e.code else 1
+        except Exception as e:
+            context.exit_code = 1
+            stderr_capture.write(str(e))
+        finally:
+            shutil.rmtree(config_dir, ignore_errors=True)
+
+    sys.stdout = old_stdout
+    sys.stderr = old_stderr
+    context.stdout = stdout_capture.getvalue()
     context.stderr = stderr_capture.getvalue()
 
 
@@ -261,6 +341,53 @@ def step_custom_cloud_provider_with_size_unit_model(context):
 def step_run_agent_with_custom_cloud(context):
     """Run arkai agent start against the configured custom cloud provider."""
     _run_agent_in_tty(context, no_sandbox=True, cloud_services=["custom"])
+
+
+@given("the Crush agent with a custom cloud provider")  # ty: ignore[call-non-callable]
+def step_crush_agent_with_custom_cloud_provider(context):
+    """Configure the Crush agent against a custom cloud provider."""
+    context.config_data = {
+        "agent": {
+            "name": "crush",
+            "mcp": False,
+            "cloud": {
+                "custom": {
+                    "default_provider": "gateway",
+                    "base_url": "https://gateway.example/v1",
+                    "api_key": {"source": "environment", "name": "TEAM_MODEL_KEY"},
+                    "providers": {
+                        "gateway": {
+                            "default_model": "org/model-id",
+                            "models": [{"id": "org/model-id", "name": "Example model"}],
+                        }
+                    },
+                }
+            },
+        },
+        "inference": {},
+        "sandbox": {"disable": True},
+    }
+
+
+@when('I run "arkai agent start" with "--agent crush --cloud custom" in a TTY')  # ty: ignore[call-non-callable]
+def step_run_crush_agent_with_custom_cloud(context):
+    """Run arkai agent start with the Crush agent against the custom provider."""
+    _run_crush_agent_in_tty(context, cloud_services=["custom"])
+
+
+@then("the Crush configuration registers the custom provider")  # ty: ignore[call-non-callable]
+def step_crush_configuration_registers_custom_provider(context):
+    """Crush's generated config maps the custom provider into native format."""
+    assert context.exit_code == 0, context.stderr
+    config = json.loads(context.crush_config_text)
+    provider = config["providers"]["gateway"]
+    assert provider["type"] == "openai-compat"
+    assert provider["base_url"] == "https://gateway.example/v1"
+    assert provider["api_key"] == "$TEAM_MODEL_KEY"
+    assert provider["discover_models"] is False
+    assert provider["models"][0]["id"] == "org/model-id"
+    assert config["models"]["large"] == {"model": "org/model-id", "provider": "gateway"}
+    assert config["models"]["small"] == {"model": "org/model-id", "provider": "gateway"}
 
 
 @given("a custom cloud provider configured as the default")  # ty: ignore[call-non-callable]

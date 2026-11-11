@@ -9,6 +9,7 @@ from pathlib import Path
 
 from arkai import cloud_auth, config, utils
 from arkai.agent import AgentLaunchSpec, run_launch_spec
+from arkai.cloud_provider import DEFAULT_CUSTOM_CLOUD_CONTEXT_WINDOW
 
 
 def _get_config_dir() -> Path:
@@ -21,6 +22,68 @@ def _get_config_dir() -> Path:
 def get_agent_path(cfg: dict) -> str:
     """Resolve the configured Crush executable."""
     return utils.resolve_binary(config.get_config_value(cfg, "agent.path") or "crush")
+
+
+def _custom_provider_type(protocol: str) -> str:
+    """Map an Arkai custom protocol to Crush's provider type."""
+    if protocol == "anthropic-messages":
+        return "messages"
+    if protocol == "openai-completions":
+        return "openai-compat"
+    raise RuntimeError(f"Unsupported custom cloud protocol for Crush: {protocol!r}")
+
+
+def _custom_model_entry(model: dict) -> dict:
+    """Convert normalized custom model metadata into Crush's model format."""
+    entry: dict = {
+        "id": model["id"],
+        "name": model.get("name", model["id"]),
+        "context_window": model.get("context_window", DEFAULT_CUSTOM_CLOUD_CONTEXT_WINDOW),
+    }
+    if "max_output_tokens" in model:
+        entry["default_max_tokens"] = model["max_output_tokens"]
+    if model.get("reasoning"):
+        entry["can_reason"] = True
+    if model.get("supports_attachments"):
+        entry["supports_attachments"] = True
+    return entry
+
+
+def _custom_crush_providers(
+    custom_cloud_config: dict,
+    cloud_model: str | None,
+) -> tuple[dict, str, str]:
+    """Translate Arkai custom providers into Crush provider and model config."""
+    from arkai import cloud_provider as cloud_config_utils
+
+    selected_model_reference = cloud_config_utils.select_custom_cloud_model(
+        custom_cloud_config, cloud_model
+    )
+    selected_provider, selected_model = cloud_config_utils.custom_cloud_model_provider(
+        custom_cloud_config, selected_model_reference
+    )
+    providers: dict = {}
+    for provider_id, provider in custom_cloud_config["providers"].items():
+        provider_config: dict = {
+            "id": provider_id,
+            "name": provider["name"],
+            "type": _custom_provider_type(provider["protocol"]),
+            "base_url": provider["base_url"],
+            "discover_models": False,
+        }
+        if provider.get("api_key_environment_name"):
+            provider_config["api_key"] = f"${provider['api_key_environment_name']}"
+        model_filter = selected_model if provider_id == selected_provider["provider_id"] else None
+        provider_config["models"] = [
+            _custom_model_entry(model)
+            for model in cloud_config_utils.custom_cloud_models(provider, model_filter)
+        ]
+        providers[provider_id] = provider_config
+    return (
+        providers,
+        selected_provider["provider_id"],
+        selected_model,
+    )
 
 
 def _cloud_model_reference(provider: str, model: str) -> tuple[str, str]:
@@ -67,8 +130,11 @@ def build_launch_spec(
     session_dir: str | None = None,
     resume_session: bool = False,
     native_session_id: str | None = None,
+    cloud_config: dict | None = None,
+    cloud_api_environment: dict[str, str] | None = None,
 ) -> AgentLaunchSpec:
     """Create Crush configuration and return its process launch specification."""
+    from arkai import cloud_provider as cloud_config_utils
     from arkai.agent import _build_sandbox_cmd, _cloud_provider, _get_agent_model_id
 
     cloud_services = list(dict.fromkeys(service.lower() for service in cloud_services or []))
@@ -76,8 +142,23 @@ def build_launch_spec(
     is_cloud = cloud_provider is not None
     provider_id = "openai" if cloud_provider == "openai" else "vertexai"
     cloud_model_id = (
-        _cloud_model_reference(provider_id, cloud_model)[1] if is_cloud and cloud_model else None
+        _cloud_model_reference(provider_id, cloud_model)[1]
+        if is_cloud and cloud_provider in {"openai", "vertex"} and cloud_model
+        else None
     )
+    custom_providers: dict = {}
+    custom_selected_provider_id = ""
+    custom_selected_model = ""
+    if cloud_provider == "custom":
+        custom_config = cloud_config or cloud_config_utils.custom_cloud_config_from_arkai(cfg)
+        custom_api_keys = (
+            dict(cloud_api_environment)
+            if cloud_api_environment is not None
+            else cloud_config_utils.custom_cloud_environment(custom_config)
+        )
+        custom_providers, custom_selected_provider_id, custom_selected_model = (
+            _custom_crush_providers(custom_config, cloud_model)
+        )
     sessions_dir = _get_config_dir()
     if session_dir:
         crush_config_dir = Path(session_dir) / "crush"
@@ -92,53 +173,66 @@ def build_launch_spec(
             "$schema": "https://charm.land/crush.json",
             "providers": {},
         }
-        provider_config = {
-            "id": provider_id,
-            "name": "OpenAI" if cloud_provider == "openai" else "Google Vertex AI",
-            "type": "openai" if cloud_provider == "openai" else "google-vertex",
-        }
-        if cloud_provider == "openai":
-            provider_config["api_key"] = "$OPENAI_API_KEY"
-        else:
-            provider_config["models"] = [
-                {
-                    "id": "claude-sonnet-4-5@20250929",
-                    "name": "Claude Sonnet 4.5",
-                    "context_window": 200000,
-                    "default_max_tokens": 50000,
-                    "can_reason": True,
-                    "supports_attachments": True,
-                },
-                {
-                    "id": "claude-haiku-4-5@20251001",
-                    "name": "Claude Haiku 4.5",
-                    "context_window": 200000,
-                    "default_max_tokens": 64000,
-                    "can_reason": True,
-                    "supports_attachments": True,
-                },
-            ]
-        config_data["providers"][provider_id] = provider_config
-
-        if cloud_model_id:
-            provider_models = config_data["providers"][provider_id].setdefault("models", [])
-            if not any(model["id"] == cloud_model_id for model in provider_models):
-                provider_models.append({"id": cloud_model_id, "name": cloud_model_id})
-            config_data["models"] = {
-                "large": {"model": cloud_model_id, "provider": provider_id},
-                "small": {"model": cloud_model_id, "provider": provider_id},
-            }
-        elif cloud_provider == "vertex":
+        if cloud_provider == "custom":
+            config_data["providers"] = custom_providers
             config_data["models"] = {
                 "large": {
-                    "model": "claude-sonnet-4-5@20250929",
-                    "provider": provider_id,
+                    "model": custom_selected_model,
+                    "provider": custom_selected_provider_id,
                 },
                 "small": {
-                    "model": "claude-haiku-4-5@20251001",
-                    "provider": provider_id,
+                    "model": custom_selected_model,
+                    "provider": custom_selected_provider_id,
                 },
             }
+        else:
+            provider_config = {
+                "id": provider_id,
+                "name": "OpenAI" if cloud_provider == "openai" else "Google Vertex AI",
+                "type": "openai" if cloud_provider == "openai" else "google-vertex",
+            }
+            if cloud_provider == "openai":
+                provider_config["api_key"] = "$OPENAI_API_KEY"
+            else:
+                provider_config["models"] = [
+                    {
+                        "id": "claude-sonnet-4-5@20250929",
+                        "name": "Claude Sonnet 4.5",
+                        "context_window": 200000,
+                        "default_max_tokens": 50000,
+                        "can_reason": True,
+                        "supports_attachments": True,
+                    },
+                    {
+                        "id": "claude-haiku-4-5@20251001",
+                        "name": "Claude Haiku 4.5",
+                        "context_window": 200000,
+                        "default_max_tokens": 64000,
+                        "can_reason": True,
+                        "supports_attachments": True,
+                    },
+                ]
+            config_data["providers"][provider_id] = provider_config
+
+            if cloud_model_id:
+                provider_models = config_data["providers"][provider_id].setdefault("models", [])
+                if not any(model["id"] == cloud_model_id for model in provider_models):
+                    provider_models.append({"id": cloud_model_id, "name": cloud_model_id})
+                config_data["models"] = {
+                    "large": {"model": cloud_model_id, "provider": provider_id},
+                    "small": {"model": cloud_model_id, "provider": provider_id},
+                }
+            elif cloud_provider == "vertex":
+                config_data["models"] = {
+                    "large": {
+                        "model": "claude-sonnet-4-5@20250929",
+                        "provider": provider_id,
+                    },
+                    "small": {
+                        "model": "claude-haiku-4-5@20251001",
+                        "provider": provider_id,
+                    },
+                }
     else:
         inference_port = config.get_config_value(cfg, "inference.port", 8081)
         model_name = _get_agent_model_id(cfg)
@@ -177,6 +271,14 @@ def build_launch_spec(
     if cloud_provider == "openai" and cloud_api_key:
         environment["OPENAI_API_KEY"] = cloud_api_key
         sandbox_environment["OPENAI_API_KEY"] = cloud_api_key
+    if cloud_provider == "custom":
+        for native_key in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY"):
+            if native_key not in custom_api_keys:
+                environment.pop(native_key, None)
+                sandbox_environment.pop(native_key, None)
+        for environment_name, api_key in custom_api_keys.items():
+            environment[environment_name] = api_key
+            sandbox_environment[environment_name] = api_key
     if cloud_provider == "vertex":
         sandbox_volumes, sandbox_environment = cloud_auth.crush_vertex_sandbox_settings(
             sandbox_volumes, sandbox_environment
@@ -186,7 +288,13 @@ def build_launch_spec(
     if use_sandbox:
         try:
             extra_hosts = (
-                ["*.openai.com:443", "api.openai.com:443"]
+                list(
+                    dict.fromkeys(
+                        provider["host"] for provider in custom_config["providers"].values()
+                    )
+                )
+                if cloud_provider == "custom"
+                else ["*.openai.com:443", "api.openai.com:443"]
                 if cloud_provider == "openai" and platform.system() == "Linux"
                 else [
                     "*-aiplatform.googleapis.com:443",
@@ -290,6 +398,8 @@ def start(
     resume_session: bool = False,
     native_session_id: str | None = None,
     session_record: dict | None = None,
+    cloud_config: dict | None = None,
+    cloud_api_environment: dict[str, str] | None = None,
 ) -> str | None:
     """Build and run Crush's launch specification."""
     cloud_api_key = (
@@ -319,6 +429,8 @@ def start(
             session_dir,
             resume_session,
             native_session_id,
+            cloud_config,
+            cloud_api_environment,
         ),
         capture_stdout,
     )

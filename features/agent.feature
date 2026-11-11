@@ -82,6 +82,11 @@ Feature: Agent Execution
     When I run "arkai agent start" with "--cloud custom" in a TTY
     Then the agent model catalog expands size units to token counts
 
+  Scenario: Crush uses a custom cloud provider
+    Given the Crush agent with a custom cloud provider
+    When I run "arkai agent start" with "--agent crush --cloud custom" in a TTY
+    Then the Crush configuration registers the custom provider
+
   Scenario: Agent lists Arkai sessions without starting agent infrastructure
     Given a saved Arkai agent session named "session-to-list"
     When I list Arkai agent sessions
