@@ -50,6 +50,102 @@ def _custom_model_entry(model: dict) -> dict:
     return entry
 
 
+def _discover_provider_models(provider: dict, api_key: str | None) -> list[dict] | None:
+    """Fetch a provider's model listing from its OpenAI-style /models endpoint."""
+    import requests
+
+    try:
+        response = requests.get(
+            f"{provider['base_url'].rstrip('/')}/models",
+            headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
+            timeout=(5, 20),
+        )
+    except requests.RequestException:
+        return None
+    if response.status_code != 200:
+        return None
+    try:
+        listing = response.json()
+    except ValueError:
+        return None
+    entries = listing.get("data") if isinstance(listing, dict) else None
+    if not isinstance(entries, list):
+        return None
+    models = []
+    for entry in entries:
+        model_id = entry.get("id") if isinstance(entry, dict) else None
+        if isinstance(model_id, str) and model_id.strip():
+            models.append({"id": model_id.strip(), "name": model_id.strip()})
+    return models or None
+
+
+_ANTHROPIC_CATALOG_URL = "https://models.dev/api.json"
+_ANTHROPIC_CATALOG_CACHE_SECONDS = 24 * 60 * 60
+_ANTHROPIC_CATALOG_CACHE = Path(
+    os.path.expanduser("~/.local/state/arkai/cache/anthropic-models.json")
+)
+
+
+def _anthropic_catalog_models() -> list[dict]:
+    """Return Claude model metadata from the models.dev catalog, cached for a day."""
+    import time
+
+    import requests
+
+    try:
+        cached = json.loads(_ANTHROPIC_CATALOG_CACHE.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        cached = None
+    now = time.time()
+    if (
+        isinstance(cached, dict)
+        and now - cached.get("fetched_at", 0) < _ANTHROPIC_CATALOG_CACHE_SECONDS
+        and isinstance(cached.get("models"), list)
+    ):
+        return cached["models"]
+    try:
+        response = requests.get(_ANTHROPIC_CATALOG_URL, timeout=(5, 20))
+        response.raise_for_status()
+        catalog = response.json()
+    except (requests.RequestException, ValueError):
+        return cached["models"] if isinstance(cached, dict) else []
+    provider_data = catalog.get("anthropic") if isinstance(catalog, dict) else None
+    provider_models = provider_data.get("models") if isinstance(provider_data, dict) else None
+    models = []
+    if isinstance(provider_models, dict):
+        for model_id, model in provider_models.items():
+            if not isinstance(model, dict):
+                continue
+            entry: dict = {"id": model_id, "name": model.get("name", model_id)}
+            limit = model.get("limit")
+            if isinstance(limit, dict) and limit.get("context"):
+                entry["context_window"] = limit["context"]
+            if model.get("reasoning"):
+                entry["reasoning"] = True
+            models.append(entry)
+    if models:
+        try:
+            _ANTHROPIC_CATALOG_CACHE.parent.mkdir(parents=True, exist_ok=True)
+            _ANTHROPIC_CATALOG_CACHE.write_text(
+                json.dumps({"fetched_at": now, "models": models}), encoding="utf-8"
+            )
+        except OSError:
+            pass
+    return models
+
+
+def _discover_anthropic_provider_models(provider: dict, api_key: str | None) -> list[dict]:
+    """Combine a Messages gateway's listing with the Anthropic model catalog."""
+    discovered = _discover_provider_models(provider, api_key) or []
+    known_ids = {model["id"] for model in discovered}
+    models = list(discovered)
+    for model in _anthropic_catalog_models():
+        # A gateway listing is authoritative for IDs it actually serves.
+        if model["id"] not in known_ids:
+            models.append(model)
+    return models
+
+
 def _custom_provider_base_url(provider: dict) -> str:
     """Return the endpoint Crush expects: origin for Messages, full URL otherwise."""
     base_url = provider["base_url"]
@@ -64,10 +160,12 @@ def _custom_provider_base_url(provider: dict) -> str:
 def _custom_crush_providers(
     custom_cloud_config: dict,
     cloud_model: str | None,
+    custom_api_keys: dict[str, str] | None = None,
 ) -> tuple[dict, str, str]:
     """Translate Arkai custom providers into Crush provider and model config."""
     from arkai import cloud_provider as cloud_config_utils
 
+    custom_api_keys = custom_api_keys or {}
     selected_model_reference = cloud_config_utils.select_custom_cloud_model(
         custom_cloud_config, cloud_model
     )
@@ -76,20 +174,41 @@ def _custom_crush_providers(
     )
     providers: dict = {}
     for provider_id, provider in custom_cloud_config["providers"].items():
-        provider_config: dict = {
+        models = cloud_config_utils.custom_cloud_models(provider)
+        api_key = custom_api_keys.get(provider.get("api_key_environment_name") or "")
+        if not models:
+            # Crush drops providers that have no models. With no model list
+            # configured, populate it from the provider's /models listing:
+            # Crush can discover OpenAI-completions providers itself, but a
+            # Messages provider's base URL is the origin (Crush appends the
+            # API path), so its listing must be fetched here.
+            if provider["protocol"] == "anthropic-messages":
+                models = _discover_anthropic_provider_models(provider, api_key) or []
+            if not models:
+                provider_config = {
+                    "id": provider_id,
+                    "name": provider["name"],
+                    "type": _custom_provider_type(provider["protocol"]),
+                    "base_url": _custom_provider_base_url(provider),
+                    "discover_models": True,
+                }
+                if provider.get("api_key_environment_name"):
+                    provider_config["api_key"] = f"${provider['api_key_environment_name']}"
+                providers[provider_id] = provider_config
+                continue
+        model_filter = selected_model if provider_id == selected_provider["provider_id"] else None
+        if model_filter and model_filter not in {model["id"] for model in models}:
+            models = models + [{"id": model_filter, "name": model_filter}]
+        provider_config = {
             "id": provider_id,
             "name": provider["name"],
             "type": _custom_provider_type(provider["protocol"]),
             "base_url": _custom_provider_base_url(provider),
             "discover_models": False,
+            "models": [_custom_model_entry(model) for model in models],
         }
         if provider.get("api_key_environment_name"):
             provider_config["api_key"] = f"${provider['api_key_environment_name']}"
-        model_filter = selected_model if provider_id == selected_provider["provider_id"] else None
-        provider_config["models"] = [
-            _custom_model_entry(model)
-            for model in cloud_config_utils.custom_cloud_models(provider, model_filter)
-        ]
         providers[provider_id] = provider_config
     return (
         providers,
@@ -169,7 +288,7 @@ def build_launch_spec(
             else cloud_config_utils.custom_cloud_environment(custom_config)
         )
         custom_providers, custom_selected_provider_id, custom_selected_model = (
-            _custom_crush_providers(custom_config, cloud_model)
+            _custom_crush_providers(custom_config, cloud_model, custom_api_keys)
         )
     sessions_dir = _get_config_dir()
     if session_dir:
@@ -186,6 +305,11 @@ def build_launch_spec(
             "providers": {},
         }
         if cloud_provider == "custom":
+            # A custom provider may reuse a well-known provider ID (e.g.
+            # "anthropic"); Crush merges its built-in catalog and native auth
+            # into such providers, which breaks custom endpoints. Only the
+            # explicitly configured providers and models may be used.
+            config_data["options"] = {"disable_default_providers": True}
             config_data["providers"] = custom_providers
             config_data["models"] = {
                 "large": {

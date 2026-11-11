@@ -845,6 +845,7 @@ def test_crush_custom_cloud_translates_providers_and_keys(tmp_path: Path, monkey
     assert config_data["providers"]["openai"]["api_key"] == "$OPENAI_GATEWAY_KEY"
     assert config_data["providers"]["anthropic"]["type"] == "messages"
     assert config_data["providers"]["anthropic"]["base_url"] == "https://anthropic-gateway.example"
+    assert config_data["options"] == {"disable_default_providers": True}
     assert config_data["providers"]["anthropic"]["models"] == [
         {"id": "claude-model-id", "name": "Claude model", "context_window": 262144}
     ]
@@ -913,6 +914,69 @@ def test_crush_custom_cloud_skips_host_allowlist_off_linux(tmp_path: Path, monke
         )
 
     assert build_sandbox.call_args.kwargs["extra_hosts"] is None
+    for path in spec.cleanup_paths:
+        if path.is_dir():
+            path.rmdir()
+        else:
+            path.unlink(missing_ok=True)
+
+
+def test_crush_custom_cloud_discovers_models_for_modelless_providers(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Modelless providers are populated from their listing or Crush discovery."""
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    monkeypatch.setattr(agent_crush, "_get_config_dir", lambda: sessions)
+    monkeypatch.setenv("TEAM_MODEL_KEY", "secret")
+    monkeypatch.setenv("OPENAI_GATEWAY_KEY", "gateway-secret")
+    cfg = _custom_cloud_cfg()
+    cfg["agent"]["cloud"]["custom"]["providers"]["openai"].pop("models")
+    cfg["agent"]["cloud"]["custom"]["providers"]["anthropic"].pop("models")
+
+    with (
+        patch.object(
+            agent_crush,
+            "_discover_provider_models",
+            return_value=[{"id": "claude-model-id", "name": "claude-model-id"}],
+        ) as discover,
+        patch.object(
+            agent_crush,
+            "_anthropic_catalog_models",
+            return_value=[
+                {
+                    "id": "claude-haiku-4-5",
+                    "name": "Claude Haiku 4.5 (latest)",
+                    "context_window": 200000,
+                    "reasoning": True,
+                }
+            ],
+        ),
+    ):
+        spec = agent_crush.build_launch_spec(
+            "/agent", cfg, None, False, None, cloud_services=["custom"]
+        )
+    config_data = json.loads(
+        (Path(spec.environment["CRUSH_GLOBAL_CONFIG"]) / "crush.json").read_text()
+    )
+    # Messages providers fetch their listing through Arkai (Crush would probe
+    # the wrong URL because the base URL is the origin) and merge the
+    # Anthropic catalog for Claude model IDs the gateway listing omits.
+    discover.assert_called_once()
+    assert config_data["providers"]["anthropic"]["models"] == [
+        {"id": "claude-model-id", "name": "claude-model-id", "context_window": 262144},
+        {
+            "id": "claude-haiku-4-5",
+            "name": "Claude Haiku 4.5 (latest)",
+            "context_window": 200000,
+            "can_reason": True,
+        },
+    ]
+    assert config_data["providers"]["anthropic"]["discover_models"] is False
+    # OpenAI-completions providers let Crush discover models itself.
+    assert config_data["providers"]["openai"]["discover_models"] is True
+    assert "models" not in config_data["providers"]["openai"]
+    assert config_data["models"]["large"] == {"model": "org/model-one", "provider": "arkai-custom"}
     for path in spec.cleanup_paths:
         if path.is_dir():
             path.rmdir()
