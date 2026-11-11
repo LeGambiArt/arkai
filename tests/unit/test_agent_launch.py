@@ -844,6 +844,7 @@ def test_crush_custom_cloud_translates_providers_and_keys(tmp_path: Path, monkey
     assert config_data["providers"]["openai"]["type"] == "openai-compat"
     assert config_data["providers"]["openai"]["api_key"] == "$OPENAI_GATEWAY_KEY"
     assert config_data["providers"]["anthropic"]["type"] == "messages"
+    assert config_data["providers"]["anthropic"]["base_url"] == "https://anthropic-gateway.example"
     assert config_data["providers"]["anthropic"]["models"] == [
         {"id": "claude-model-id", "name": "Claude model", "context_window": 262144}
     ]
@@ -888,6 +889,30 @@ def test_crush_custom_cloud_sandbox_allows_provider_hosts(tmp_path: Path, monkey
     ]
     assert build_sandbox.call_args.kwargs["allow_inference"] is False
     assert build_sandbox.call_args.args[6]["TEAM_MODEL_KEY"] == "secret"
+    for path in spec.cleanup_paths:
+        if path.is_dir():
+            path.rmdir()
+        else:
+            path.unlink(missing_ok=True)
+
+
+def test_crush_custom_cloud_skips_host_allowlist_off_linux(tmp_path: Path, monkeypatch) -> None:
+    """--allow-host is Linux-only; non-Linux Crush custom runs pass no extra hosts."""
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    monkeypatch.setattr(agent_crush, "_get_config_dir", lambda: sessions)
+    monkeypatch.setattr(agent_crush.platform, "system", lambda: "Darwin")
+    monkeypatch.setenv("TEAM_MODEL_KEY", "secret")
+    monkeypatch.setenv("OPENAI_GATEWAY_KEY", "gateway-secret")
+
+    with patch.object(
+        agent, "_build_sandbox_cmd", return_value=["arapuca", "run", "--"]
+    ) as build_sandbox:
+        spec = agent_crush.build_launch_spec(
+            "/agent", _custom_cloud_cfg(), None, True, None, cloud_services=["custom"]
+        )
+
+    assert build_sandbox.call_args.kwargs["extra_hosts"] is None
     for path in spec.cleanup_paths:
         if path.is_dir():
             path.rmdir()

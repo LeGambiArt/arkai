@@ -6,6 +6,7 @@ import platform
 import subprocess
 import tempfile
 from pathlib import Path
+from urllib.parse import urlsplit, urlunsplit
 
 from arkai import cloud_auth, config, utils
 from arkai.agent import AgentLaunchSpec, run_launch_spec
@@ -49,6 +50,17 @@ def _custom_model_entry(model: dict) -> dict:
     return entry
 
 
+def _custom_provider_base_url(provider: dict) -> str:
+    """Return the endpoint Crush expects: origin for Messages, full URL otherwise."""
+    base_url = provider["base_url"]
+    if provider["protocol"] != "anthropic-messages":
+        return base_url
+    # Crush's messages client appends `/v1/messages` itself; an API-style
+    # base URL with a path would be doubled. Pass only the origin.
+    parsed_url = urlsplit(base_url)
+    return urlunsplit((parsed_url.scheme, parsed_url.netloc, "", "", ""))
+
+
 def _custom_crush_providers(
     custom_cloud_config: dict,
     cloud_model: str | None,
@@ -68,7 +80,7 @@ def _custom_crush_providers(
             "id": provider_id,
             "name": provider["name"],
             "type": _custom_provider_type(provider["protocol"]),
-            "base_url": provider["base_url"],
+            "base_url": _custom_provider_base_url(provider),
             "discover_models": False,
         }
         if provider.get("api_key_environment_name"):
@@ -293,7 +305,7 @@ def build_launch_spec(
                         provider["host"] for provider in custom_config["providers"].values()
                     )
                 )
-                if cloud_provider == "custom"
+                if cloud_provider == "custom" and platform.system() == "Linux"
                 else ["*.openai.com:443", "api.openai.com:443"]
                 if cloud_provider == "openai" and platform.system() == "Linux"
                 else [
