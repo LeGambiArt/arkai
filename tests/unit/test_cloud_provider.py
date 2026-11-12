@@ -20,6 +20,39 @@ def _base_config(api_key: dict | None = None) -> dict:
     return custom
 
 
+def test_openai_responses_protocol_is_supported() -> None:
+    config = cloud_provider.normalize_custom_cloud_config(
+        {
+            "base_url": "https://gateway.example/v1",
+            "protocol": "openai-responses",
+            "default_provider": "gateway",
+            "providers": {"gateway": {"default_model": "org/model"}},
+        }
+    )
+    assert config["providers"]["gateway"]["protocol"] == "openai-responses"
+
+
+def test_openai_provider_id_infers_responses_protocol() -> None:
+    config = cloud_provider.normalize_custom_cloud_config(
+        _base_config()
+        | {"providers": {"openai": {"default_model": "gpt-model"}}, "default_provider": "openai"}
+    )
+    assert config["providers"]["openai"]["protocol"] == "openai-responses"
+
+
+def test_openai_provider_id_keeps_explicit_completions_protocol() -> None:
+    config = cloud_provider.normalize_custom_cloud_config(
+        _base_config()
+        | {
+            "providers": {
+                "openai": {"default_model": "gpt-model", "protocol": "openai-completions"}
+            },
+            "default_provider": "openai",
+        }
+    )
+    assert config["providers"]["openai"]["protocol"] == "openai-completions"
+
+
 def test_normalizes_inherited_environment_and_provider_keychain_sources() -> None:
     config = cloud_provider.normalize_custom_cloud_config(
         {

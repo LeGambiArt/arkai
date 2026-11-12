@@ -24,7 +24,7 @@ _MODEL_METADATA_FIELDS = {
     "reasoning",
     "supports_developer_role",
 }
-_SUPPORTED_CUSTOM_PROTOCOLS = {"openai-completions", "anthropic-messages"}
+_SUPPORTED_CUSTOM_PROTOCOLS = {"openai-completions", "openai-responses", "anthropic-messages"}
 _KEYCHAIN_BUNDLE_SERVICE = "arkai/credential-cache"
 _KEYCHAIN_BUNDLE_ACCOUNT = "v1"
 
@@ -274,7 +274,8 @@ def normalize_custom_cloud_config(value: object) -> dict:
     default_protocol = value.get("protocol", "openai-completions")
     if not isinstance(default_protocol, str) or default_protocol not in _SUPPORTED_CUSTOM_PROTOCOLS:
         raise ValueError(
-            "agent.cloud.custom.protocol must be 'openai-completions' or 'anthropic-messages'"
+            "agent.cloud.custom.protocol must be 'openai-completions', 'openai-responses', "
+            "or 'anthropic-messages'"
         )
     default_api_key = _normalize_api_key(value.get("api_key"), "agent.cloud.custom.api_key")
 
@@ -299,13 +300,14 @@ def normalize_custom_cloud_config(value: object) -> dict:
             provider_value.get("base_url", default_base_url), f"{provider_path}.base_url"
         )
         inferred_protocol = {
-            "openai": "openai-completions",
+            "openai": "openai-responses",
             "anthropic": "anthropic-messages",
         }.get(provider_id, default_protocol)
         protocol = provider_value.get("protocol", inferred_protocol)
         if not isinstance(protocol, str) or protocol not in _SUPPORTED_CUSTOM_PROTOCOLS:
             raise ValueError(
-                f"{provider_path}.protocol must be 'openai-completions' or 'anthropic-messages'"
+                f"{provider_path}.protocol must be 'openai-completions', 'openai-responses', "
+                "or 'anthropic-messages'"
             )
         api_key = _normalize_api_key(
             provider_value.get("api_key", default_api_key), f"{provider_path}.api_key"

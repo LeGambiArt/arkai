@@ -87,6 +87,11 @@ Feature: Agent Execution
     When I run "arkai agent start" with "--agent crush --cloud custom" in a TTY
     Then the Crush configuration registers the custom provider
 
+  Scenario: Custom cloud providers can use the OpenAI Responses protocol
+    Given a custom cloud provider using the openai-responses protocol
+    When I run "arkai agent start" with "--cloud custom" in a TTY
+    Then the agent configuration maps the provider to the Responses client
+
   Scenario: Agent lists Arkai sessions without starting agent infrastructure
     Given a saved Arkai agent session named "session-to-list"
     When I list Arkai agent sessions

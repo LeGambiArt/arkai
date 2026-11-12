@@ -121,10 +121,10 @@ def build_launch_spec(
                 model_config[model["id"]] = model_entry
 
             native_protocols = {
-                "openai": "openai-completions",
-                "anthropic": "anthropic-messages",
+                "openai": ("openai-completions", "openai-responses"),
+                "anthropic": ("anthropic-messages",),
             }
-            if native_protocols.get(provider_id) == provider["protocol"]:
+            if provider["protocol"] in native_protocols.get(provider_id, ()):
                 opencode_provider = {
                     "settings": {"baseURL": provider["base_url"]},
                 }
@@ -138,6 +138,8 @@ def build_launch_spec(
                     "package": (
                         "@opencode/ai/providers/openai-compatible"
                         if provider["protocol"] == "openai-completions"
+                        else "@opencode/ai/providers/openai-compatible-responses"
+                        if provider["protocol"] == "openai-responses"
                         else "@opencode/ai/providers/anthropic"
                     ),
                     "settings": {"baseURL": provider["base_url"]},

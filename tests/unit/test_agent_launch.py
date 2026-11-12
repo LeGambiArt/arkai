@@ -842,7 +842,7 @@ def test_crush_custom_cloud_translates_providers_and_keys(tmp_path: Path, monkey
             {"id": "org/model-two", "name": "Model Two", "context_window": 262144},
         ],
     }
-    assert config_data["providers"]["openai"]["type"] == "openai-compat"
+    assert config_data["providers"]["openai"]["type"] == "openai-responses-v1"
     assert config_data["providers"]["openai"]["api_key"] == "$OPENAI_GATEWAY_KEY"
     assert config_data["providers"]["anthropic"]["type"] == "messages"
     assert config_data["providers"]["anthropic"]["base_url"] == "https://anthropic-gateway.example"
@@ -1952,6 +1952,154 @@ def test_omp_custom_prompt_pins_provider_and_model(tmp_path: Path, monkeypatch) 
     for path in spec.cleanup_paths:
         if path.is_dir():
             shutil.rmtree(path)
+        else:
+            path.unlink(missing_ok=True)
+
+
+def test_omp_openai_responses_provider_uses_responses_api(tmp_path: Path, monkeypatch) -> None:
+    """An openai-responses custom provider keeps its API in OMP's model catalog."""
+    agent_dir = tmp_path / "omp-agent"
+    monkeypatch.setattr(agent_omp, "get_global_agent_dir", lambda: agent_dir)
+    monkeypatch.setattr(agent_omp, "get_install_dir", lambda: tmp_path / "arkai-omp")
+    monkeypatch.setenv("TEAM_MODEL_KEY", "provider-secret")
+    monkeypatch.setenv("OPENAI_GATEWAY_KEY", "openai-secret")
+
+    spec = agent_omp.build_launch_spec(
+        "/bin/omp",
+        _custom_cloud_cfg(),
+        None,
+        False,
+        str(tmp_path),
+        cloud_services=["custom"],
+        cloud_model="openai/gpt-model-id",
+    )
+
+    models = agent.utils.load_yaml(
+        str(Path(spec.environment["PI_CODING_AGENT_DIR"]) / "models.yml")
+    )
+    provider = models["providers"]["arkai-openai"]
+    assert provider["api"] == "openai-responses"
+    assert provider["baseUrl"] == "https://openai-gateway.example/v1"
+    assert [model["id"] for model in provider["models"]] == ["gpt-model-id"]
+    # The chat-completions reasoning-effort suppression must not leak into
+    # Responses providers; the Responses API takes reasoning via `reasoning`.
+    assert "compat" not in provider or "omitReasoningEffort" not in provider["compat"]
+    for path in spec.cleanup_paths:
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink(missing_ok=True)
+
+
+def test_pi_openai_responses_provider_uses_responses_api(tmp_path: Path, monkeypatch) -> None:
+    """An openai-responses custom provider keeps its API in Pi's model catalog."""
+    agent_dir = tmp_path / "pi-agent"
+    monkeypatch.setattr(agent_pi, "get_global_agent_dir", lambda: agent_dir)
+    monkeypatch.setattr(agent_pi, "get_install_dir", lambda: tmp_path / "arkai-pi")
+    with patch("arkai.wtmcp.is_wtmcp_running", return_value=False):
+        spec = agent_pi.build_launch_spec(
+            "/bin/pi",
+            _custom_cloud_cfg(),
+            None,
+            False,
+            str(tmp_path),
+            cloud_services=["custom"],
+            cloud_model="openai/gpt-model-id",
+            cloud_api_environment={
+                "TEAM_MODEL_KEY": "provider-secret",
+                "OPENAI_GATEWAY_KEY": "openai-secret",
+            },
+        )
+
+    models = json.loads((Path(spec.environment["PI_CODING_AGENT_DIR"]) / "models.json").read_text())
+    provider = models["providers"]["openai"]
+    assert provider["api"] == "openai-responses"
+    assert provider["baseUrl"] == "https://openai-gateway.example/v1"
+    assert provider["models"][0]["api"] == "openai-responses"
+    for path in spec.cleanup_paths:
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink(missing_ok=True)
+
+
+def test_opencode_openai_responses_provider_uses_native_package(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """OpenCode maps openai-responses custom providers to its Responses client."""
+    monkeypatch.setattr(agent_opencode, "_get_config_dir", lambda: tmp_path)
+    monkeypatch.setenv("TEAM_MODEL_KEY", "provider-secret")
+    monkeypatch.setenv("OPENAI_GATEWAY_KEY", "openai-secret")
+
+    spec = agent_opencode.build_launch_spec(
+        "/agent",
+        _custom_cloud_cfg(),
+        None,
+        False,
+        None,
+        cloud_services=["custom"],
+        cloud_model="openai/gpt-model-id",
+    )
+
+    config_path = Path(spec.environment["OPENCODE_CONFIG"])
+    config_data = json.loads(config_path.read_text())
+    provider = config_data["providers"]["openai"]
+    assert config_data["model"] == "openai/gpt-model-id"
+    # The native openai provider talks the Responses API without a package
+    # override; a non-native ID falls back to openai-compatible-responses.
+    assert "package" not in provider
+    assert provider["settings"] == {"baseURL": "https://openai-gateway.example/v1"}
+    config_path.unlink()
+
+
+def test_opencode_custom_responses_fallback_package(tmp_path: Path, monkeypatch) -> None:
+    """Non-native openai-responses providers use the Responses compat package."""
+    monkeypatch.setattr(agent_opencode, "_get_config_dir", lambda: tmp_path)
+    monkeypatch.setenv("TEAM_MODEL_KEY", "provider-secret")
+    monkeypatch.setenv("OPENAI_GATEWAY_KEY", "openai-secret")
+    cfg = _custom_cloud_cfg()
+    cfg["agent"]["cloud"]["custom"]["providers"]["arkai-custom"]["protocol"] = "openai-responses"
+
+    spec = agent_opencode.build_launch_spec(
+        "/agent", cfg, None, False, None, cloud_services=["custom"]
+    )
+
+    config_path = Path(spec.environment["OPENCODE_CONFIG"])
+    config_data = json.loads(config_path.read_text())
+    provider = config_data["providers"]["arkai-custom"]
+    assert provider["package"] == "@opencode/ai/providers/openai-compatible-responses"
+    config_path.unlink()
+
+
+def test_crush_openai_responses_provider_maps_responses_type(tmp_path: Path, monkeypatch) -> None:
+    """Crush maps openai-responses custom providers to its Responses client type."""
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    monkeypatch.setattr(agent_crush, "_get_config_dir", lambda: sessions)
+    monkeypatch.setenv("TEAM_MODEL_KEY", "provider-secret")
+    monkeypatch.setenv("OPENAI_GATEWAY_KEY", "gateway-secret")
+
+    spec = agent_crush.build_launch_spec(
+        "/agent",
+        _custom_cloud_cfg(),
+        None,
+        False,
+        None,
+        cloud_services=["custom"],
+        cloud_model="openai/gpt-model-id",
+    )
+
+    crush_config_dir = Path(spec.environment["CRUSH_GLOBAL_CONFIG"])
+    config_data = json.loads((crush_config_dir / "crush.json").read_text())
+    assert config_data["providers"]["openai"]["type"] == "openai-responses-v1"
+    assert config_data["providers"]["openai"]["base_url"] == "https://openai-gateway.example/v1"
+    assert config_data["models"]["large"] == {
+        "model": "gpt-model-id",
+        "provider": "openai",
+    }
+    for path in spec.cleanup_paths:
+        if path.is_dir():
+            path.rmdir()
         else:
             path.unlink(missing_ok=True)
 

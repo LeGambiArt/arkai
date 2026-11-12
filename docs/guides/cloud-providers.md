@@ -47,10 +47,14 @@ allow the Vertex and OAuth endpoints needed by the provider.
 
 ## Custom endpoints
 
-Custom providers use an HTTPS endpoint and either the OpenAI Chat
-Completions or Anthropic Messages protocol. API keys are referenced from
-an environment variable or system keychain; do not put secret values in
-Arkai YAML.
+Custom providers use an HTTPS endpoint and one of the OpenAI Chat
+Completions, OpenAI Responses, or Anthropic Messages protocols. API keys
+are referenced from an environment variable or system keychain; do not put
+secret values in Arkai YAML. Prefer `openai-responses` for gateways that
+serve OpenAI reasoning models (such as GPT-6) — the Responses API accepts
+function tools with reasoning models, while Chat Completions endpoints
+reject tool calls that omit an explicit `reasoning_effort`. A provider
+whose ID is exactly `openai` defaults to `openai-responses`.
 
 ```yaml
 agent:

@@ -192,6 +192,24 @@ class TestConfigValidation:
 
         assert config.validate_config(cfg) is False
 
+    def test_validate_custom_cloud_openai_responses_protocol(self):
+        cfg = {
+            "agent": {
+                "name": "opencode",
+                "cloud": {
+                    "custom": {
+                        "base_url": "https://gateway.example/v1",
+                        "protocol": "openai-responses",
+                        "default_provider": "gateway",
+                        "providers": {"gateway": {"default_model": "org/model"}},
+                    }
+                },
+            },
+            "inference": {"model": "model.gguf"},
+        }
+
+        assert config.validate_config(cfg) is True
+
     def test_validate_custom_cloud_rejects_old_top_level_models(self):
         cfg = {
             "agent": {

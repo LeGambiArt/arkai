@@ -337,6 +337,43 @@ def step_custom_cloud_provider_with_size_unit_model(context):
     utils.save_yaml(".arkai.yaml", config_data)
 
 
+@given("a custom cloud provider using the openai-responses protocol")  # ty: ignore[call-non-callable]
+def step_custom_cloud_provider_using_openai_responses(context):
+    """Configure a custom cloud provider that serves the OpenAI Responses API."""
+    config_data = {
+        "agent": {
+            "name": "opencode",
+            "cloud": {
+                "custom": {
+                    "base_url": "https://gateway.example/v1",
+                    "default_provider": "gateway",
+                    "protocol": "openai-responses",
+                    "providers": {
+                        "gateway": {
+                            "default_model": "org/model-id",
+                            "models": [{"id": "org/model-id", "name": "Example model"}],
+                        }
+                    },
+                }
+            },
+        },
+        "inference": {"model": "test.gguf"},
+    }
+    utils.save_yaml(".arkai.yaml", config_data)
+
+
+@then("the agent configuration maps the provider to the Responses client")  # ty: ignore[call-non-callable]
+def step_agent_config_maps_provider_to_responses_client(context):
+    """OpenCode registers the provider with its Responses package."""
+    import json
+
+    assert context.exit_code == 0, context.stderr
+    config = json.loads(context.agent_config_text)
+    provider = config["providers"]["gateway"]
+    assert provider["package"] == "@opencode/ai/providers/openai-compatible-responses"
+    assert provider["settings"]["baseURL"] == "https://gateway.example/v1"
+
+
 @when('I run "arkai agent start" with "--cloud custom" in a TTY')  # ty: ignore[call-non-callable]
 def step_run_agent_with_custom_cloud(context):
     """Run arkai agent start against the configured custom cloud provider."""

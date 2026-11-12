@@ -19,7 +19,7 @@ agent:
   #   # null with the mapping below and add at least one configured provider.
   #   custom:
   #     default_provider: null # Default: infer when exactly one provider exists.
-  #     protocol: openai-completions # Default; also supports anthropic-messages.
+  #     protocol: openai-completions # Default; also supports openai-responses and anthropic-messages.
   #     base_url: null # Default: unset; each provider must resolve to an HTTPS URL without credentials.
   #     api_key: null # Default: no key. When set, use one of the forms below.
   #     providers: {} # Default: none; replace {} with one or more providers to enable custom cloud.

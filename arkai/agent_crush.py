@@ -31,6 +31,8 @@ def _custom_provider_type(protocol: str) -> str:
         return "messages"
     if protocol == "openai-completions":
         return "openai-compat"
+    if protocol == "openai-responses":
+        return "openai-responses-v1"
     raise RuntimeError(f"Unsupported custom cloud protocol for Crush: {protocol!r}")
 
 
