@@ -113,6 +113,15 @@ def build_launch_spec(
                 selected_model if provider_id == selected_provider["provider_id"] else None
             )
             for model in cloud_config_utils.custom_cloud_models(provider, model_filter):
+                if (
+                    cloud_config_utils.custom_cloud_model_protocol(provider, model)
+                    != (provider["protocol"])
+                ):
+                    raise RuntimeError(
+                        "OpenCode does not support per-model protocols; model "
+                        f"{model['id']!r} of custom provider {provider_id!r} must "
+                        "match the provider protocol"
+                    )
                 model_entry = {"name": model.get("name", model["id"])}
                 limit = {"context": model["context_window"]}
                 if "max_output_tokens" in model:

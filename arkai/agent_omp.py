@@ -264,9 +264,11 @@ def _merge_custom_providers(
         ):
             provider_catalog = provider_catalog + [{"id": selected_id, "name": selected_id}]
         for model in provider_catalog:
+            model_protocol = cloud_config_utils.custom_cloud_model_protocol(provider, model)
             model_entry: dict = {
                 "id": model["id"],
                 "name": model.get("name", model["id"]),
+                "api": model_protocol,
                 "reasoning": model.get("reasoning", False),
                 "contextWindow": model.get(
                     "context_window", cloud_config_utils.DEFAULT_CUSTOM_CLOUD_CONTEXT_WINDOW

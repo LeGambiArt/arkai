@@ -27,6 +27,11 @@ orchestration flow.
 - Provider configuration can inherit endpoint, protocol, and key-source
   defaults, with per-provider overrides. A default provider is required
   when more than one provider is configured.
+- A model entry may declare its own `protocol`, resolved from the model
+  declaration or inherited from its provider, which in turn defaults to
+  `openai-completions`. The `pi` and `omp` adapters honor it as per-model
+  API selection; Crush and OpenCode reject model protocols that differ
+  from their provider's because their configuration cannot express them.
 
 ## Security and boundaries
 

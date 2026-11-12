@@ -107,6 +107,16 @@ def _custom_crush_providers(
         model_filter = selected_model if provider_id == selected_provider["provider_id"] else None
         if model_filter and model_filter not in {model["id"] for model in models}:
             models = models + [{"id": model_filter, "name": model_filter}]
+        for model in models:
+            if (
+                cloud_config_utils.custom_cloud_model_protocol(provider, model)
+                != (provider["protocol"])
+            ):
+                raise RuntimeError(
+                    "Crush does not support per-model protocols; model "
+                    f"{model['id']!r} of custom provider {provider_id!r} must "
+                    "match the provider protocol"
+                )
         provider_config = {
             "id": provider_id,
             "name": provider["name"],

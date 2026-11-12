@@ -1956,6 +1956,44 @@ def test_omp_custom_prompt_pins_provider_and_model(tmp_path: Path, monkeypatch) 
             path.unlink(missing_ok=True)
 
 
+def test_omp_model_protocol_overrides_provider_api(tmp_path: Path, monkeypatch) -> None:
+    """A model protocol override becomes that model's API in OMP's catalog."""
+    agent_dir = tmp_path / "omp-agent"
+    monkeypatch.setattr(agent_omp, "get_global_agent_dir", lambda: agent_dir)
+    monkeypatch.setattr(agent_omp, "get_install_dir", lambda: tmp_path / "arkai-omp")
+    cfg = _custom_cloud_cfg()
+    cfg["agent"]["cloud"]["custom"]["providers"]["arkai-custom"]["models"][0]["protocol"] = (
+        "openai-responses"
+    )
+
+    spec = agent_omp.build_launch_spec(
+        "/bin/omp",
+        cfg,
+        None,
+        False,
+        str(tmp_path),
+        cloud_services=["custom"],
+        cloud_api_environment={
+            "TEAM_MODEL_KEY": "provider-secret",
+            "OPENAI_GATEWAY_KEY": "openai-secret",
+        },
+    )
+
+    runtime_models_path = Path(spec.environment["PI_CODING_AGENT_DIR"]) / "models.yml"
+    models = agent.utils.load_yaml(str(runtime_models_path))
+    provider = models["providers"]["arkai-custom"]
+    assert provider["api"] == "openai-completions"
+    assert [model["api"] for model in provider["models"]] == [
+        "openai-responses",
+        "openai-completions",
+    ]
+    for path in spec.cleanup_paths:
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink(missing_ok=True)
+
+
 def test_omp_openai_responses_provider_uses_responses_api(tmp_path: Path, monkeypatch) -> None:
     """An openai-responses custom provider keeps its API in OMP's model catalog."""
     agent_dir = tmp_path / "omp-agent"
@@ -2021,6 +2059,89 @@ def test_pi_openai_responses_provider_uses_responses_api(tmp_path: Path, monkeyp
             shutil.rmtree(path)
         else:
             path.unlink(missing_ok=True)
+
+
+def test_pi_model_protocol_overrides_provider_api(tmp_path: Path, monkeypatch) -> None:
+    """A model protocol override becomes that model's API in Pi's catalog."""
+    agent_dir = tmp_path / "pi-agent"
+    monkeypatch.setattr(agent_pi, "get_global_agent_dir", lambda: agent_dir)
+    monkeypatch.setattr(agent_pi, "get_install_dir", lambda: tmp_path / "arkai-pi")
+    cfg = _custom_cloud_cfg()
+    cfg["agent"]["cloud"]["custom"]["providers"]["arkai-custom"]["models"][0]["protocol"] = (
+        "openai-responses"
+    )
+    with patch("arkai.wtmcp.is_wtmcp_running", return_value=False):
+        spec = agent_pi.build_launch_spec(
+            "/bin/pi",
+            cfg,
+            None,
+            False,
+            str(tmp_path),
+            cloud_services=["custom"],
+            cloud_api_environment={
+                "TEAM_MODEL_KEY": "provider-secret",
+                "OPENAI_GATEWAY_KEY": "openai-secret",
+            },
+        )
+
+    models = json.loads((Path(spec.environment["PI_CODING_AGENT_DIR"]) / "models.json").read_text())
+    provider = models["providers"]["arkai-custom"]
+    assert provider["api"] == "openai-completions"
+    assert [model["api"] for model in provider["models"]] == [
+        "openai-responses",
+        "openai-completions",
+    ]
+    for path in spec.cleanup_paths:
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink(missing_ok=True)
+
+
+def test_opencode_rejects_model_protocol_that_differs_from_provider(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """OpenCode cannot express per-model protocols and refuses the launch."""
+    monkeypatch.setattr(agent_opencode, "_get_config_dir", lambda: tmp_path)
+    monkeypatch.setenv("TEAM_MODEL_KEY", "provider-secret")
+    monkeypatch.setenv("OPENAI_GATEWAY_KEY", "openai-secret")
+    cfg = _custom_cloud_cfg()
+    cfg["agent"]["cloud"]["custom"]["providers"]["arkai-custom"]["models"][0]["protocol"] = (
+        "openai-responses"
+    )
+
+    with pytest.raises(RuntimeError, match="per-model protocols"):
+        agent_opencode.build_launch_spec(
+            "/agent",
+            cfg,
+            None,
+            False,
+            None,
+            cloud_services=["custom"],
+        )
+
+
+def test_crush_rejects_model_protocol_that_differs_from_provider(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Crush cannot express per-model protocols and refuses the launch."""
+    monkeypatch.setattr(agent_crush, "_get_config_dir", lambda: tmp_path)
+    monkeypatch.setenv("TEAM_MODEL_KEY", "provider-secret")
+    monkeypatch.setenv("OPENAI_GATEWAY_KEY", "openai-secret")
+    cfg = _custom_cloud_cfg()
+    cfg["agent"]["cloud"]["custom"]["providers"]["arkai-custom"]["models"][0]["protocol"] = (
+        "openai-responses"
+    )
+
+    with pytest.raises(RuntimeError, match="per-model protocols"):
+        agent_crush.build_launch_spec(
+            "/bin/crush",
+            cfg,
+            None,
+            False,
+            str(tmp_path),
+            cloud_services=["custom"],
+        )
 
 
 def test_opencode_openai_responses_provider_uses_native_package(

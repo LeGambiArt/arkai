@@ -92,6 +92,17 @@ Feature: Agent Execution
     When I run "arkai agent start" with "--cloud custom" in a TTY
     Then the agent configuration maps the provider to the Responses client
 
+  Scenario: A custom cloud model can override the provider protocol
+    Given a custom cloud provider whose model overrides the provider protocol
+    When I run "arkai agent start" with "--agent pi --cloud custom" in a TTY
+    Then the agent configuration maps the model to its own protocol
+
+  Scenario: OpenCode rejects a custom cloud model protocol that differs from its provider
+    Given a custom cloud provider whose model overrides the provider protocol
+    When I run "arkai agent start" with "--cloud custom" in a TTY
+    Then the exit code is 1
+    And the error contains "per-model protocols"
+
   Scenario: Agent lists Arkai sessions without starting agent infrastructure
     Given a saved Arkai agent session named "session-to-list"
     When I list Arkai agent sessions

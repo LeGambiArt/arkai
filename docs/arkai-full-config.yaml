@@ -33,6 +33,7 @@ agent:
   #         models: [] # Default: none; replace [] with entries to add model metadata.
   #           - id: null # Required when an entry is present.
   #             name: null # Omit to default to model ID.
+  #             protocol: null # Omit to inherit the provider protocol; supported by the pi and omp agents.
   #             context_window: null # Default: 262144 (256k) tokens when omitted; accepts k/m suffixes.
   #             max_output_tokens: null # Unset; positive integer or k/m size such as 8k.
   #             reasoning: null # Unset; omit unless setting a boolean.

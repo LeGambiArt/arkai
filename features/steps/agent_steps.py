@@ -170,18 +170,24 @@ def _run_agent_in_tty(
             context.wtmcp_start_called = mock_wtmcp_start.called
             # sandbox was used if the command starts with the arapuca prefix ("fake-agent run ...")
             context.sandbox_used = len(popen_cmd) >= 2 and popen_cmd[1] == "run"
-            context.agent_config_text = write_text.call_args.args[0]
+            # A launch that fails before OpenCode's config is written leaves
+            # no config to inspect; only capture it when one was produced.
+            context.agent_config_text = (
+                write_text.call_args.args[0] if write_text.call_count else None
+            )
             context.agent_launch_options = session_record["launch_options"]
 
-            mkstemp.assert_called_once_with(
-                prefix="opencode-", suffix=".json", dir=agent_opencode.Path(config_dir)
-            )
-            close.assert_called_once_with(999)
-            write_text.assert_called_once()
+            if context.exit_code == 0:
+                mkstemp.assert_called_once_with(
+                    prefix="opencode-", suffix=".json", dir=agent_opencode.Path(config_dir)
+                )
+                close.assert_called_once_with(999)
+                write_text.assert_called_once()
 
     sys.stdout = old_stdout
     sys.stderr = old_stderr
     context.stdout = stdout_capture.getvalue()
+    context.stderr = stderr_capture.getvalue()
 
 
 def _run_crush_agent_in_tty(
@@ -372,6 +378,147 @@ def step_agent_config_maps_provider_to_responses_client(context):
     provider = config["providers"]["gateway"]
     assert provider["package"] == "@opencode/ai/providers/openai-compatible-responses"
     assert provider["settings"]["baseURL"] == "https://gateway.example/v1"
+
+
+@given("a custom cloud provider whose model overrides the provider protocol")  # ty: ignore[call-non-callable]
+def step_custom_cloud_provider_with_model_protocol_override(context):
+    """Configure a custom cloud provider whose first model uses another protocol."""
+    config_data = {
+        "agent": {
+            "name": "opencode",
+            "cloud": {
+                "custom": {
+                    "base_url": "https://gateway.example/v1",
+                    "default_provider": "gateway",
+                    "protocol": "openai-completions",
+                    "providers": {
+                        "gateway": {
+                            "default_model": "org/model-id",
+                            "models": [
+                                {
+                                    "id": "org/model-id",
+                                    "name": "Example model",
+                                    "protocol": "openai-responses",
+                                }
+                            ],
+                        }
+                    },
+                }
+            },
+        },
+        "inference": {"model": "test.gguf"},
+    }
+    utils.save_yaml(".arkai.yaml", config_data)
+
+
+@when('I run "arkai agent start" with "--agent pi --cloud custom" in a TTY')  # ty: ignore[call-non-callable]
+def step_run_pi_agent_with_custom_cloud(context):
+    """Run the Pi agent against the configured custom cloud provider."""
+    from arkai import agent_pi
+
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+    stdout_capture = StringIO()
+    stderr_capture = StringIO()
+
+    sys.stdout = stdout_capture
+    sys.stderr = stderr_capture
+    context.exit_code = 0
+
+    mock_proc = MagicMock()
+    mock_proc.pid = 9999
+    mock_proc.wait.return_value = 0
+
+    session_record = {
+        "id": "550e8400-e29b-41d4-a716-446655440000",
+        "name": None,
+        "agent": "pi",
+        "working_directory": os.getcwd(),
+        "native_session_id": None,
+        "launch_options": {},
+        "status": "starting",
+    }
+
+    global_agent_dir = Path(tempfile.mkdtemp(prefix="pi-behave-global-"))
+    install_dir = Path(tempfile.mkdtemp(prefix="pi-behave-install-"))
+    captured_model_text: list[str] = []
+
+    def capture_launch(spec, capture_stdout=False):
+        # Pi writes models.json with mkstemp before the spec is returned;
+        # read it from the private agent dir before that directory is used.
+        # Scenario-level mocks patch builtins.open and os.listdir, so read
+        # the file bytes directly with os.open.
+        for path in spec.cleanup_paths:
+            models_path = Path(path) / "models.json"
+            try:
+                descriptor = os.open(models_path, os.O_RDONLY)
+                try:
+                    captured_model_text.append(os.read(descriptor, 4 << 20).decode("utf-8"))
+                finally:
+                    os.close(descriptor)
+            except OSError:
+                pass
+        return None
+
+    # The scenario-level filesystem mocks no-op os.mkdir (capturing the
+    # originals would only capture the mocks), which breaks tempfile.mkdtemp
+    # inside Pi's private-directory staging; stop those patches for this
+    # launch and restore them afterwards.
+    filesystem_patches = [
+        context.mkdir_patch,
+        context.makedirs_patch,
+        context.path_mkdir_patch,
+    ]
+    for filesystem_patch in filesystem_patches:
+        filesystem_patch.stop()
+    try:
+        with (
+            patch.object(sys.stdin, "isatty", return_value=True),
+            patch.object(inference, "is_inference_running", return_value=True),
+            patch.object(wtmcp, "is_wtmcp_running", return_value=False),
+            patch.object(utils, "resolve_binary", return_value="/usr/bin/fake-agent"),
+            patch("subprocess.Popen", return_value=mock_proc),
+            patch.object(agent_pi, "get_global_agent_dir", return_value=global_agent_dir),
+            patch.object(agent_pi, "get_install_dir", return_value=install_dir),
+            patch.object(agent_pi, "run_launch_spec", side_effect=capture_launch),
+            patch.dict(os.environ, {"TEAM_MODEL_KEY": "behave-secret"}),
+            patch.object(agent_session, "create_session", return_value=session_record),
+            patch.object(agent_session, "save_session"),
+            patch.object(agent_session, "get_session_dir", return_value=global_agent_dir),
+        ):
+            agent.cmd_agent(
+                no_mcp=True,
+                no_sandbox=True,
+                agent_name="pi",
+                cloud_services=["custom"],
+            )
+    except SystemExit as e:
+        context.exit_code = e.code if e.code else 1
+    except Exception as e:
+        context.exit_code = 1
+        stderr_capture.write(str(e))
+    finally:
+        for filesystem_patch in filesystem_patches:
+            filesystem_patch.start()
+        shutil.rmtree(global_agent_dir, ignore_errors=True)
+        shutil.rmtree(install_dir, ignore_errors=True)
+
+    sys.stdout = old_stdout
+    sys.stderr = old_stderr
+    context.stdout = stdout_capture.getvalue()
+    context.stderr = stderr_capture.getvalue()
+    context.pi_models_text = captured_model_text[0] if captured_model_text else None
+
+
+@then("the agent configuration maps the model to its own protocol")  # ty: ignore[call-non-callable]
+def step_agent_config_maps_model_to_own_protocol(context):
+    """Pi registers the model with the Responses API despite the provider default."""
+    assert context.exit_code == 0, context.stderr
+    assert context.pi_models_text is not None, "Pi model catalog was not written"
+    models = json.loads(context.pi_models_text)
+    provider = models["providers"]["gateway"]
+    assert provider["api"] == "openai-completions"
+    assert provider["models"][0]["api"] == "openai-responses"
 
 
 @when('I run "arkai agent start" with "--cloud custom" in a TTY')  # ty: ignore[call-non-callable]

@@ -19,6 +19,7 @@ DEFAULT_CUSTOM_CLOUD_CONTEXT_WINDOW = 262144
 
 _MODEL_METADATA_FIELDS = {
     "name",
+    "protocol",
     "context_window",
     "max_output_tokens",
     "reasoning",
@@ -190,6 +191,13 @@ def _normalize_models(value: object, path: str, default_model: str | None) -> li
                 if not isinstance(metadata, str) or not metadata.strip():
                     raise ValueError(f"{entry_path}.{field} must be a non-empty string")
                 model[field] = metadata.strip()
+            elif field == "protocol":
+                if metadata not in _SUPPORTED_CUSTOM_PROTOCOLS:
+                    raise ValueError(
+                        f"{entry_path}.{field} must be 'openai-completions', "
+                        "'openai-responses', or 'anthropic-messages'"
+                    )
+                model[field] = metadata
             elif field in {"context_window", "max_output_tokens"}:
                 parsed_size = utils.parse_token_size(metadata)
                 if parsed_size is None:
@@ -413,6 +421,11 @@ def custom_cloud_models(provider: dict, selected_model: str | None = None) -> li
         # unconfigured context window must not silently truncate cloud sessions.
         model.setdefault("context_window", DEFAULT_CUSTOM_CLOUD_CONTEXT_WINDOW)
     return models
+
+
+def custom_cloud_model_protocol(provider: dict, model: dict) -> str:
+    """Resolve a model's protocol from its own declaration or its provider's."""
+    return model.get("protocol") or provider["protocol"]
 
 
 def custom_cloud_api_key(

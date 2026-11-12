@@ -86,6 +86,13 @@ unit string with a `k` (`*1024`) or `m` (`*1024*1024`) suffix, so
 `context_window: 64k` and `max_output_tokens: 8K` mean 65536 and 8192
 tokens.
 
+A model can override the provider protocol with its own `protocol` key,
+which is useful when a gateway serves, for example, one model over the
+Responses API and the rest over Chat Completions. Omitted protocols
+inherit the provider's. Per-model protocols are supported by the `pi` and
+`omp` agents; Crush and OpenCode reject a configuration whose model
+protocol differs from its provider's.
+
 Export the variable before launching, then select the provider with
 `--cloud custom`. If several providers are configured, `default_provider`
 is required; `--model` can select a model or `provider-id/model-id`. For

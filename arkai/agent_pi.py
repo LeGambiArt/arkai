@@ -299,10 +299,11 @@ def _merge_custom_provider_models(
             model.get("id"): model for model in provider_models if isinstance(model, dict)
         }
         for model in cloud_config_utils.custom_cloud_models(provider, selected_id):
+            model_protocol = cloud_config_utils.custom_cloud_model_protocol(provider, model)
             model_entry = {
                 "id": model["id"],
                 "name": model.get("name", model["id"]),
-                "api": provider["protocol"],
+                "api": model_protocol,
                 "reasoning": model.get("reasoning", False),
                 "input": ["text"],
                 "cost": {

@@ -53,6 +53,54 @@ def test_openai_provider_id_keeps_explicit_completions_protocol() -> None:
     assert config["providers"]["openai"]["protocol"] == "openai-completions"
 
 
+def test_model_protocol_overrides_provider_protocol() -> None:
+    config = cloud_provider.normalize_custom_cloud_config(
+        _base_config()
+        | {
+            "protocol": "openai-completions",
+            "providers": {
+                "gateway": {
+                    "default_model": "org/model",
+                    "models": [
+                        {"id": "org/model", "protocol": "openai-responses"},
+                        {"id": "org/other"},
+                    ],
+                }
+            },
+        }
+    )
+    models = config["providers"]["gateway"]["models"]
+    assert models[0]["protocol"] == "openai-responses"
+    assert "protocol" not in models[1]
+    provider = config["providers"]["gateway"]
+    assert cloud_provider.custom_cloud_model_protocol(provider, models[0]) == "openai-responses"
+    assert cloud_provider.custom_cloud_model_protocol(provider, models[1]) == "openai-completions"
+
+
+def test_model_protocol_defaults_to_openai_completions_without_root_protocol() -> None:
+    config = cloud_provider.normalize_custom_cloud_config(_base_config())
+    provider = config["providers"]["gateway"]
+    assert provider["protocol"] == "openai-completions"
+    assert cloud_provider.custom_cloud_model_protocol(provider, provider["models"][0]) == (
+        "openai-completions"
+    )
+
+
+def test_rejects_unknown_model_protocol() -> None:
+    with pytest.raises(ValueError, match=r"models\[0\].protocol"):
+        cloud_provider.normalize_custom_cloud_config(
+            _base_config()
+            | {
+                "providers": {
+                    "gateway": {
+                        "default_model": "org/model",
+                        "models": [{"id": "org/model", "protocol": "unsupported"}],
+                    }
+                }
+            }
+        )
+
+
 def test_normalizes_inherited_environment_and_provider_keychain_sources() -> None:
     config = cloud_provider.normalize_custom_cloud_config(
         {
