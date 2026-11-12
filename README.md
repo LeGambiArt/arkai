@@ -29,6 +29,14 @@ You can install from PyPI:
 python -m pip install arkai
 ```
 
+Or install via Homebrew using the LeGambiArt tap:
+
+```bash
+brew tap legambiart/birdbox
+brew trust legambiart/birdbox
+brew install arkai
+```
+
 To install from the GitHub repository:
 
 ```bash
