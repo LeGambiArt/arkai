@@ -15,6 +15,7 @@ from arkai import (
     agent_omp,
     agent_opencode,
     agent_pi,
+    cloud_provider,
 )
 
 
@@ -936,17 +937,17 @@ def test_crush_custom_cloud_discovers_models_for_modelless_providers(
 
     with (
         patch.object(
-            agent_crush,
-            "_discover_provider_models",
+            cloud_provider,
+            "discover_provider_models",
             return_value=[{"id": "claude-model-id", "name": "claude-model-id"}],
         ) as discover,
         patch.object(
-            agent_crush,
-            "_anthropic_catalog_models",
+            cloud_provider,
+            "anthropic_catalog_models",
             return_value=[
                 {
-                    "id": "claude-haiku-4-5",
-                    "name": "Claude Haiku 4.5 (latest)",
+                    "id": "claude-haiku-4-5-20251001",
+                    "name": "Claude Haiku 4.5",
                     "context_window": 200000,
                     "reasoning": True,
                 }
@@ -960,14 +961,14 @@ def test_crush_custom_cloud_discovers_models_for_modelless_providers(
         (Path(spec.environment["CRUSH_GLOBAL_CONFIG"]) / "crush.json").read_text()
     )
     # Messages providers fetch their listing through Arkai (Crush would probe
-    # the wrong URL because the base URL is the origin) and merge the
-    # Anthropic catalog for Claude model IDs the gateway listing omits.
+    # the wrong URL because the base URL is the origin) and merge the Anthropic
+    # catalog: gateways route stable Claude IDs without listing them.
     discover.assert_called_once()
     assert config_data["providers"]["anthropic"]["models"] == [
         {"id": "claude-model-id", "name": "claude-model-id", "context_window": 262144},
         {
-            "id": "claude-haiku-4-5",
-            "name": "Claude Haiku 4.5 (latest)",
+            "id": "claude-haiku-4-5-20251001",
+            "name": "Claude Haiku 4.5",
             "context_window": 200000,
             "can_reason": True,
         },
@@ -1766,12 +1767,12 @@ def test_omp_custom_provider_registers_models_and_selects_default(
     runtime_models_path = runtime_agent_dir / "models.yml"
     models = agent.utils.load_yaml(str(runtime_models_path))
     provider = models["providers"]["arkai-custom"]
-    openai_provider = models["providers"]["openai"]
-    anthropic_provider = models["providers"]["anthropic"]
+    openai_provider = models["providers"]["arkai-openai"]
+    anthropic_provider = models["providers"]["arkai-anthropic"]
     assert set(models["providers"]) == {
         "arkai-custom",
-        "openai",
-        "anthropic",
+        "arkai-openai",
+        "arkai-anthropic",
     }
     assert provider["baseUrl"] == "https://gateway.example/v1"
     assert provider["api"] == "openai-completions"
@@ -1787,6 +1788,7 @@ def test_omp_custom_provider_registers_models_and_selects_default(
     assert [model["id"] for model in openai_provider["models"]] == ["gpt-model-id"]
     assert anthropic_provider["baseUrl"] == "https://anthropic-gateway.example/v1"
     assert anthropic_provider["api"] == "anthropic-messages"
+    assert anthropic_provider["headers"] == {"X-Api-Key": "TEAM_MODEL_KEY"}
     assert [model["id"] for model in anthropic_provider["models"]] == ["claude-model-id"]
     assert "--provider" not in spec.command
     assert "--model" not in spec.command
@@ -1804,8 +1806,8 @@ def test_omp_custom_provider_registers_models_and_selects_default(
     assert models_path.read_text() == original_models
     assert config_path.read_text() == original_config
     assert models["providers"]["arkai-custom"]["apiKey"] == "provider-secret"
-    assert models["providers"]["openai"]["apiKey"] == "openai-secret"
-    assert models["providers"]["anthropic"]["apiKey"] == "provider-secret"
+    assert models["providers"]["arkai-openai"]["apiKey"] == "openai-secret"
+    assert models["providers"]["arkai-anthropic"]["apiKey"] == "provider-secret"
     for path in spec.cleanup_paths:
         if path.is_dir():
             shutil.rmtree(path)
@@ -1850,7 +1852,76 @@ def test_omp_custom_sandbox_passes_key_and_exact_endpoint_allowlist(
     runtime_config = agent.utils.load_yaml(
         str(Path(spec.environment["PI_CODING_AGENT_DIR"]) / "config.yml")
     )
-    assert runtime_config["modelRoles"]["default"] == "openai/gpt-model-id"
+    assert runtime_config["modelRoles"]["default"] == "arkai-openai/gpt-model-id"
+    for path in spec.cleanup_paths:
+        if path.is_dir():
+            shutil.rmtree(path)
+        else:
+            path.unlink(missing_ok=True)
+
+
+def test_omp_custom_provider_discovers_models_for_modelless_providers(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Modelless OMP custom providers get their models from discovery."""
+    agent_dir = tmp_path / "omp-agent"
+    agent_dir.mkdir()
+    monkeypatch.setattr(agent_omp, "get_global_agent_dir", lambda: agent_dir)
+    monkeypatch.setattr(agent_omp, "get_install_dir", lambda: tmp_path / "arkai-omp")
+    monkeypatch.setenv("TEAM_MODEL_KEY", "provider-secret")
+    monkeypatch.setenv("OPENAI_GATEWAY_KEY", "openai-secret")
+    cfg = _custom_cloud_cfg()
+    cfg["agent"]["cloud"]["custom"]["providers"]["openai"].pop("models")
+    cfg["agent"]["cloud"]["custom"]["providers"]["anthropic"].pop("models")
+
+    with (
+        patch.object(
+            cloud_provider,
+            "discover_provider_models",
+            side_effect=lambda provider, key: (
+                [{"id": "gateway-claude-id", "name": "gateway-claude-id"}]
+                if provider["protocol"] == "anthropic-messages"
+                else [{"id": "gpt-model-id", "name": "GPT model"}]
+            ),
+        ) as discover,
+        patch.object(
+            cloud_provider,
+            "anthropic_catalog_models",
+            return_value=[
+                {
+                    "id": "claude-haiku-4-5-20251001",
+                    "name": "Claude Haiku 4.5",
+                    "context_window": 200000,
+                    "reasoning": True,
+                }
+            ],
+        ),
+    ):
+        spec = agent_omp.build_launch_spec(
+            "/bin/omp",
+            cfg,
+            None,
+            False,
+            str(tmp_path),
+            cloud_services=["custom"],
+        )
+
+    models = agent.utils.load_yaml(
+        str(Path(spec.environment["PI_CODING_AGENT_DIR"]) / "models.yml")
+    )
+    assert discover.call_count == 2
+    # The Messages provider merges the gateway listing with the Anthropic
+    # catalog (gateways route stable Claude IDs without listing them).
+    assert [model["id"] for model in models["providers"]["arkai-anthropic"]["models"]] == [
+        "gateway-claude-id",
+        "claude-haiku-4-5-20251001",
+    ]
+    assert models["providers"]["arkai-anthropic"]["models"][0]["contextWindow"] == 262144
+    assert models["providers"]["arkai-anthropic"]["models"][1]["contextWindow"] == 200000
+    # The completions provider uses its own listing.
+    assert [model["id"] for model in models["providers"]["arkai-openai"]["models"]] == [
+        "gpt-model-id"
+    ]
     for path in spec.cleanup_paths:
         if path.is_dir():
             shutil.rmtree(path)
@@ -1875,7 +1946,7 @@ def test_omp_custom_prompt_pins_provider_and_model(tmp_path: Path, monkeypatch) 
         cloud_model="openai/gpt-model-id",
     )
 
-    assert spec.command[spec.command.index("--provider") + 1] == "openai"
+    assert spec.command[spec.command.index("--provider") + 1] == "arkai-openai"
     assert spec.command[spec.command.index("--model") + 1] == "gpt-model-id"
     assert spec.command[-1] == "summarize this project"
     for path in spec.cleanup_paths:

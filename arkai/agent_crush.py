@@ -50,102 +50,6 @@ def _custom_model_entry(model: dict) -> dict:
     return entry
 
 
-def _discover_provider_models(provider: dict, api_key: str | None) -> list[dict] | None:
-    """Fetch a provider's model listing from its OpenAI-style /models endpoint."""
-    import requests
-
-    try:
-        response = requests.get(
-            f"{provider['base_url'].rstrip('/')}/models",
-            headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
-            timeout=(5, 20),
-        )
-    except requests.RequestException:
-        return None
-    if response.status_code != 200:
-        return None
-    try:
-        listing = response.json()
-    except ValueError:
-        return None
-    entries = listing.get("data") if isinstance(listing, dict) else None
-    if not isinstance(entries, list):
-        return None
-    models = []
-    for entry in entries:
-        model_id = entry.get("id") if isinstance(entry, dict) else None
-        if isinstance(model_id, str) and model_id.strip():
-            models.append({"id": model_id.strip(), "name": model_id.strip()})
-    return models or None
-
-
-_ANTHROPIC_CATALOG_URL = "https://models.dev/api.json"
-_ANTHROPIC_CATALOG_CACHE_SECONDS = 24 * 60 * 60
-_ANTHROPIC_CATALOG_CACHE = Path(
-    os.path.expanduser("~/.local/state/arkai/cache/anthropic-models.json")
-)
-
-
-def _anthropic_catalog_models() -> list[dict]:
-    """Return Claude model metadata from the models.dev catalog, cached for a day."""
-    import time
-
-    import requests
-
-    try:
-        cached = json.loads(_ANTHROPIC_CATALOG_CACHE.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        cached = None
-    now = time.time()
-    if (
-        isinstance(cached, dict)
-        and now - cached.get("fetched_at", 0) < _ANTHROPIC_CATALOG_CACHE_SECONDS
-        and isinstance(cached.get("models"), list)
-    ):
-        return cached["models"]
-    try:
-        response = requests.get(_ANTHROPIC_CATALOG_URL, timeout=(5, 20))
-        response.raise_for_status()
-        catalog = response.json()
-    except (requests.RequestException, ValueError):
-        return cached["models"] if isinstance(cached, dict) else []
-    provider_data = catalog.get("anthropic") if isinstance(catalog, dict) else None
-    provider_models = provider_data.get("models") if isinstance(provider_data, dict) else None
-    models = []
-    if isinstance(provider_models, dict):
-        for model_id, model in provider_models.items():
-            if not isinstance(model, dict):
-                continue
-            entry: dict = {"id": model_id, "name": model.get("name", model_id)}
-            limit = model.get("limit")
-            if isinstance(limit, dict) and limit.get("context"):
-                entry["context_window"] = limit["context"]
-            if model.get("reasoning"):
-                entry["reasoning"] = True
-            models.append(entry)
-    if models:
-        try:
-            _ANTHROPIC_CATALOG_CACHE.parent.mkdir(parents=True, exist_ok=True)
-            _ANTHROPIC_CATALOG_CACHE.write_text(
-                json.dumps({"fetched_at": now, "models": models}), encoding="utf-8"
-            )
-        except OSError:
-            pass
-    return models
-
-
-def _discover_anthropic_provider_models(provider: dict, api_key: str | None) -> list[dict]:
-    """Combine a Messages gateway's listing with the Anthropic model catalog."""
-    discovered = _discover_provider_models(provider, api_key) or []
-    known_ids = {model["id"] for model in discovered}
-    models = list(discovered)
-    for model in _anthropic_catalog_models():
-        # A gateway listing is authoritative for IDs it actually serves.
-        if model["id"] not in known_ids:
-            models.append(model)
-    return models
-
-
 def _custom_provider_base_url(provider: dict) -> str:
     """Return the endpoint Crush expects: origin for Messages, full URL otherwise."""
     base_url = provider["base_url"]
@@ -183,7 +87,9 @@ def _custom_crush_providers(
             # Messages provider's base URL is the origin (Crush appends the
             # API path), so its listing must be fetched here.
             if provider["protocol"] == "anthropic-messages":
-                models = _discover_anthropic_provider_models(provider, api_key) or []
+                models = (
+                    cloud_config_utils.discover_anthropic_provider_models(provider, api_key) or []
+                )
             if not models:
                 provider_config = {
                     "id": provider_id,

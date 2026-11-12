@@ -16,6 +16,25 @@ from arkai.agent import AgentLaunchSpec, run_launch_spec
 OMP_INSTALLER_URL = "https://omp.sh/install"
 OMP_CONFIG_DIR = ".local/state/arkai/omp"
 _OMP_SPELLING_SETTINGS = {"typoDetection": False, "autocomplete": False}
+_OMP_BUNDLED_PROVIDERS = frozenset(
+    """
+    aihubmix alibaba-singapore alibaba-us anthropic atlascloud avian azure baseten
+    bedrock bedrock-europe cerebras chutes cloudflare-ai-gateway cloudflare-workers-ai
+    copilot coralbricks cortecs deepseek fireworks gemini github-copilot google
+    google-vertex groq huggingface ionet kimi-coding meta minimax minimax-cn
+    minimax-china moonshot moonshotai moonshotai-cn nebius neuralwatt nvidia ollama
+    openai openai-codex opencode opencode-go opencode-zen openrouter pareto
+    qwen-token-plan qiniucloud radius scaleway synthetic together
+    vercel-ai-gateway xai xiaomi zai zai-coding-cn zhipu zhipu-coding
+    """.split()
+)
+
+
+def _omp_runtime_provider_id(provider_id: str) -> str:
+    """Namespace a custom provider ID that collides with an OMP built-in."""
+    if provider_id in _OMP_BUNDLED_PROVIDERS:
+        return f"arkai-{provider_id}"
+    return provider_id
 
 
 def _disable_omp_spelling(settings: dict) -> None:
@@ -173,6 +192,7 @@ def _merge_custom_providers(
     custom_cloud_config: dict,
     selected_provider_id: str,
     selected_model: str,
+    custom_api_environment: dict[str, str] | None = None,
 ) -> None:
     """Merge all user-configured providers into OMP's model catalog."""
     paths = [agent_dir / "models.yml", agent_dir / "models.yaml"]
@@ -192,6 +212,27 @@ def _merge_custom_providers(
             raise RuntimeError(f"Invalid custom provider configuration in {models_path}")
         provider_config["baseUrl"] = provider["base_url"]
         provider_config["api"] = provider["protocol"]
+        if provider["protocol"] == "anthropic-messages" and provider.get(
+            "api_key_environment_name"
+        ):
+            # OMP's Anthropic client authenticates Claude-Code style with an
+            # `Authorization: Bearer` header; Anthropic-compatible gateways
+            # that require `X-Api-Key` reject it. Header values resolve as
+            # environment variable names (not `$VAR` templates), so the bare
+            # name keeps the secret out of models.yml while OMP interpolates
+            # it from the launch environment.
+            provider_config.setdefault("headers", {})["X-Api-Key"] = provider[
+                "api_key_environment_name"
+            ]
+        if provider["protocol"] == "openai-completions":
+            # OMP inherits model metadata from its bundled catalog by ID and
+            # resolves wire compat per provider; a gateway model that matches
+            # a bundled ID would send `reasoning_effort` with tools, which
+            # chat-completions gateways commonly reject. Suppress the effort
+            # parameter for the whole custom provider.
+            compat = provider_config.setdefault("compat", {})
+            compat.setdefault("supportsReasoningEffort", False)
+            compat.setdefault("omitReasoningEffort", True)
         provider_models = provider_config.setdefault("models", [])
         if not isinstance(provider_models, list):
             raise RuntimeError(f"Invalid model list for provider {provider_id} in {models_path}")
@@ -199,15 +240,44 @@ def _merge_custom_providers(
         configured = {
             model.get("id"): model for model in provider_models if isinstance(model, dict)
         }
-        for model in cloud_config_utils.custom_cloud_models(provider, selected_id):
-            model_entry = {
+        provider_catalog = cloud_config_utils.custom_cloud_models(provider)
+        if not provider_catalog:
+            # OMP's picker only offers models present in its catalog. With no
+            # model list configured, populate it from the provider's /models
+            # listing; Anthropic Messages gateways get the Claude catalog
+            # merged in as well because their listing rarely names them.
+            api_key = (custom_api_environment or {}).get(
+                provider.get("api_key_environment_name") or ""
+            )
+            if provider["protocol"] == "anthropic-messages":
+                provider_catalog = cloud_config_utils.discover_anthropic_provider_models(
+                    provider, api_key
+                )
+            else:
+                provider_catalog = (
+                    cloud_config_utils.discover_provider_models(provider, api_key) or []
+                )
+        if (
+            selected_id
+            and provider_catalog
+            and selected_id not in {model["id"] for model in provider_catalog}
+        ):
+            provider_catalog = provider_catalog + [{"id": selected_id, "name": selected_id}]
+        for model in provider_catalog:
+            model_entry: dict = {
                 "id": model["id"],
                 "name": model.get("name", model["id"]),
                 "reasoning": model.get("reasoning", False),
-                "contextWindow": model["context_window"],
+                "contextWindow": model.get(
+                    "context_window", cloud_config_utils.DEFAULT_CUSTOM_CLOUD_CONTEXT_WINDOW
+                ),
                 "maxTokens": model.get("max_output_tokens", 8192),
                 "compat": {"supportsDeveloperRole": model.get("supports_developer_role", False)},
             }
+            # A model that does not reason carries no thinking config at all
+            # (OMP's schema rejects both null and {enabled: false}); the
+            # explicit reasoning: false replaces any inherited thinking
+            # metadata from a bundled model with the same ID.
             if model["id"] in configured:
                 configured[model["id"]].update(model_entry)
             else:
@@ -281,28 +351,45 @@ def build_launch_spec(
 
     cloud_provider = _cloud_provider(cloud_services)
     custom_cloud_config = None
-    selected_custom_provider = None
     selected_custom_model = None
     selected_provider_id = None
     selected_custom_model_reference = None
     custom_api_environment: dict[str, str] = {}
     if cloud_provider == "custom":
-        custom_cloud_config = cloud_config or cloud_config_utils.custom_cloud_config_from_arkai(cfg)
-        assert custom_cloud_config is not None
-        selected_custom_model_reference = cloud_config_utils.select_custom_cloud_model(
-            custom_cloud_config, cloud_model
-        )
-        selected_custom_provider, selected_custom_model = (
-            cloud_config_utils.custom_cloud_model_provider(
-                custom_cloud_config, selected_custom_model_reference
+        source_config = cloud_config or cloud_config_utils.custom_cloud_config_from_arkai(cfg)
+        assert source_config is not None
+        # OMP merges models.yml providers with its bundled catalog by provider
+        # ID. A custom provider that reuses a bundled ID (e.g. "anthropic")
+        # would also offer OMP's built-in models, whose IDs the gateway does
+        # not route. Namespace colliding IDs so only the gateway's models are
+        # offered.
+        remapped_providers: dict[str, dict] = {
+            _omp_runtime_provider_id(provider_id): dict(
+                provider, provider_id=_omp_runtime_provider_id(provider_id)
             )
+            for provider_id, provider in source_config["providers"].items()
+        }
+        custom_cloud_config: dict | None = {
+            "default_provider": _omp_runtime_provider_id(source_config["default_provider"]),
+            "providers": remapped_providers,
+        }
+        selected_custom_model_reference = cloud_config_utils.select_custom_cloud_model(
+            source_config, cloud_model
         )
-        selected_provider_id = selected_custom_provider["provider_id"]
+        selected_provider, selected_custom_model = cloud_config_utils.custom_cloud_model_provider(
+            source_config, selected_custom_model_reference
+        )
+        selected_provider_id = _omp_runtime_provider_id(selected_provider["provider_id"])
         assert isinstance(selected_provider_id, str)
+        selected_custom_model_reference = (
+            f"{selected_provider_id}/{selected_custom_model}"
+            if selected_custom_model
+            else selected_provider_id
+        )
         custom_api_environment = (
             dict(cloud_api_environment)
             if cloud_api_environment is not None
-            else cloud_config_utils.custom_cloud_environment(custom_cloud_config)
+            else cloud_config_utils.custom_cloud_environment(source_config)
         )
     custom_agent_volumes: list[str] = []
     native_session_dir = Path(session_dir) / "omp-sessions" if session_dir else None
@@ -335,6 +422,7 @@ def build_launch_spec(
                     custom_cloud_config,
                     selected_provider_id,
                     selected_custom_model,
+                    custom_api_environment,
                 )
                 assert selected_custom_model_reference is not None
                 _set_custom_default_model(agent_dir, selected_custom_model_reference)

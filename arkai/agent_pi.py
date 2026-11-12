@@ -313,7 +313,13 @@ def _merge_custom_provider_models(
                 },
                 "contextWindow": model["context_window"],
                 "maxTokens": model.get("max_output_tokens", 8192),
-                "compat": {"supportsDeveloperRole": model.get("supports_developer_role", False)},
+                "compat": {
+                    "supportsDeveloperRole": model.get("supports_developer_role", False),
+                    # A gateway model whose ID matches a bundled model would
+                    # inherit its thinking metadata and send `reasoning_effort`
+                    # with tools, which chat-completions gateways reject.
+                    "supportsReasoningEffort": False,
+                },
             }
             if model["id"] in configured:
                 configured[model["id"]].update(model_entry)
