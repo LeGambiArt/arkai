@@ -63,12 +63,13 @@ untouched.
 
 ### Editing profiles
 
-The field list includes a "Model profiles" row after the inference fields
-and a "Sandbox profiles" row after the sandbox fields. `Enter` on either
-opens the profile list for the file being edited, where `a` adds a profile,
-`d` deletes the selected one (type `y` to confirm), `Enter` edits its
-members, and `Esc` goes back. Deleting a profile that is also defined in
-another configuration layer removes it only from the file being edited.
+The field list includes a "Model profiles" row after the inference fields,
+a "Sandbox profiles" row after the sandbox fields, and a "Cloud custom
+providers" row after the agent fields. `Enter` on any of them opens the
+profile list for the file being edited, where `a` adds a profile, `d`
+deletes the selected one (type `y` to confirm), `Enter` edits its members,
+and `Esc` goes back. Deleting a profile that is also defined in another
+configuration layer removes it only from the file being edited.
 
 Profile names are alphanumeric plus underscore; `default` and `active` are
 reserved. Adding a profile prompts for its name and then opens the full
@@ -83,6 +84,22 @@ Sandbox profiles also expose `volume` and `environment` editors. Volumes are
 entered as `/path` or `~/path`, optionally suffixed `:ro`; duplicates with
 conflicting flags are rejected. Environment entries are entered as
 `KEY=VALUE` and overwrite an existing key.
+
+Cloud custom providers edit `agent.cloud.custom` (see
+[Cloud providers](cloud-providers.md)). The root fields — `default
+provider`, `custom protocol`, `custom base url`, and `custom api key` —
+appear in the Agent group and set the inherited defaults for every
+provider; `r` on any of them removes the key. The add prompt asks for a
+provider ID (letters, digits, `_`, `-`); members are `name`, `protocol`
+(picked from the supported protocols), `base_url` (must be HTTPS without
+credentials), and `default_model`. Members left unset inherit the
+`agent.cloud.custom` root defaults; `r` on a member removes the override.
+The `api_key` row (root or per provider) opens a source picker —
+`environment` prompts for the variable name, `keychain` for the service
+and account, and `(unset)` removes the key. The provider list requires a
+valid custom cloud configuration on save: keep at least one provider with
+a resolvable `base_url` (directly or through the root default), and set
+`default_provider` when more than one provider exists.
 
 `arkai config init --tui` initializes a new file (project by default,
 `--global` for the user file) and opens the same editor pre-filled with the

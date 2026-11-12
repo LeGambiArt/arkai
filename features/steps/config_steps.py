@@ -135,6 +135,37 @@ def step_config_editor_adds_profile_and_saves(context, name, model):
     context.add_cleanup(patch_obj.stop)
 
 
+@given(
+    'the config editor adds cloud custom provider "{provider_id}" with base URL "{url}" and saves'
+)  # ty: ignore[call-non-callable]
+def step_config_editor_adds_cloud_provider_and_saves(context, provider_id, url):
+    """Install a scripted editor that creates one custom cloud provider."""
+    from arkai import config_editor
+    from arkai.config_editor import nested_set
+
+    def script(target, merged, user, project, target_path):
+        nested_set(
+            target,
+            f"agent.cloud.custom.providers.{provider_id}",
+            {"base_url": url, "default_model": "org/model-id"},
+        )
+        return True
+
+    patch_obj = patch.object(config_editor, "run_editor", side_effect=script)
+    patch_obj.start()
+    context.editor_start_config = (
+        dict(context.config_data) if context.config_data is not None else None
+    )
+    context.add_cleanup(patch_obj.stop)
+
+
+@then('the file .arkai.yaml has cloud custom provider "{provider_id}" with base URL "{url}"')  # ty: ignore[call-non-callable]
+def step_check_config_cloud_custom_provider(context, provider_id, url):
+    assert context.config_data is not None, ".arkai.yaml was not created"
+    provider = context.config_data["agent"]["cloud"]["custom"]["providers"][provider_id]
+    assert provider["base_url"] == url
+
+
 @given("the config editor aborts without saving")  # ty: ignore[call-non-callable]
 def step_config_editor_aborts(context):
     """Install a scripted editor that quits without saving."""

@@ -53,6 +53,10 @@ FIELD_GROUPS: dict[str, list[Field]] = {
         Field("agent.mcp", "Mcp", "bool"),
         Field("agent.theme", "Theme", "str"),
         Field("agent.cloud.default", "Cloud", "choice", choices=("openai", "vertex", "custom")),
+        Field("agent.cloud.custom.default_provider", "Default provider", "str"),
+        Field("agent.cloud.custom.protocol", "Custom protocol", "protocol"),
+        Field("agent.cloud.custom.base_url", "Custom base url", "url"),
+        Field("agent.cloud.custom.api_key", "Custom api key", "api_key"),
     ],
     "Inference": [
         Field("inference.backend", "Backend", "choice", dynamic="backends"),
@@ -141,6 +145,13 @@ SANDBOX_PROFILE_MEMBERS: tuple[Field, ...] = (
     _member("timeout", "int", minimum=0),
 )
 
+CLOUD_PROVIDER_MEMBERS: tuple[Field, ...] = (
+    Field("name", "Name", "str"),
+    Field("protocol", "Protocol", "protocol"),
+    Field("base_url", "Base url", "url"),
+    Field("default_model", "Default model", "str"),
+)
+
 COLLECTIONS: list[CollectionSpec] = [
     CollectionSpec(
         title="Model profiles",
@@ -152,6 +163,12 @@ COLLECTIONS: list[CollectionSpec] = [
         title="Sandbox profiles",
         prefix="sandbox.profiles",
         members=SANDBOX_PROFILE_MEMBERS,
+        required=(),
+    ),
+    CollectionSpec(
+        title="Cloud custom providers",
+        prefix="agent.cloud.custom.providers",
+        members=CLOUD_PROVIDER_MEMBERS,
         required=(),
     ),
 ]
@@ -239,6 +256,40 @@ def _layer_source(user: dict, project: dict, key: str) -> str:
 def resolve_field_sources(user: dict, project: dict) -> dict[str, str]:
     """Map every registry key to its effective-value source layer."""
     return {field.key: _layer_source(user, project, field.key) for field in ALL_FIELDS}
+
+
+def validate_provider_id(existing: list[str], provider_id: str) -> str | None:
+    """Validate a proposed custom provider ID; None when valid, else an error."""
+    from arkai.cloud_provider import _PROVIDER_ID_PATTERN
+
+    if not provider_id:
+        return "ID must not be empty"
+    if not _PROVIDER_ID_PATTERN.fullmatch(provider_id):
+        return "ID must contain only letters, digits, '_' or '-'"
+    if provider_id in existing:
+        return f"provider {provider_id!r} already exists"
+    return None
+
+
+def validate_provider_field(field: Field, raw: str) -> tuple[bool, str, Any]:
+    """Validate provider-member input that needs cloud-specific rules."""
+    if field.kind == "protocol":
+        from arkai.cloud_provider import _SUPPORTED_CUSTOM_PROTOCOLS
+
+        if raw in _SUPPORTED_CUSTOM_PROTOCOLS:
+            return True, "", raw
+        return False, f"must be one of {', '.join(sorted(_SUPPORTED_CUSTOM_PROTOCOLS))}", None
+    if field.kind == "url":
+        from arkai.cloud_provider import _normalize_base_url
+
+        if raw == "":
+            return True, "", ""
+        try:
+            url, _host = _normalize_base_url(raw, field.key)
+        except ValueError as error:
+            return False, str(error).replace(f"{field.key} ", ""), None
+        return True, "", url
+    return validate_input(field, raw)
 
 
 def validate_profile_name(existing: list[str], name: str) -> str | None:
@@ -570,6 +621,8 @@ class _EditorState:
             value = UNSET_LABEL
         elif isinstance(value, bool):
             value = "true" if value else "false"
+        elif isinstance(value, dict) and field.kind == "api_key":
+            value = str(value.get("source", UNSET_LABEL))
         source = self.sources.get(field.key, "default")
         return f"{label}  ....  {value}  [{source}]"
 
@@ -667,7 +720,9 @@ class _EditorState:
         if field is None:
             return
         self.status = ""
-        if field.kind in ("choice", "bool"):
+        if field.kind == "api_key":
+            self._edit_api_key(stdscr, field.key, field.label)
+        elif field.kind in ("choice", "bool"):
             self._edit_choice(stdscr, field)
         else:
             self._edit_text(stdscr, field)
@@ -804,11 +859,15 @@ class _EditorState:
             self._apply_text(field, buffer)
 
     def _apply_text(self, field, buffer: str) -> None:
-        if field.kind == "str":
+        if field.kind in ("str", "protocol", "url"):
             if buffer == "":
                 nested_delete(self.target, field.key)
             else:
-                nested_set(self.target, field.key, buffer)
+                ok, message, value = validate_provider_field(field, buffer)
+                if not ok:
+                    self.status = f"Invalid value: {message}"
+                    return
+                nested_set(self.target, field.key, value)
             self._refresh_layers()
             return
         if buffer == "":
@@ -847,6 +906,9 @@ class _EditorState:
     def _profile_summary(self, spec: CollectionSpec, profile: dict) -> str:
         if spec.prefix == "inference.profiles":
             model = profile.get("model")
+            return str(model) if model is not None else "-"
+        if spec.prefix == "agent.cloud.custom.providers":
+            model = profile.get("default_model")
             return str(model) if model is not None else "-"
         return f"{profile.get('cpus', '-')} cpus / {profile.get('memory_mb', '-')} MB"
 
@@ -942,10 +1004,17 @@ class _EditorState:
         discarded when required members are still missing on exit.
         """
         while True:
-            name = self._prompt_text(stdscr, "Profile name", "")
+            name = self._prompt_text(
+                stdscr,
+                "Provider ID" if spec.prefix == "agent.cloud.custom.providers" else "Profile name",
+                "",
+            )
             if name is None or name == "":
                 return None
-            error = validate_profile_name(self._target_profile_names(spec), name)
+            if spec.prefix == "agent.cloud.custom.providers":
+                error = validate_provider_id(self._target_profile_names(spec), name)
+            else:
+                error = validate_profile_name(self._target_profile_names(spec), name)
             if error:
                 self.status = f"Invalid name: {error}"
                 continue
@@ -959,6 +1028,8 @@ class _EditorState:
         extra = ()
         if spec.prefix == "sandbox.profiles":
             extra = ("volume", "environment")
+        elif spec.prefix == "agent.cloud.custom.providers":
+            extra = ("api_key",)
         cursor = 0
         note = ""
         while True:
@@ -1016,6 +1087,10 @@ class _EditorState:
                 kind, member_key, _, _tag = rows[cursor]
                 if kind in ("volume", "environment"):
                     self._edit_extra(stdscr, spec, name, kind)
+                elif kind == "api_key":
+                    self._edit_api_key(
+                        stdscr, f"{spec.prefix}.{name}.api_key", f"{spec.title} — {name}"
+                    )
                 else:
                     self._edit_profile_member(stdscr, spec, name, member_key)
             elif key == ord("r"):
@@ -1037,18 +1112,30 @@ class _EditorState:
             if isinstance(value, bool):
                 value = "true" if value else "false"
             return str(value), _layer_source(self.user, self.project, dotted)
-        # Absent: sandbox members inherit the root sandbox value.
-        if spec.prefix == "sandbox.profiles":
-            root = nested_get(self.merged, f"sandbox.{member.key}")
+        # Absent: sandbox members inherit the root sandbox value, and cloud
+        # provider members inherit the agent.cloud.custom root defaults.
+        root_prefix = {
+            "sandbox.profiles": "sandbox",
+            "agent.cloud.custom.providers": "agent.cloud.custom",
+        }.get(spec.prefix)
+        if root_prefix:
+            root = nested_get(self.merged, f"{root_prefix}.{member.key}")
             if root is not _MISSING and root is not None:
                 return str(root), "default"
         return UNSET_LABEL, _layer_source(self.user, self.project, dotted)
 
     def _extra_row_text(self, spec: CollectionSpec, name: str, extra_key: str):
-        """Return (display value, source tag) for volume/environment rows."""
+        """Return (display value, source tag) for extra collection rows."""
         dotted = f"{spec.prefix}.{name}.{extra_key}"
         value = nested_get(self.merged, dotted)
         tag = _layer_source(self.user, self.project, dotted)
+        if extra_key == "api_key":
+            if value is _MISSING or value is None:
+                root = nested_get(self.merged, "agent.cloud.custom.api_key")
+                if root is not _MISSING and root is not None:
+                    return f"{root['source']}", "default"
+                return UNSET_LABEL, tag
+            return str(value["source"]), tag
         if value is _MISSING or value is None:
             root = nested_get(self.merged, f"sandbox.{extra_key}")
             if root is not _MISSING and root is not None:
@@ -1071,11 +1158,11 @@ class _EditorState:
         if raw is None:
             return
         if raw == "":
-            if member.kind == "str":
+            if member.kind in ("str", "protocol", "url"):
                 nested_delete(self.target, dotted)
                 self._refresh_layers()
             return
-        ok, message, value = validate_input(member, raw)
+        ok, message, value = validate_provider_field(member, raw)
         if not ok:
             self.status = f"Invalid value: {message}"
             return
@@ -1088,6 +1175,97 @@ class _EditorState:
             self._edit_volume_list(stdscr, dotted)
         else:
             self._edit_environment(stdscr, dotted)
+
+    def _edit_api_key(self, stdscr, dotted: str, title: str) -> None:
+        """Edit an api_key source declaration at a dotted key."""
+        curses = self.curses
+        cursor = 0
+        note = ""
+        sources = ("environment", "keychain", UNSET_LABEL)
+        while True:
+            current = nested_get(self.target, dotted)
+            if not isinstance(current, dict):
+                current = nested_get(self.merged, dotted)
+            current_source = current.get("source") if isinstance(current, dict) else None
+            cursor = max(0, min(cursor, len(sources) - 1))
+            height, width = stdscr.getmaxyx()
+            box_h = min(len(sources) + 6, height - 2)
+            box_w = min(64, width - 2)
+            top = max(1, (height - box_h) // 2)
+            left = max(0, (width - box_w) // 2)
+            win = curses.newwin(box_h, box_w, top, left)
+            self._begin_modal(stdscr)
+            win.keypad(True)
+            win.erase()
+            self._draw_unicode_box(win)
+            win.addstr(
+                0, 2, f"API key — {title}"[: box_w - 3], self._modal_attr() | curses.A_REVERSE
+            )
+            for i, source in enumerate(sources):
+                attr = curses.A_REVERSE | curses.A_BOLD if i == cursor else 0
+                marker = " (current)" if source == current_source else ""
+                win.addstr(i + 1, 2, f"{source}{marker}"[: box_w - 3], attr)
+            if note:
+                win.addstr(box_h - 3, 1, note[: box_w - 2], curses.A_DIM)
+            footer = "↑/↓ move · Enter select · Esc back"
+            win.addstr(box_h - 1, 2, footer[: box_w - 3], curses.A_DIM)
+            win.refresh()
+            key = win.getch()
+            if key in (curses.KEY_UP, ord("k")):
+                cursor = max(0, cursor - 1)
+            elif key in (curses.KEY_DOWN, ord("j")):
+                cursor = min(len(sources) - 1, cursor + 1)
+            elif key in (curses.KEY_ENTER, 10, 13):
+                source = sources[cursor]
+                if source == UNSET_LABEL:
+                    nested_delete(self.target, dotted)
+                    self._refresh_layers()
+                    return
+                declaration = self._prompt_api_key_source(stdscr, source, current)
+                if declaration is None:
+                    note = f"invalid or cancelled {source} declaration"
+                    continue
+                nested_set(self.target, dotted, declaration)
+                self._refresh_layers()
+                return
+            elif key == 27:  # Esc
+                return
+            elif key == curses.KEY_RESIZE:
+                continue
+
+    def _prompt_api_key_source(self, stdscr, source: str, current: dict | None) -> dict | None:
+        """Prompt for the fields of one api_key source; None on abort."""
+        declaration: dict = {"source": source}
+        if source == "environment":
+            initial = ""
+            if isinstance(current, dict) and current.get("source") == "environment":
+                initial = str(current.get("name", ""))
+            raw = self._prompt_text(stdscr, "Environment variable name", initial)
+            if raw is None or raw == "":
+                return None
+            from arkai.cloud_provider import _ENVIRONMENT_NAME_PATTERN
+
+            if not _ENVIRONMENT_NAME_PATTERN.fullmatch(raw):
+                return None
+            declaration["name"] = raw
+        else:
+            service = self._prompt_text(
+                stdscr,
+                "Keychain service",
+                str(current.get("service", "")) if isinstance(current, dict) else "",
+            )
+            if service is None or service == "":
+                return None
+            account = self._prompt_text(
+                stdscr,
+                "Keychain account",
+                str(current.get("account", "")) if isinstance(current, dict) else "",
+            )
+            if account is None or account == "":
+                return None
+            declaration["service"] = service
+            declaration["account"] = account
+        return declaration
 
     def _edit_volume_list(self, stdscr, dotted: str) -> None:
         curses = self.curses

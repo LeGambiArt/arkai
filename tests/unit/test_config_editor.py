@@ -20,6 +20,8 @@ from arkai.config_editor import (
     validate_env_entry,
     validate_input,
     validate_profile_name,
+    validate_provider_field,
+    validate_provider_id,
     validate_volume_entry,
 )
 
@@ -257,6 +259,94 @@ class TestValidateProfileName:
         assert validate_profile_name(["dev"], "dev") is not None
 
 
+class TestValidateProviderId:
+    def test_accepts_valid(self):
+        assert validate_provider_id([], "my-gateway_1") is None
+
+    @pytest.mark.parametrize("provider_id", ["", "bad id", "sp!cial", "dot.id"])
+    def test_rejects_invalid(self, provider_id):
+        assert validate_provider_id([], provider_id) is not None
+
+    def test_rejects_duplicate(self):
+        assert validate_provider_id(["gateway"], "gateway") is not None
+
+
+class TestValidateProviderField:
+    def test_protocol_membership(self):
+        protocol = _field("protocol", "protocol")
+        ok, _, value = validate_provider_field(protocol, "openai-responses")
+        assert ok and value == "openai-responses"
+        assert validate_provider_field(protocol, "carrier-pigeon")[0] is False
+
+    def test_url_requires_https(self):
+        url = _field("base_url", "url")
+        ok, _, value = validate_provider_field(url, "https://gateway.example/v1")
+        assert ok and value == "https://gateway.example/v1"
+        assert validate_provider_field(url, "http://insecure.example")[0] is False
+        assert validate_provider_field(url, "https://g.example/v1?token=x")[0] is False
+
+    def test_url_empty_clears_value(self):
+        url = _field("base_url", "url")
+        assert validate_provider_field(url, "") == (True, "", "")
+
+    def test_str_falls_through_to_validate_input(self):
+        name = _field("name", "str")
+        assert validate_provider_field(name, "My Gateway") == (True, "", "My Gateway")
+
+
+class TestCloudRootFields:
+    def test_registry_contains_custom_root_fields(self):
+        keys = {f.key for f in ALL_FIELDS}
+        assert "agent.cloud.custom.default_provider" in keys
+        assert "agent.cloud.custom.protocol" in keys
+        assert "agent.cloud.custom.base_url" in keys
+        assert "agent.cloud.custom.api_key" in keys
+
+    def test_apply_text_validates_protocol(self):
+        state = _make_state()
+        field = next(f for f in ALL_FIELDS if f.key == "agent.cloud.custom.protocol")
+        state._apply_text(field, "anthropic-messages")
+        assert nested_get(state.merged, "agent.cloud.custom.protocol") == "anthropic-messages"
+        state._apply_text(field, "carrier-pigeon")
+        assert state.status.startswith("Invalid value")
+        state._apply_text(field, "")
+        assert nested_get(state.merged, "agent.cloud.custom.protocol") is _MISSING
+
+    def test_apply_text_validates_base_url(self):
+        state = _make_state()
+        field = next(f for f in ALL_FIELDS if f.key == "agent.cloud.custom.base_url")
+        state._apply_text(field, "https://gateway.example/v1")
+        assert nested_get(state.merged, "agent.cloud.custom.base_url") == (
+            "https://gateway.example/v1"
+        )
+        state._apply_text(field, "http://insecure.example")
+        assert state.status.startswith("Invalid value")
+        state._apply_text(field, "")
+        assert nested_get(state.merged, "agent.cloud.custom.base_url") is _MISSING
+
+    def test_row_text_shows_api_key_source(self):
+        state = _make_state(
+            project={
+                "agent": {
+                    "cloud": {
+                        "custom": {
+                            "api_key": {
+                                "source": "keychain",
+                                "service": "s",
+                                "account": "a",
+                            }
+                        }
+                    }
+                }
+            }
+        )
+        state._refresh_layers()
+        field = next(f for f in ALL_FIELDS if f.key == "agent.cloud.custom.api_key")
+        text = state._row_text(field, field.label)
+        assert "keychain" in text
+        assert "[project]" in text
+
+
 class TestValidateVolumeEntry:
     def test_accepts_absolute_and_home_ro(self):
         assert validate_volume_entry([], "/a") is None
@@ -303,6 +393,91 @@ class TestProfileStateMutations:
         # an empty dict; the target file must not retain the pruned chain.
         assert "sandbox" not in state.target
         assert nested_get(state.merged, "sandbox.profiles") == {}
+
+    def test_cloud_provider_member_inherits_custom_root_defaults(self):
+        state = _make_state(
+            project={"agent": {"cloud": {"custom": {"protocol": "openai-responses"}}}}
+        )
+        spec = next(s for s in COLLECTIONS if s.prefix == "agent.cloud.custom.providers")
+        state._apply_profile_create(spec, "gateway", {})
+        state._refresh_layers()
+        member = next(m for m in spec.members if m.key == "protocol")
+        text, tag = state._member_row_text(spec, "gateway", member)
+        assert text == "openai-responses"
+        assert tag == "default"
+
+    def test_cloud_provider_member_override_wins_over_root(self):
+        state = _make_state(
+            project={
+                "agent": {
+                    "cloud": {
+                        "custom": {
+                            "protocol": "openai-completions",
+                            "providers": {"gateway": {"protocol": "anthropic-messages"}},
+                        }
+                    }
+                }
+            }
+        )
+        spec = next(s for s in COLLECTIONS if s.prefix == "agent.cloud.custom.providers")
+        state._refresh_layers()
+        member = next(m for m in spec.members if m.key == "protocol")
+        text, tag = state._member_row_text(spec, "gateway", member)
+        assert text == "anthropic-messages"
+        assert tag == "project"
+
+    def test_cloud_provider_api_key_row_text(self):
+        state = _make_state(
+            project={
+                "agent": {
+                    "cloud": {
+                        "custom": {
+                            "providers": {
+                                "gateway": {
+                                    "api_key": {"source": "environment", "name": "TEAM_KEY"}
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        )
+        spec = next(s for s in COLLECTIONS if s.prefix == "agent.cloud.custom.providers")
+        state._refresh_layers()
+        text, tag = state._extra_row_text(spec, "gateway", "api_key")
+        assert text == "environment"
+        assert tag == "project"
+
+    def test_cloud_provider_api_key_row_inherits_root(self):
+        state = _make_state(
+            project={
+                "agent": {
+                    "cloud": {
+                        "custom": {
+                            "api_key": {"source": "keychain", "service": "s", "account": "a"},
+                            "providers": {"gateway": {}},
+                        }
+                    }
+                }
+            }
+        )
+        spec = next(s for s in COLLECTIONS if s.prefix == "agent.cloud.custom.providers")
+        state._refresh_layers()
+        text, _tag = state._extra_row_text(spec, "gateway", "api_key")
+        assert text == "keychain"
+
+    def test_cloud_provider_summary_shows_default_model(self):
+        state = _make_state()
+        spec = next(s for s in COLLECTIONS if s.prefix == "agent.cloud.custom.providers")
+        assert state._profile_summary(spec, {"default_model": "org/model"}) == "org/model"
+        assert state._profile_summary(spec, {}) == "-"
+
+    def test_cloud_provider_delete_prunes_empty_parents(self):
+        state = _make_state()
+        spec = next(s for s in COLLECTIONS if s.prefix == "agent.cloud.custom.providers")
+        state._apply_profile_create(spec, "gateway", {"default_model": "m"})
+        state._apply_profile_delete(spec, "gateway")
+        assert "agent" not in state.target
 
     def test_missing_required_reports_empty_members(self):
         state = _make_state()
