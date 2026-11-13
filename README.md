@@ -68,6 +68,13 @@ the sandboxed, MCP-enabled workflow, install `arapuca` and `wtmcp`, then
 omit `--no-mcp` and `--no-sandbox`. Arkai can also start a configured
 agent with `arkai agent start`; use `arkai --help` to explore commands.
 
+To create the global configuration for the user defaults:
+
+```bash
+arkai config init --global
+# Edit ~/.config/arkai/arkai.yml
+```
+
 To create a project configuration and validate it:
 
 ```bash
@@ -76,8 +83,12 @@ arkai config init
 arkai config validate
 ```
 
-For troubleshooting, put `--debug` before the command, for example
-`arkai --debug agent start`.
+You can also use the config TUI editor for the project and global scopes:
+
+```bash
+arkai config edit --global
+arkai config edit --project
+```
 
 ## Documentation
 
