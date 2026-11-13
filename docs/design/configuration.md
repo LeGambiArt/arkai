@@ -48,7 +48,12 @@ same layer precedence. Cloud provider members inherit the
 the same `{source, ...}` declaration the loader validates. A "Custom keys"
 section lists every file key outside the managed registry; `a` adds a dotted
 key with a YAML-parsed value stored without schema validation, so model- or
-plugin-specific settings round-trip untouched. The curses UI is
+plugin-specific settings round-trip untouched. Keys inside profile
+collections never appear there: each profile member modal lists the
+profile's unmanaged keys (via `_profile_custom_keys`, which skips the
+member keys and modal extras declared in `collection_extra_keys`) below its
+member rows and offers the same add/edit/delete, with
+`validate_profile_custom_key` rejecting member-key collisions. The curses UI is
 isolated in `run_editor` behind a pure-logic/pure-UI split: `cmd_config_edit`
 and `cmd_config_init --tui` both drive the same editor (edit loads an
 existing target dict; init passes the seed dict and writes only on save),

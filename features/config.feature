@@ -115,6 +115,14 @@ Feature: Configuration Management
     And the output contains "Configuration saved"
     And the file .arkai.yaml has custom key "plugin.flags" with value "[x, y]"
 
+  Scenario: Edit adds a custom key inside a profile subgroup
+    Given a valid .arkai.yaml file
+    And the config editor sets custom key "sandbox.profiles.p1.labels" to "{tier: gold}" and saves
+    When I run "arkai config edit"
+    Then the exit code is 0
+    And the output contains "Configuration saved"
+    And the file .arkai.yaml has custom key "sandbox.profiles.p1.labels" with value "{tier: gold}"
+
   Scenario: Aborting the config editor leaves the file unchanged
     Given a valid .arkai.yaml file
     And the config editor aborts without saving

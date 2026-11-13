@@ -21,6 +21,7 @@ from arkai.config_editor import (
     validate_custom_key,
     validate_env_entry,
     validate_input,
+    validate_profile_custom_key,
     validate_profile_name,
     validate_provider_field,
     validate_provider_id,
@@ -303,6 +304,10 @@ class TestCustomKeys:
         assert validate_custom_key("") is not None
         assert validate_custom_key("inference.port") is not None
         assert validate_custom_key("sandbox.profiles") is not None
+        # Keys inside profile collections belong to the profile dialogs.
+        assert validate_custom_key("sandbox.profiles.p1.labels") is not None
+        assert validate_custom_key("inference.profiles.fast.label") is not None
+        assert validate_custom_key("agent.cloud.custom.providers.gw.routes") is not None
 
     def test_parse_custom_value_yaml(self):
         assert parse_custom_value("42") == (True, "", 42)
@@ -325,13 +330,42 @@ class TestCustomKeys:
         state._refresh_layers()
         assert state._custom_keys() == ["inference.custom_key", "plugin", "plugin.flags"]
 
-    def test_custom_keys_skip_managed_containers(self):
+    def test_custom_keys_skip_collection_namespaces(self):
         state = _make_state(
-            project={"agent": {"cloud": {"custom": {"providers": {"gw": {"models": []}}}}}}
+            project={
+                "agent": {
+                    "cloud": {
+                        "custom": {
+                            "providers": {
+                                "gw": {
+                                    "models": [],
+                                    "name": "GW",
+                                    "base_url": "https://gw.example/v1",
+                                    "routes": {"a": "b"},
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         )
         state._refresh_layers()
-        # agent.cloud.custom.providers is managed; its inner keys stay hidden.
+        # Collection namespaces are owned by the profile dialogs; their
+        # contents never surface as main-window custom rows.
         assert state._custom_keys() == []
+        spec = next(s for s in COLLECTIONS if s.prefix == "agent.cloud.custom.providers")
+        # Member keys stay hidden; unknown keys (subgroups) are listed.
+        assert state._profile_custom_keys(spec, "gw") == ["models", "routes", "routes.a"]
+
+    def test_profile_custom_keys_list_unmanaged_members_only(self):
+        state = _make_state(
+            project={
+                "sandbox": {"profiles": {"p1": {"cpus": 2, "volume": [], "labels": {"env": "dev"}}}}
+            }
+        )
+        state._refresh_layers()
+        spec = next(s for s in COLLECTIONS if s.prefix == "sandbox.profiles")
+        assert state._profile_custom_keys(spec, "p1") == ["labels", "labels.env"]
 
     def test_custom_key_rows_placed_in_owning_group(self):
         state = _make_state(
@@ -353,6 +387,30 @@ class TestCustomKeys:
         other_slice = groups[other_start:]
         assert ("custom", "plugin", "plugin") in other_slice
         assert ("custom", "plugin.a", "plugin.a") in other_slice
+
+    def test_validate_profile_custom_key(self):
+        sandbox = next(s for s in COLLECTIONS if s.prefix == "sandbox.profiles")
+        inference = next(s for s in COLLECTIONS if s.prefix == "inference.profiles")
+        assert validate_profile_custom_key(sandbox, "labels.env") is None
+        assert validate_profile_custom_key(inference, "label") is None
+        assert validate_profile_custom_key(sandbox, "") is not None
+        assert validate_profile_custom_key(sandbox, "a..b") is not None
+        # Member keys and modal extras are owned by the member rows.
+        assert validate_profile_custom_key(sandbox, "cpus") is not None
+        assert validate_profile_custom_key(sandbox, "volume") is not None
+        assert validate_profile_custom_key(sandbox, "environment") is not None
+        assert validate_profile_custom_key(inference, "model") is not None
+
+    def test_delete_subgroup_key_prunes_empty_parents(self):
+        state = _make_state(
+            project={"sandbox": {"profiles": {"p1": {"cpus": 2, "labels": {"env": "dev"}}}}}
+        )
+        state._refresh_layers()
+        spec = next(s for s in COLLECTIONS if s.prefix == "sandbox.profiles")
+        nested_delete(state.target, "sandbox.profiles.p1.labels.env")
+        # Deleting the last key removes the empty subgroup container too.
+        assert state._profile_custom_keys(spec, "p1") == []
+        assert state.target["sandbox"]["profiles"]["p1"] == {"cpus": 2}
 
     def test_current_group_prefix_resolves_from_cursor(self):
         state = _make_state(project={"plugin": {"a": 1}})

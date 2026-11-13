@@ -176,6 +176,15 @@ COLLECTIONS: list[CollectionSpec] = [
 ]
 
 
+def collection_extra_keys(spec: CollectionSpec) -> tuple[str, ...]:
+    """Modal-only member keys a collection edits beyond ``spec.members``."""
+    if spec.prefix == "sandbox.profiles":
+        return ("volume", "environment")
+    if spec.prefix == "agent.cloud.custom.providers":
+        return ("api_key",)
+    return ()
+
+
 def _dynamic_choices(name: str) -> tuple[str, ...]:
     """Resolve a dynamic choice provider by name (lazy imports avoid cycles)."""
     if name == "agents":
@@ -302,6 +311,21 @@ def validate_custom_key(key: str) -> str | None:
         return "key segments must not be empty"
     if key in {f.key for f in ALL_FIELDS} or key in {spec.prefix for spec in COLLECTIONS}:
         return "key is already managed by the editor; edit it in its group instead"
+    for spec in COLLECTIONS:
+        if key.startswith(spec.prefix + "."):
+            return "keys inside a profile are added from the profile editor"
+    return None
+
+
+def validate_profile_custom_key(spec: CollectionSpec, key: str) -> str | None:
+    """Validate a dotted key relative to a profile; None when valid, else error."""
+    if not key:
+        return "key must not be empty"
+    if any(not part for part in key.split(".")):
+        return "key segments must not be empty"
+    first = key.split(".")[0]
+    if first in {m.key for m in spec.members} | set(collection_extra_keys(spec)):
+        return "key is managed by the profile editor; edit the member instead"
     return None
 
 
@@ -553,6 +577,31 @@ class _EditorState:
 
         keys: list[str] = []
         walk("", self.target)
+        return keys
+
+    def _profile_custom_keys(self, spec: CollectionSpec, name: str) -> list[str]:
+        """List unmanaged keys inside one profile, relative to it.
+
+        Member keys the modal edits are skipped; custom profile settings
+        and nested subgroups (``labels.env``) are returned so the member
+        modal can list them as editable rows.
+        """
+        profile = nested_get(self.target, f"{spec.prefix}.{name}")
+        if not isinstance(profile, dict):
+            return []
+        skip = {m.key for m in spec.members} | set(collection_extra_keys(spec))
+
+        def walk(prefix: str, value) -> None:
+            for key, child in value.items():
+                dotted = f"{prefix}.{key}" if prefix else key
+                if prefix == "" and key in skip:
+                    continue
+                keys.append(dotted)
+                if isinstance(child, dict):
+                    walk(dotted, child)
+
+        keys: list[str] = []
+        walk("", profile)
         return keys
 
     # -- rendering --
@@ -838,8 +887,8 @@ class _EditorState:
     def _add_custom_key(self, stdscr, prefix: str | None = None) -> None:
         """Prompt for a dotted key and a YAML value; stored unvalidated.
 
-        ``prefix`` is the namespace of the group the cursor is in; it
-        pre-fills the prompt so keys land in the current group by default.
+        ``prefix`` is the namespace of the group or profile collection the
+        cursor is in; it pre-fills the prompt so keys land there by default.
         Editing the hint away (to reach a namespace no group owns) is
         allowed — only the key shape and registry collisions are checked.
         """
@@ -1204,18 +1253,15 @@ class _EditorState:
     def _edit_profile_members(self, stdscr, spec: CollectionSpec, name: str) -> None:
         curses = self.curses
         members = list(spec.members)
-        extra = ()
-        if spec.prefix == "sandbox.profiles":
-            extra = ("volume", "environment")
-        elif spec.prefix == "agent.cloud.custom.providers":
-            extra = ("api_key",)
+        extra = collection_extra_keys(spec)
         cursor = 0
         note = ""
         while True:
-            total = len(members) + len(extra)
-            cursor = max(0, min(cursor, total - 1))
+            custom = self._profile_custom_keys(spec, name)
+            total = len(members) + len(extra) + len(custom)
+            cursor = max(0, min(cursor, max(0, total - 1)))
             height, width = stdscr.getmaxyx()
-            box_h = min(total + 6, height - 2)
+            box_h = min(max(total, 1) + 6, height - 2)
             box_w = min(64, width - 2)
             top = max(1, (height - box_h) // 2)
             left = max(0, (width - box_w) // 2)
@@ -1232,14 +1278,16 @@ class _EditorState:
             )
             rows: list[tuple[str, str, str, str]] = []  # (kind, member_key, text, tag)
             for member in members:
-                dotted = f"{spec.prefix}.{name}.{member.key}"
                 text, tag = self._member_row_text(spec, name, member)
                 rows.append(("member", member.key, f"{member.label}  ....  {text}  [{tag}]", tag))
             for extra_key in extra:
-                dotted = f"{spec.prefix}.{name}.{extra_key}"
                 text, tag = self._extra_row_text(spec, name, extra_key)
                 label = extra_key.capitalize()
                 rows.append((extra_key, extra_key, f"{label}  ....  {text}  [{tag}]", tag))
+            for custom_key in custom:
+                dotted = f"{spec.prefix}.{name}.{custom_key}"
+                text, tag = self._custom_row_text(dotted)
+                rows.append(("custom", custom_key, f"{custom_key}  ....  {text}  [{tag}]", tag))
             visible = box_h - 5
             offset = max(0, min(cursor - visible + 1, max(0, total - visible)))
             for i, (_, _, text, tag) in enumerate(rows[offset : offset + visible]):
@@ -1254,7 +1302,7 @@ class _EditorState:
                 note = note or (f"required: {', '.join(missing)} — profile is discarded on exit")
             if note:
                 win.addstr(box_h - 3, 1, note[: box_w - 2], curses.A_DIM)
-            footer = "↑/↓ move · Enter edit · r reset · Esc back"
+            footer = "↑/↓ move · Enter edit · a add key · d delete key · r reset · Esc back"
             win.addstr(box_h - 1, 2, footer[: box_w - 3], curses.A_DIM)
             win.refresh()
             key = win.getch()
@@ -1270,18 +1318,68 @@ class _EditorState:
                     self._edit_api_key(
                         stdscr, f"{spec.prefix}.{name}.api_key", f"{spec.title} — {name}"
                     )
+                elif kind == "custom":
+                    self._edit_custom_key(stdscr, f"{spec.prefix}.{name}.{member_key}")
                 else:
                     self._edit_profile_member(stdscr, spec, name, member_key)
+            elif key == ord("a"):
+                self._add_profile_custom_key(stdscr, spec, name)
+            elif key == ord("d"):
+                kind, member_key, _, _tag = rows[cursor]
+                if kind == "custom":
+                    nested_delete(self.target, f"{spec.prefix}.{name}.{member_key}")
+                    self._refresh_layers()
+                    note = f"{member_key} removed from this profile"
             elif key == ord("r"):
                 kind, member_key, _, _tag = rows[cursor]
-                dotted = f"{spec.prefix}.{name}.{member_key}"
-                nested_delete(self.target, dotted)
-                self._refresh_layers()
-                note = f"{member_key} reset; effective value falls back to the next layer"
+                if kind == "custom":
+                    nested_delete(self.target, f"{spec.prefix}.{name}.{member_key}")
+                    self._refresh_layers()
+                    note = f"{member_key} removed from this profile"
+                else:
+                    dotted = f"{spec.prefix}.{name}.{member_key}"
+                    nested_delete(self.target, dotted)
+                    self._refresh_layers()
+                    note = f"{member_key} reset; effective value falls back to the next layer"
             elif key == 27:  # Esc
                 return
             elif key == curses.KEY_RESIZE:
                 continue
+
+    def _custom_row_text(self, dotted: str) -> tuple[str, str]:
+        """Return (display value, source tag) for a profile custom-key row."""
+        value = nested_get(self.merged, dotted)
+        if value is _MISSING or value is None:
+            value = UNSET_LABEL
+        elif isinstance(value, bool):
+            value = "true" if value else "false"
+        return str(value), _layer_source(self.user, self.project, dotted)
+
+    def _add_profile_custom_key(self, stdscr, spec: CollectionSpec, name: str) -> None:
+        """Prompt for a key inside one profile and a YAML value for it.
+
+        The key is dotted relative to the profile (``labels.env``); the
+        prompt title names the profile it will be stored under. Member
+        keys the modal edits are rejected, everything else is stored
+        without schema validation, like main-window custom keys.
+        """
+        key = self._prompt_text(stdscr, f"Key in {name}", "")
+        if key is None or key == "":
+            return
+        error = validate_profile_custom_key(spec, key)
+        if error:
+            self.status = f"Invalid key: {error}"
+            return
+        raw = self._prompt_text(stdscr, f"Value for {name}.{key} (YAML)", "")
+        if raw is None:
+            return
+        ok, message, value = parse_custom_value(raw)
+        if not ok:
+            self.status = f"Invalid value: {message}"
+            return
+        nested_set(self.target, f"{spec.prefix}.{name}.{key}", value)
+        self._refresh_layers()
+        self.status = f"{spec.prefix}.{name}.{key} added"
 
     def _member_row_text(self, spec: CollectionSpec, name: str, member: Field):
         """Return (display value, source tag) for a scalar member row."""

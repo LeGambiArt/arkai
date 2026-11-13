@@ -110,6 +110,15 @@ namespaces no group owns are listed under "Other". Pressing `a` adds a key
 to the group the cursor is in: the prompt pre-fills the group's namespace,
 so keys land in the group or subgroup they were added from. Editing the
 pre-filled key away (to reach a namespace no group owns) is allowed.
+Custom keys also work inside profiles: the profile editor dialog (model
+profiles, sandbox profiles, cloud custom providers) lists any key in the
+profile it does not manage below the member rows, where `Enter` re-edits
+the value, `d` (or `r`) deletes it, and `a` adds a new key relative to the
+profile (`labels.env` becomes `sandbox.profiles.dev.labels.env`) — deleting
+the last key in a subgroup removes the subgroup. Member rows the dialog
+itself manages (like `cpus` or `volume`) cannot be shadowed by a custom
+key of the same name.
+
 The value is stored exactly as parsed from YAML, with no schema validation,
 so unknown keys round-trip untouched. `Enter` on an existing custom key
 re-edits its value (mappings and lists are pre-filled as flow YAML), an
