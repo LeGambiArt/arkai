@@ -35,6 +35,12 @@ Feature: Agent Execution
     Then the exit code is 0
     And the agent was not sandboxed
 
+  Scenario: Agent skips sandbox when sandbox.enabled is false
+    Given a valid .arkai.yaml file with sandbox enabled set to false
+    When I run "arkai agent start" in a TTY
+    Then the exit code is 0
+    And the agent was not sandboxed
+
   Scenario: Sandboxed agent commands satisfy Arapuca's network flag rules
     Given a valid .arkai.yaml file
     When I run "arkai agent start" in a TTY

@@ -283,6 +283,17 @@ def step_valid_config_sandbox_disabled(context):
     utils.save_yaml(".arkai.yaml", config_data)
 
 
+@given("a valid .arkai.yaml file with sandbox enabled set to false")  # ty: ignore[call-non-callable]
+def step_valid_config_sandbox_enabled_false(context):
+    """Create a valid config file with sandbox.enabled set to false."""
+    config_data = {
+        "agent": {"name": "opencode"},
+        "inference": {"model": "test.gguf"},
+        "sandbox": {"enabled": False},
+    }
+    utils.save_yaml(".arkai.yaml", config_data)
+
+
 @when('I run "arkai agent start" with "-m test-model.gguf" in a TTY')  # ty: ignore[call-non-callable]
 def step_run_agent_with_model_flag(context):
     """Run arkai agent start with -m model override in a TTY."""

@@ -141,6 +141,7 @@ again.
 | `agent.cloud.default` | Cloud service for `agent.mode: cloud`; if omitted, Arkai infers it when exactly one cloud configuration is present. |
 | `agent.path` | Optional path to the agent executable. |
 | `agent.mcp` | Whether agent launches start the configured MCP integration; defaults to enabled. |
+| `inference.enabled` | Set `false` to keep Arkai from starting the inference engine; defaults to `true`. |
 | `inference.backend` | `llama-cpp` (default), `mlx`, `splash`, or `strata`. |
 | `inference.model` | Model reference or a name in `inference.profiles`. |
 | `inference.profiles` | Mapping of profile names to a model and optional sampling settings. |
@@ -153,6 +154,8 @@ again.
 | `wtmcp.path`, `wtmcp.port` | MCP server executable and port; default port is `8080`. |
 | `wtmcp.workdir`, `wtmcp.config` | Optional working directory and base wtmcp config path. |
 | `wtmcp.plugins` | Project-level plugin entries injected into the wtmcp config. |
+| `sandbox.enabled` | Set `false` to launch agents without the arapuca sandbox; defaults to `true`. |
+| `sandbox.disable` | Legacy inverse of `sandbox.enabled`; `true` also disables the sandbox. |
 | `sandbox.path` | `arapuca` executable path. |
 | `sandbox.profiles` | Named resource, volume, and environment presets for sandbox runs. |
 | `sandbox.active_profile` | Profile selected for agent launches unless overridden with `--sandbox`. |

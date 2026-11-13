@@ -18,6 +18,7 @@ DEFAULTS = {
         },
     },
     "inference": {
+        "enabled": True,
         "backend": "llama-cpp",
         "port": 8081,
         "gpu_layers": -1,
@@ -461,6 +462,7 @@ def cmd_config_init(
             "name": "opencode",
         },
         "inference": {
+            "enabled": True,
             "backend": "llama-cpp",
             "port": 8081,
             "gpu_layers": -1,

@@ -48,6 +48,7 @@ agent:
   #     #   account: gateway # Required for keychain source.
 
 inference:
+  # enabled: true # Default: start inference when needed; false errors if it is not already running.
   backend: llama-cpp # Default backend: llama-cpp, mlx, splash, or strata.
   # model: null # Default: unset; set this or pass --model to start local inference.
   # path: null # Default: backend executable (llama-server, mlx_lm.server, splash, or strata).
@@ -99,8 +100,8 @@ wtmcp: {} # Default mapping; replace {} with entries from the commented block to
 
 sandbox: {} # Default mapping; replace {} with entries from the commented block to override.
 # sandbox:
-#   enabled: true # Default/config-init value; agent launch currently uses `disable` below.
-#   disable: false # Default: sandbox agent launches; true disables the sandbox.
+#   enabled: true # Default: sandbox agent launches; false disables the sandbox.
+#   disable: false # (DEPRECATED) Legacy inverse of enabled; true disables the sandbox.
 #   path: arapuca # Default sandbox executable name.
 #   memory_mb: 2048 # Default memory limit in MiB.
 #   cpus: 2 # Runtime default CPU limit. `arkai config init` currently writes 200.

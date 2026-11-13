@@ -431,8 +431,13 @@ def _agent_context(
         and bool(config.get_config_value(cfg, "agent.mcp", True))
         and not no_mcp
     )
-    use_sandbox = not no_sandbox and not bool(
-        config.get_config_value(cfg, "sandbox.disable", False)
+    use_sandbox = (
+        bool(config.get_config_value(cfg, "sandbox.enabled", True))
+        and not bool(config.get_config_value(cfg, "sandbox.disable", False))
+        and not no_sandbox
+    )
+    use_inference = (
+        bool(config.get_config_value(cfg, "inference.enabled", True)) and not no_start_inference
     )
 
     launcher_modules = {
@@ -467,20 +472,19 @@ def _agent_context(
     engine_started: bool = False
     try:
         if not use_cloud and not inference_running:
-            if no_start_inference:
+            if not use_inference:
                 raise RuntimeError("Inference engine is not running.")
-            else:
-                if port is None:
-                    if backend is None:
-                        inference.cmd_inference_start(model=model)  # may raise RuntimeError
-                    else:
-                        inference.cmd_inference_start(model=model, backend=backend)
+            if port is None:
+                if backend is None:
+                    inference.cmd_inference_start(model=model)  # may raise RuntimeError
                 else:
-                    if backend is None:
-                        inference.cmd_inference_start(model=model, port=port)
-                    else:
-                        inference.cmd_inference_start(model=model, port=port, backend=backend)
-                engine_started = True
+                    inference.cmd_inference_start(model=model, backend=backend)
+            else:
+                if backend is None:
+                    inference.cmd_inference_start(model=model, port=port)
+                else:
+                    inference.cmd_inference_start(model=model, port=port, backend=backend)
+            engine_started = True
 
         if not use_cloud:
             active_model = inference.get_inference_model(inference_port)

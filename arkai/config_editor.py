@@ -61,6 +61,7 @@ FIELD_GROUPS: dict[str, list[Field]] = {
         Field("agent.cloud.custom.api_key", "Custom api key", "api_key"),
     ],
     "Inference": [
+        Field("inference.enabled", "Enabled", "bool"),
         Field("inference.backend", "Backend", "choice", dynamic="backends"),
         Field("inference.model", "Model", "str"),
         Field("inference.path", "Path", "str"),

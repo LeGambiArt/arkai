@@ -25,9 +25,9 @@ configuration and rules; Arkai provides the per-run configuration instead.
 
 Install `arapuca` separately and configure `sandbox.path` if it is not on
 `PATH`. Agent launches accept `--sandbox PROFILE`, `--volume PATH`,
-`--env KEY=VALUE`, and `--cwd PATH` overrides. `--no-sandbox` bypasses
-the boundary for that run; use it only when you accept the risk.
-
+`--env KEY=VALUE`, and `--cwd PATH` overrides. `--no-sandbox` (or
+`sandbox.enabled: false` in configuration) bypasses the boundary; use it
+only when you accept the risk.
 Arkai supplies OMP with a private one-shot config overlay that disables
 `spelling.typoDetection` and `spelling.autocomplete`, avoiding Apple's
 system text-checking service without granting additional XPC access.

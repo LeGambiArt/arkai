@@ -4,6 +4,8 @@ import os
 import sys
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 from arkai import (
     agent,
     agent_codex,
@@ -253,6 +255,68 @@ def test_agent_context_skips_wtmcp_when_disabled_in_config() -> None:
             assert context.wtmcp_port is None
 
     running.assert_not_called()
+    start.assert_not_called()
+
+
+def test_agent_context_skips_sandbox_when_enabled_is_false() -> None:
+    """sandbox.enabled=false launches agents without the arapuca sandbox."""
+    cfg = {
+        "agent": {"name": "opencode", "path": "/agent", "mcp": False},
+        "inference": {"model": "model.gguf", "port": 9090},
+        "sandbox": {"enabled": False},
+    }
+
+    with (
+        patch.object(agent.config, "load_config", return_value=cfg),
+        patch.object(agent.config, "validate_config", return_value=True),
+        patch.object(agent.inference, "is_inference_running", return_value=True),
+        patch.object(agent.inference, "get_inference_model", return_value="active.gguf"),
+        patch.object(agent.utils, "resolve_binary", return_value="/agent"),
+    ):
+        with agent._agent_context("opencode") as context:
+            assert context.use_sandbox is False
+
+
+def test_agent_context_still_honors_legacy_sandbox_disable_key() -> None:
+    """sandbox.disable=true continues to disable the sandbox."""
+    cfg = {
+        "agent": {"name": "opencode", "path": "/agent", "mcp": False},
+        "inference": {"model": "model.gguf", "port": 9090},
+        "sandbox": {"disable": True},
+    }
+
+    with (
+        patch.object(agent.config, "load_config", return_value=cfg),
+        patch.object(agent.config, "validate_config", return_value=True),
+        patch.object(agent.inference, "is_inference_running", return_value=True),
+        patch.object(agent.inference, "get_inference_model", return_value="active.gguf"),
+        patch.object(agent.utils, "resolve_binary", return_value="/agent"),
+    ):
+        with agent._agent_context("opencode") as context:
+            assert context.use_sandbox is False
+
+
+def test_agent_context_skips_inference_start_when_enabled_is_false() -> None:
+    """inference.enabled=false keeps Arkai from starting the inference engine."""
+    cfg = {
+        "agent": {"name": "opencode", "path": "/agent", "mcp": False},
+        "inference": {"enabled": False, "model": "model.gguf", "port": 9090},
+        "sandbox": {"disable": True},
+    }
+
+    with (
+        patch.object(agent.config, "load_config", return_value=cfg),
+        patch.object(agent.config, "validate_config", return_value=True),
+        patch.object(agent.inference, "is_inference_running", return_value=False),
+        patch.object(agent.inference, "is_inference_server_available", return_value=False),
+        patch.object(agent.inference, "get_inference_model", return_value="active.gguf"),
+        patch.object(agent.inference, "cmd_inference_start") as start,
+        patch.object(agent.utils, "resolve_binary", return_value="/agent"),
+    ):
+        with pytest.raises(RuntimeError, match="Inference engine is not running"):
+            with agent._agent_context("opencode"):
+                pass
+
     start.assert_not_called()
 
 
