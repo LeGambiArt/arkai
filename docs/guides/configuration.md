@@ -101,6 +101,22 @@ valid custom cloud configuration on save: keep at least one provider with
 a resolvable `base_url` (directly or through the root default), and set
 `default_provider` when more than one provider exists.
 
+### Custom keys
+
+Keys the editor does not manage — plugin settings, model-specific options,
+anything — are listed inside the group that owns their namespace (an
+unknown `inference.*` key appears with the inference fields). Keys in
+namespaces no group owns are listed under "Other". Pressing `a` adds a key
+to the group the cursor is in: the prompt pre-fills the group's namespace,
+so keys land in the group or subgroup they were added from. Editing the
+pre-filled key away (to reach a namespace no group owns) is allowed.
+The value is stored exactly as parsed from YAML, with no schema validation,
+so unknown keys round-trip untouched. `Enter` on an existing custom key
+re-edits its value (mappings and lists are pre-filled as flow YAML), an
+empty value removes the key from the file, and `d` (or `r`) deletes it.
+Custom values are not validated: check the
+consuming feature's documentation for the expected shape.
+
 `arkai config init --tui` initializes a new file (project by default,
 `--global` for the user file) and opens the same editor pre-filled with the
 seed values so it can be customized before it is written. Aborting with `q`

@@ -16,7 +16,9 @@ from arkai.config_editor import (
     nested_delete,
     nested_get,
     nested_set,
+    parse_custom_value,
     resolve_field_sources,
+    validate_custom_key,
     validate_env_entry,
     validate_input,
     validate_profile_name,
@@ -292,6 +294,75 @@ class TestValidateProviderField:
     def test_str_falls_through_to_validate_input(self):
         name = _field("name", "str")
         assert validate_provider_field(name, "My Gateway") == (True, "", "My Gateway")
+
+
+class TestCustomKeys:
+    def test_validate_custom_key(self):
+        assert validate_custom_key("plugin.flags") is None
+        assert validate_custom_key("a..b") is not None
+        assert validate_custom_key("") is not None
+        assert validate_custom_key("inference.port") is not None
+        assert validate_custom_key("sandbox.profiles") is not None
+
+    def test_parse_custom_value_yaml(self):
+        assert parse_custom_value("42") == (True, "", 42)
+        assert parse_custom_value("true") == (True, "", True)
+        assert parse_custom_value("[1, 2]") == (True, "", [1, 2])
+        assert parse_custom_value("{a: 1}") == (True, "", {"a": 1})
+        assert parse_custom_value("plain") == (True, "", "plain")
+
+    def test_parse_custom_value_rejects_empty_and_broken(self):
+        assert parse_custom_value("")[0] is False
+        assert parse_custom_value("[unclosed")[0] is False
+
+    def test_custom_keys_list_unmanaged_only(self):
+        state = _make_state(
+            project={
+                "inference": {"port": 9000, "custom_key": 1},
+                "plugin": {"flags": ["x"]},
+            }
+        )
+        state._refresh_layers()
+        assert state._custom_keys() == ["inference.custom_key", "plugin", "plugin.flags"]
+
+    def test_custom_keys_skip_managed_containers(self):
+        state = _make_state(
+            project={"agent": {"cloud": {"custom": {"providers": {"gw": {"models": []}}}}}}
+        )
+        state._refresh_layers()
+        # agent.cloud.custom.providers is managed; its inner keys stay hidden.
+        assert state._custom_keys() == []
+
+    def test_custom_key_rows_placed_in_owning_group(self):
+        state = _make_state(
+            project={"inference": {"port": 9000, "custom_key": 1}, "plugin": {"a": 1}}
+        )
+        state._refresh_layers()
+        state.rows = state._build_rows()
+
+        groups = [(r[0], r[1], r[2]) for r in state.rows]
+        inference_start = next(
+            i for i, (k, label, _) in enumerate(groups) if k == "group" and label == "Inference"
+        )
+        other_start = next(
+            i for i, (k, label, _) in enumerate(groups) if k == "group" and label == "Other"
+        )
+        inference_slice = groups[inference_start:other_start]
+        assert ("custom", "custom_key", "inference.custom_key") in inference_slice
+        assert not any(r[0] == "add_custom" for r in state.rows)
+        other_slice = groups[other_start:]
+        assert ("custom", "plugin", "plugin") in other_slice
+        assert ("custom", "plugin.a", "plugin.a") in other_slice
+
+    def test_current_group_prefix_resolves_from_cursor(self):
+        state = _make_state(project={"plugin": {"a": 1}})
+        state._refresh_layers()
+        state.rows = state._build_rows()
+        state.cursor = 1  # first Agent field
+        assert state._current_group_prefix() == "agent"
+        other = next(i for i, r in enumerate(state.rows) if r[0] == "group" and r[1] == "Other")
+        state.cursor = other + 1
+        assert state._current_group_prefix() is None
 
 
 class TestCloudRootFields:

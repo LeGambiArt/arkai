@@ -166,6 +166,37 @@ def step_check_config_cloud_custom_provider(context, provider_id, url):
     assert provider["base_url"] == url
 
 
+@given('the config editor sets custom key "{key}" to "{raw_value}" and saves')  # ty: ignore[call-non-callable]
+def step_config_editor_sets_custom_key_and_saves(context, key, raw_value):
+    """Install a scripted editor that adds one custom key and saves."""
+    from arkai import config_editor
+    from arkai.config_editor import nested_set, parse_custom_value
+
+    ok, _message, value = parse_custom_value(raw_value)
+    assert ok
+
+    def script(target, merged, user, project, target_path):
+        nested_set(target, key, value)
+        return True
+
+    patch_obj = patch.object(config_editor, "run_editor", side_effect=script)
+    patch_obj.start()
+    context.editor_start_config = (
+        dict(context.config_data) if context.config_data is not None else None
+    )
+    context.add_cleanup(patch_obj.stop)
+
+
+@then('the file .arkai.yaml has custom key "{key}" with value "{raw_value}"')  # ty: ignore[call-non-callable]
+def step_check_config_custom_key(context, key, raw_value):
+    from arkai.config_editor import nested_get, parse_custom_value
+
+    assert context.config_data is not None, ".arkai.yaml was not created"
+    ok, _message, expected = parse_custom_value(raw_value)
+    assert ok
+    assert nested_get(context.config_data, key) == expected
+
+
 @given("the config editor aborts without saving")  # ty: ignore[call-non-callable]
 def step_config_editor_aborts(context):
     """Install a scripted editor that quits without saving."""

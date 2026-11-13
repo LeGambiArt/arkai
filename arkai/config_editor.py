@@ -11,6 +11,8 @@ import copy
 import dataclasses
 from typing import Any
 
+import yaml
+
 from arkai import utils
 from arkai.config import DEFAULTS
 from arkai.sandbox import _is_valid_profile_name
@@ -292,6 +294,28 @@ def validate_provider_field(field: Field, raw: str) -> tuple[bool, str, Any]:
     return validate_input(field, raw)
 
 
+def validate_custom_key(key: str) -> str | None:
+    """Validate a dotted custom key name; None when valid, else an error."""
+    if not key:
+        return "key must not be empty"
+    if any(not part for part in key.split(".")):
+        return "key segments must not be empty"
+    if key in {f.key for f in ALL_FIELDS} or key in {spec.prefix for spec in COLLECTIONS}:
+        return "key is already managed by the editor; edit it in its group instead"
+    return None
+
+
+def parse_custom_value(raw: str) -> tuple[bool, str, Any]:
+    """Parse a custom value as YAML; returns (ok, error, parsed value)."""
+    if raw == "":
+        return False, "value must not be empty", None
+    try:
+        value = yaml.safe_load(raw)
+    except yaml.YAMLError as error:
+        return False, f"invalid YAML: {str(error).splitlines()[0]}", None
+    return True, "", value
+
+
 def validate_profile_name(existing: list[str], name: str) -> str | None:
     """Validate a proposed profile name; None when valid, else an error."""
     if not _is_valid_profile_name(name):
@@ -385,7 +409,7 @@ def effective_default(field: Field) -> Any:
 
 # --- Curses UI ------------------------------------------------------------
 
-FOOTER = "↑/↓ move · Enter edit · r reset to default · s save · q quit · ? help"
+FOOTER = "↑/↓ move · Enter edit · a add key · d delete key · r reset · s save · q quit · ? help"
 
 
 def _interactive_terminal() -> bool:
@@ -468,6 +492,11 @@ class _EditorState:
         self.merged = merged
         self.sources = resolve_field_sources(self.user, self.project)
 
+    def _group_prefix(self, group: str) -> str | None:
+        """Return the config namespace a field group owns, if any."""
+        fields = FIELD_GROUPS.get(group)
+        return fields[0].key.split(".")[0] if fields else None
+
     def _build_rows(self):
         rows = []
         for group, fields in FIELD_GROUPS.items():
@@ -478,7 +507,53 @@ class _EditorState:
             for spec in COLLECTIONS:
                 if spec.prefix.split(".", 1)[0] == prefix:
                     rows.append(("collection", spec.title, spec))
+            group_prefix = self._group_prefix(group)
+            for key in self._custom_keys():
+                if key.split(".")[0] == group_prefix:
+                    rows.append(("custom", key[len(group_prefix) + 1 :], key))
+        known_prefixes = {self._group_prefix(group) for group in FIELD_GROUPS}
+        other = [key for key in self._custom_keys() if key.split(".")[0] not in known_prefixes]
+        if other:
+            # Keys in namespaces no field group owns; `a` there accepts any
+            # dotted key.
+            rows.append(("group", "Other", None))
+            for key in other:
+                rows.append(("custom", key, key))
         return rows
+
+    def _custom_keys(self) -> list[str]:
+        """List dotted keys present in the file but not managed by the editor."""
+        managed = {f.key for f in ALL_FIELDS} | {spec.prefix for spec in COLLECTIONS}
+
+        def has_managed_descendant(prefix: str, value) -> bool:
+            for key, child in value.items():
+                dotted = f"{prefix}.{key}" if prefix else key
+                if dotted in managed or (
+                    isinstance(child, dict) and has_managed_descendant(dotted, child)
+                ):
+                    return True
+            return False
+
+        def walk(prefix: str, value) -> None:
+            if not isinstance(value, dict):
+                return
+            for key, child in value.items():
+                dotted = f"{prefix}.{key}" if prefix else key
+                if dotted in managed:
+                    # Managed prefixes hide their children; those keys are
+                    # edited through the registry rows or collection modals.
+                    continue
+                if isinstance(child, dict) and has_managed_descendant(dotted, child):
+                    # A mixed mapping (custom keys alongside managed ones):
+                    # show its custom children directly, not the container.
+                    walk(dotted, child)
+                    continue
+                keys.append(dotted)
+                walk(dotted, child)
+
+        keys: list[str] = []
+        walk("", self.target)
+        return keys
 
     # -- rendering --
 
@@ -506,12 +581,28 @@ class _EditorState:
                 kind, _, _row = self.rows[self.cursor]
                 if kind == "collection":
                     self._edit_collection(stdscr, _row)
+                elif kind == "custom":
+                    self._edit_custom_key(stdscr, _row)
                 else:
                     self._edit_field(stdscr)
+            elif key == ord("a"):
+                self._add_custom_key(stdscr, self._current_group_prefix())
+            elif key == ord("d"):
+                kind, _, _row = self.rows[self.cursor]
+                if kind == "custom":
+                    nested_delete(self.target, _row)
+                    self._refresh_layers()
+                    self.rows = self._build_rows()
+                    self.status = f"{_row} removed from this file"
             elif key == ord("r"):
                 kind, _, _row = self.rows[self.cursor]
                 if kind == "collection":
                     self.status = "reset applies to fields, not profile lists"
+                elif kind == "custom":
+                    nested_delete(self.target, _row)
+                    self._refresh_layers()
+                    self.rows = self._build_rows()
+                    self.status = f"{_row} removed from this file"
                 else:
                     self._reset_field()
             elif key == ord("s"):
@@ -600,6 +691,9 @@ class _EditorState:
             return curses.A_REVERSE | curses.A_BOLD
         if row_kind in ("group", "collection"):
             return curses.A_DIM
+        if isinstance(field, str):
+            source = _layer_source(self.user, self.project, field)
+            return self.source_attrs.get(source, 0)
         source = self.sources.get(field.key, "default")
         return self.source_attrs.get(source, 0)
 
@@ -616,6 +710,16 @@ class _EditorState:
                 count = 0
             value = f"{count} profiles" if count else "none"
             return f"{label}  ....  {value}"
+        if isinstance(field, str):
+            # Custom-key row: field is the dotted key; the value is shown
+            # as-is with no registry validation applied.
+            value = nested_get(self.merged, field)
+            if value is _MISSING or value is None:
+                value = UNSET_LABEL
+            elif isinstance(value, bool):
+                value = "true" if value else "false"
+            source = _layer_source(self.user, self.project, field)
+            return f"{label}  ....  {value}  [{source}]"
         value = nested_get(self.merged, field.key)
         if value is _MISSING or value is None:
             value = UNSET_LABEL
@@ -674,10 +778,14 @@ class _EditorState:
             "Help",
             "  ↑/↓ or j/k   move between fields",
             "  Enter        edit the selected field",
+            "  a            add a key to the current group",
+            "  d            delete the selected custom key",
             "  r            reset to default (delete the key from this file)",
             "  s            save and exit",
-            "  q            quit without saving",
             "  Esc          cancel the current edit",
+            "",
+            "Custom keys are stored as typed (YAML) without validation;",
+            "use them for model- or plugin-specific settings.",
             "",
             "Source tags: [default] built-in default, [global] from the user",
             "config file, [project] from .arkai.yaml (highest precedence).",
@@ -713,7 +821,78 @@ class _EditorState:
                     self.cursor = 1 if len(self.rows) > 1 else 0
                     break
 
+    def _current_group_prefix(self) -> str | None:
+        """Return the namespace of the group the cursor is inside.
+
+        Returns None for the "Other" group (any namespace) and when no
+        group row precedes the cursor.
+        """
+        for kind, label, _row in reversed(self.rows[: self.cursor + 1]):
+            if kind != "group":
+                continue
+            return None if label == "Other" else self._group_prefix(label)
+        return None
+
     # -- editing --
+
+    def _add_custom_key(self, stdscr, prefix: str | None = None) -> None:
+        """Prompt for a dotted key and a YAML value; stored unvalidated.
+
+        ``prefix`` is the namespace of the group the cursor is in; it
+        pre-fills the prompt so keys land in the current group by default.
+        Editing the hint away (to reach a namespace no group owns) is
+        allowed — only the key shape and registry collisions are checked.
+        """
+        hint = f"{prefix}." if prefix else ""
+        key = self._prompt_text(
+            stdscr, f"Key under {prefix}" if prefix else "Custom key (dotted)", hint
+        )
+        if key is None or key == "":
+            return
+        error = validate_custom_key(key)
+        if error:
+            self.status = f"Invalid key: {error}"
+            return
+        raw = self._prompt_text(stdscr, f"Value for {key} (YAML)", "")
+        if raw is None:
+            return
+        ok, message, value = parse_custom_value(raw)
+        if not ok:
+            self.status = f"Invalid value: {message}"
+            return
+        nested_set(self.target, key, value)
+        self._refresh_layers()
+        self.rows = self._build_rows()
+        self.status = f"{key} added"
+
+    def _edit_custom_key(self, stdscr, key: str) -> None:
+        """Re-enter the YAML value of an existing custom key."""
+        current = nested_get(self.target, key)
+        if current is _MISSING or current is None:
+            # Inherited from another layer: pre-fill with the effective value.
+            current = nested_get(self.merged, key)
+        if isinstance(current, (dict, list)):
+            initial = yaml.safe_dump(current, default_flow_style=True).strip()
+        elif current is _MISSING or current is None:
+            initial = ""
+        else:
+            initial = "true" if current is True else "false" if current is False else str(current)
+        raw = self._prompt_text(stdscr, f"Value for {key} (YAML)", initial, key_hint=key)
+        if raw is None:
+            return
+        if raw == "":
+            nested_delete(self.target, key)
+            self._refresh_layers()
+            self.rows = self._build_rows()
+            self.status = f"{key} removed from this file"
+            return
+        ok, message, value = parse_custom_value(raw)
+        if not ok:
+            self.status = f"Invalid value: {message}"
+            return
+        nested_set(self.target, key, value)
+        self._refresh_layers()
+        self.status = f"{key} updated"
 
     def _edit_field(self, stdscr) -> None:
         _, _, field = self.rows[self.cursor]

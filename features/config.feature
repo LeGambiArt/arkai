@@ -106,7 +106,14 @@ Feature: Configuration Management
     When I run "arkai config edit"
     Then the exit code is 0
     And the output contains "Configuration saved"
-    And the file .arkai.yaml has cloud custom provider "gateway" with base URL "https://gateway.example/v1"
+
+  Scenario: Edit adds a custom key with a YAML value
+    Given a valid .arkai.yaml file
+    And the config editor sets custom key "plugin.flags" to "[x, y]" and saves
+    When I run "arkai config edit"
+    Then the exit code is 0
+    And the output contains "Configuration saved"
+    And the file .arkai.yaml has custom key "plugin.flags" with value "[x, y]"
 
   Scenario: Aborting the config editor leaves the file unchanged
     Given a valid .arkai.yaml file

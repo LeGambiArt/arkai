@@ -45,7 +45,10 @@ environment entries are validated with
 same layer precedence. Cloud provider members inherit the
 `agent.cloud.custom` root defaults exactly as sandbox members inherit root
 `sandbox` values, and the `api_key` member opens a source picker that writes
-the same `{source, ...}` declaration the loader validates. The curses UI is
+the same `{source, ...}` declaration the loader validates. A "Custom keys"
+section lists every file key outside the managed registry; `a` adds a dotted
+key with a YAML-parsed value stored without schema validation, so model- or
+plugin-specific settings round-trip untouched. The curses UI is
 isolated in `run_editor` behind a pure-logic/pure-UI split: `cmd_config_edit`
 and `cmd_config_init --tui` both drive the same editor (edit loads an
 existing target dict; init passes the seed dict and writes only on save),
