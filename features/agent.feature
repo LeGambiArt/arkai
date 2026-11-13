@@ -35,6 +35,18 @@ Feature: Agent Execution
     Then the exit code is 0
     And the agent was not sandboxed
 
+  Scenario: Sandboxed agent commands satisfy Arapuca's network flag rules
+    Given a valid .arkai.yaml file
+    When I run "arkai agent start" in a TTY
+    Then the exit code is 0
+    And the sandbox command does not combine arapuca network flags
+
+  Scenario: Sandboxed agent prompt satisfies Arapuca's network flag rules
+    Given a valid .arkai.yaml file
+    When I run "arkai agent prompt" with a sandboxed prompt
+    Then the exit code is 0
+    And the sandbox command does not combine arapuca network flags
+
   Scenario: Agent accepts -m/--model flag without inference.model in config
     Given a .arkai.yaml file with no model configured
     When I run "arkai agent start" with "-m test-model.gguf" in a TTY
