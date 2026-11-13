@@ -775,8 +775,7 @@ def _build_sandbox_cmd(
     for vol in volumes:
         cmd += ["-v", vol]
 
-    for host in extra_hosts or []:
-        cmd += ["--allow-host", host]
+    hosts = list(extra_hosts or [])
     if allow_network_listeners:
         cmd += ["--allow-network-listeners"]
     if allow_keychain:
@@ -784,10 +783,17 @@ def _build_sandbox_cmd(
 
     if platform.system() == "Linux":
         if allow_inference:
-            cmd += ["--allow-host", f"127.0.0.1:{inference_port}"]
+            hosts.append(f"127.0.0.1:{inference_port}")
         if wtmcp_port is not None:
-            cmd += ["--allow-host", f"127.0.0.1:{wtmcp_port}"]
-        if not allow_network:
+            hosts.append(f"127.0.0.1:{wtmcp_port}")
+        for host in hosts:
+            cmd += ["--allow-host", host]
+        # --deny-network is Arapuca's DNS-capture mode and is mutually
+        # exclusive with --allow-host and --allow-network-listeners. Any
+        # of those grants already activates the isolated network
+        # namespace with no direct egress, so deny mode is only valid
+        # when no egress or listener is granted at all.
+        if not allow_network and not hosts and not allow_network_listeners:
             cmd += ["--deny-network"]
     else:
         cmd += ["--seccomp", "baseline"]

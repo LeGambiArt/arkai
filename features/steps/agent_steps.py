@@ -170,6 +170,7 @@ def _run_agent_in_tty(
             context.wtmcp_start_called = mock_wtmcp_start.called
             # sandbox was used if the command starts with the arapuca prefix ("fake-agent run ...")
             context.sandbox_used = len(popen_cmd) >= 2 and popen_cmd[1] == "run"
+            context.agent_launch_command = list(popen_cmd)
             # A launch that fails before OpenCode's config is written leaves
             # no config to inspect; only capture it when one was produced.
             context.agent_config_text = (
@@ -756,6 +757,81 @@ def step_run_agent_with_strata_empty_models(context):
     )
 
 
+@when('I run "arkai agent prompt" with a sandboxed prompt')  # ty: ignore[call-non-callable]
+def step_run_agent_prompt_sandboxed(context):
+    """Run the public prompt command with only native execution faked."""
+    old_stdout = sys.stdout
+    old_stderr = sys.stderr
+    stdout_capture = StringIO()
+    stderr_capture = StringIO()
+
+    sys.stdout = stdout_capture
+    sys.stderr = stderr_capture
+    context.exit_code = 0
+
+    mock_proc = MagicMock()
+    mock_proc.pid = 9999
+    mock_proc.wait.return_value = 0
+    mock_proc.communicate.return_value = (b"answer", b"")
+
+    popen_cmd: list = []
+
+    config_dir = "/tmp/mock-opencode-sessions"
+    config_path = f"{config_dir}/opencode-config.json"
+    session_record = {
+        "id": "550e8400-e29b-41d4-a716-446655440001",
+        "name": None,
+        "agent": "opencode",
+        "working_directory": os.getcwd(),
+        "native_session_id": None,
+        "launch_options": {},
+        "status": "starting",
+    }
+
+    def capture_popen(cmd, **kwargs):
+        popen_cmd.extend(cmd)
+        return mock_proc
+
+    with (
+        patch.object(sys.stdin, "isatty", return_value=False),
+        patch.object(inference, "is_inference_running", return_value=True),
+        patch.object(inference, "get_inference_model", return_value="test.gguf"),
+        patch.object(wtmcp, "is_wtmcp_running", return_value=False),
+        patch.object(wtmcp, "cmd_wtmcp_start") as mock_wtmcp_start,
+        patch.object(utils, "resolve_binary", return_value="/usr/bin/fake-agent"),
+        patch("subprocess.Popen", side_effect=capture_popen),
+        patch.object(agent_opencode.os.path, "expanduser", lambda _: config_dir),
+        patch.object(
+            agent_opencode.tempfile, "mkstemp", return_value=(999, config_path)
+        ) as mkstemp,
+        patch.object(agent_opencode.os, "close"),
+        patch.object(agent_opencode.Path, "write_text"),
+        patch.object(agent_opencode.Path, "chmod"),
+        patch.object(agent_session, "create_session", return_value=session_record),
+        patch.object(agent_session, "save_session"),
+        patch.object(agent_session, "get_session_dir", return_value=Path(config_dir)),
+    ):
+        try:
+            agent.cmd_agent_prompt(prompt_args=["hello"], agent_name="opencode")
+        except SystemExit as e:
+            context.exit_code = e.code if e.code else 1
+        except Exception as e:
+            context.exit_code = 1
+            stderr_capture.write(str(e))
+        finally:
+            context.wtmcp_start_called = mock_wtmcp_start.called
+            context.sandbox_used = len(popen_cmd) >= 2 and popen_cmd[1] == "run"
+            context.agent_launch_command = list(popen_cmd)
+            mkstemp.assert_called_once_with(
+                prefix="opencode-", suffix=".json", dir=agent_opencode.Path(config_dir)
+            )
+
+    sys.stdout = old_stdout
+    sys.stderr = old_stderr
+    context.stdout = stdout_capture.getvalue()
+    context.stderr = stderr_capture.getvalue()
+
+
 @then('the agent config uses Strata model "{model}"')  # ty: ignore[call-non-callable]
 def step_agent_config_uses_strata_model(context, model):
     """The empty model listing falls back to the model selected for Strata."""
@@ -774,6 +850,13 @@ def step_wtmcp_not_started(context):
 def step_agent_not_sandboxed(context):
     """Assert that the agent was launched without arapuca."""
     assert not context.sandbox_used, "Agent was launched in sandbox but should not have been"
+
+
+@then("the sandbox command does not combine arapuca network flags")  # ty: ignore[call-non-callable]
+def step_sandbox_command_avoids_arapuca_network_conflicts(context):
+    command = context.agent_launch_command
+    assert "--deny-network" not in command
+    assert "--allow-host" in command or "--allow-network-listeners" in command
 
 
 @given('a saved Arkai agent session named "{name}"')  # ty: ignore[call-non-callable]

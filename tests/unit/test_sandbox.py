@@ -281,7 +281,7 @@ class TestListCommand:
 
 
 def test_cloud_sandbox_allows_configured_cloud_hosts(tmp_path, monkeypatch) -> None:
-    """Cloud runs allow configured HTTPS hosts while retaining the network deny rule."""
+    """Cloud runs allow configured HTTPS hosts through the isolated network namespace."""
     monkeypatch.setattr(agent_module.utils, "resolve_binary", lambda _: "/bin/arapuca")
     monkeypatch.setattr(agent_module.platform, "system", lambda: "Linux")
     workdir = tmp_path / "project"
@@ -296,9 +296,91 @@ def test_cloud_sandbox_allows_configured_cloud_hosts(tmp_path, monkeypatch) -> N
         extra_hosts=["api.openai.com:443"],
     )
 
-    assert "--deny-network" in command
+    # --allow-host activates the network namespace and is mutually
+    # exclusive with --deny-network in Arapuca.
+    assert "--deny-network" not in command
     assert command[command.index("--allow-host") + 1] == "api.openai.com:443"
     assert "--memory" in command
+
+
+def test_linux_sandbox_denies_network_only_without_grants(tmp_path, monkeypatch) -> None:
+    """Without hosts or listeners, Linux runs request Arapuca's deny-network mode."""
+    monkeypatch.setattr(agent_module.utils, "resolve_binary", lambda _: "/bin/arapuca")
+    monkeypatch.setattr(agent_module.platform, "system", lambda: "Linux")
+    workdir = tmp_path / "project"
+    workdir.mkdir()
+
+    command = agent_module._build_sandbox_cmd(
+        {"sandbox": {}},
+        str(workdir),
+        None,
+        None,
+        allow_network=False,
+        allow_inference=False,
+    )
+
+    assert "--deny-network" in command
+
+
+def test_linux_sandbox_listener_grant_omits_deny_network(tmp_path, monkeypatch) -> None:
+    """OpenCode listener grants are not combined with deny-network mode."""
+    monkeypatch.setattr(agent_module.utils, "resolve_binary", lambda _: "/bin/arapuca")
+    monkeypatch.setattr(agent_module.platform, "system", lambda: "Linux")
+    workdir = tmp_path / "project"
+    workdir.mkdir()
+
+    command = agent_module._build_sandbox_cmd(
+        {"sandbox": {}},
+        str(workdir),
+        None,
+        None,
+        allow_network=False,
+        allow_inference=False,
+        allow_network_listeners=True,
+    )
+
+    assert "--allow-network-listeners" in command
+    assert "--deny-network" not in command
+
+
+def test_linux_sandbox_inference_host_omits_deny_network(tmp_path, monkeypatch) -> None:
+    """The local inference grant replaces deny-network with its allow-host rule."""
+    monkeypatch.setattr(agent_module.utils, "resolve_binary", lambda _: "/bin/arapuca")
+    monkeypatch.setattr(agent_module.platform, "system", lambda: "Linux")
+    workdir = tmp_path / "project"
+    workdir.mkdir()
+
+    command = agent_module._build_sandbox_cmd(
+        {"inference": {"port": 8123}, "sandbox": {}},
+        str(workdir),
+        None,
+        None,
+        allow_network=False,
+    )
+
+    assert "--allow-host" in command
+    assert command[command.index("--allow-host") + 1] == "127.0.0.1:8123"
+    assert "--deny-network" not in command
+
+
+def test_linux_sandbox_wtmcp_port_omits_deny_network(tmp_path, monkeypatch) -> None:
+    """A wtmcp port grant also excludes deny-network mode."""
+    monkeypatch.setattr(agent_module.utils, "resolve_binary", lambda _: "/bin/arapuca")
+    monkeypatch.setattr(agent_module.platform, "system", lambda: "Linux")
+    workdir = tmp_path / "project"
+    workdir.mkdir()
+
+    command = agent_module._build_sandbox_cmd(
+        {"sandbox": {}},
+        str(workdir),
+        None,
+        8090,
+        allow_network=False,
+        allow_inference=False,
+    )
+
+    assert command[command.index("--allow-host") + 1] == "127.0.0.1:8090"
+    assert "--deny-network" not in command
 
 
 class TestShowCommand:

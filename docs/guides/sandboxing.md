@@ -7,10 +7,19 @@ macOS uses Arapuca's baseline profile. Review the [sandbox
 design](../design/sandboxing.md) for platform limitations before relying
 on it as a security boundary.
 
+On Linux, Arapuca's network rules are grant-based: every permitted
+endpoint (`--allow-host`) or listener (`--allow-network-listeners`)
+activates an isolated network namespace with no direct egress, and
+HTTPS reaches only the granted hosts through a CONNECT proxy. Because
+Arapuca rejects `--deny-network` combined with either grant, Arkai
+requests deny mode only when a run has no network grants at all; a
+granted run keeps the namespace isolation without the deny flag.
+
 Sandboxed OpenCode requests Arapuca's network-listener capability for its
-private local server. On macOS, Seatbelt cannot reliably restrict
-listeners to loopback, so OpenCode may bind to a non-loopback interface.
-Use sandboxed OpenCode only on trusted networks if this limitation is
+private local server. On Linux those listeners stay inside the isolated
+network namespace; on macOS, Seatbelt cannot reliably restrict listeners
+to loopback, so OpenCode may bind to a non-loopback interface. Use
+sandboxed OpenCode only on trusted networks if this limitation is
 acceptable. Sandboxed OpenCode also skips project-level OpenCode
 configuration and rules; Arkai provides the per-run configuration instead.
 
