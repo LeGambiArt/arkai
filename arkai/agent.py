@@ -696,6 +696,17 @@ def _start_wtmcp_server(cfg: dict) -> tuple[int | None, bool]:
     return wtmcp_port, wtmcp_started
 
 
+def _sandbox_env_binary() -> str:
+    """Resolve env(1) to an absolute path for sandboxed commands.
+
+    Arapuca resolves a bare target name against the working directory
+    before PATH, so a project-local ``env`` directory or file would
+    shadow /usr/bin/env and break the sandboxed launch. The absolute
+    path also survives Arapuca's minimal sandbox PATH.
+    """
+    return utils.resolve_binary("env")
+
+
 def _build_sandbox_cmd(
     cfg: dict,
     workdir: str | None,

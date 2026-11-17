@@ -870,6 +870,33 @@ def step_sandbox_command_avoids_arapuca_network_conflicts(context):
     assert "--allow-host" in command or "--allow-network-listeners" in command
 
 
+@given("the working directory contains an env subdirectory")  # ty: ignore[call-non-callable]
+def step_working_directory_contains_env_dir(context):
+    """Enter a temporary directory whose env/ entry could shadow env(1)."""
+    # The scenario-level filesystem mocks no-op os.mkdir (capturing the
+    # originals would only capture the mocks), so stop them to create a
+    # real directory and restore them afterwards.
+    filesystem_patches = [context.mkdir_patch, context.makedirs_patch, context.path_mkdir_patch]
+    for filesystem_patch in filesystem_patches:
+        filesystem_patch.stop()
+    original_dir = os.getcwd()
+    shadow_dir = tempfile.mkdtemp(prefix="arkai-env-shadow-")
+    Path(shadow_dir, "env").mkdir()
+    os.chdir(shadow_dir)
+    context.add_cleanup(os.chdir, original_dir)
+    context.add_cleanup(shutil.rmtree, shadow_dir, True)
+    for filesystem_patch in filesystem_patches:
+        filesystem_patch.start()
+
+
+@then("the sandbox command uses an absolute env path")  # ty: ignore[call-non-callable]
+def step_sandbox_command_uses_absolute_env_path(context):
+    """The sandbox target must be an absolute env(1) path, not a cwd-relative name."""
+    command = context.agent_launch_command
+    target = command[command.index("--") + 1]
+    assert os.path.isabs(target), f"Sandbox target {target!r} is not an absolute env(1) path"
+
+
 @given('a saved Arkai agent session named "{name}"')  # ty: ignore[call-non-callable]
 def step_saved_arkai_session(context, name):
     """Provide a saved session record without touching the user's session store."""

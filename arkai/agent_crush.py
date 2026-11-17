@@ -184,7 +184,12 @@ def build_launch_spec(
 ) -> AgentLaunchSpec:
     """Create Crush configuration and return its process launch specification."""
     from arkai import cloud_provider as cloud_config_utils
-    from arkai.agent import _build_sandbox_cmd, _cloud_provider, _get_agent_model_id
+    from arkai.agent import (
+        _build_sandbox_cmd,
+        _cloud_provider,
+        _get_agent_model_id,
+        _sandbox_env_binary,
+    )
 
     cloud_services = list(dict.fromkeys(service.lower() for service in cloud_services or []))
     cloud_provider = _cloud_provider(cloud_services)
@@ -377,7 +382,7 @@ def build_launch_spec(
                 crush_config_dir.rmdir()
             raise
         command = sandbox_prefix + [
-            "env",
+            _sandbox_env_binary(),
             f"CRUSH_GLOBAL_CONFIG={crush_config_dir}",
             f"CRUSH_GLOBAL_DATA={crush_config_dir}",
             agent_path,

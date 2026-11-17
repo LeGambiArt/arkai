@@ -74,7 +74,12 @@ def build_launch_spec(
     cloud_api_environment: dict[str, str] | None = None,
 ) -> AgentLaunchSpec:
     """Create OpenCode configuration and return its process launch specification."""
-    from arkai.agent import _build_sandbox_cmd, _get_agent_model_id, _get_model_name
+    from arkai.agent import (
+        _build_sandbox_cmd,
+        _get_agent_model_id,
+        _get_model_name,
+        _sandbox_env_binary,
+    )
 
     config_dir = _get_config_dir()
     session_data_home = Path(session_dir) if session_dir else None
@@ -268,7 +273,7 @@ def build_launch_spec(
             for path in cleanup_paths:
                 path.unlink(missing_ok=True)
             raise
-        env_args = ["env", f"OPENCODE_CONFIG={config_file}"]
+        env_args = [_sandbox_env_binary(), f"OPENCODE_CONFIG={config_file}"]
         if session_data_home is not None:
             env_args.append(f"XDG_DATA_HOME={session_data_home}")
         # OpenCode's project discovery walks above the mounted workspace. The

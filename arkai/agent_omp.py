@@ -345,7 +345,7 @@ def build_launch_spec(
     cloud_api_environment: dict[str, str] | None = None,
 ) -> AgentLaunchSpec:
     """Create OMP configuration and return its process launch specification."""
-    from arkai.agent import _build_sandbox_cmd
+    from arkai.agent import _build_sandbox_cmd, _sandbox_env_binary
 
     cloud_services = list(dict.fromkeys(service.lower() for service in cloud_services or []))
     is_cloud = bool(cloud_services)
@@ -540,7 +540,7 @@ def build_launch_spec(
                 else:
                     path.unlink(missing_ok=True)
             raise
-        env_args = ["env"]
+        env_args = [_sandbox_env_binary()]
         if not is_cloud or "PI_CONFIG_DIR" in os.environ:
             config_root = OMP_CONFIG_DIR if not is_cloud else os.environ["PI_CONFIG_DIR"]
             env_args.append(f"PI_CONFIG_DIR={config_root}")

@@ -35,7 +35,7 @@ def build_launch_spec(
     resume_session: bool = False,
 ) -> AgentLaunchSpec:
     """Create Claude configuration and return its process launch specification."""
-    from arkai.agent import _build_sandbox_cmd, _get_agent_model_id
+    from arkai.agent import _build_sandbox_cmd, _get_agent_model_id, _sandbox_env_binary
 
     inference_port = config.get_config_value(cfg, "inference.port", 8081)
     context_size = config.get_config_value(cfg, "inference.context_size", 65536)
@@ -115,7 +115,7 @@ def build_launch_spec(
             raise
         unset_args = [arg for var in vertex_env_vars if var in environment for arg in ("-u", var)]
         env_pairs = [f"{key}={value}" for key, value in anthropic_env.items()]
-        command = sandbox_prefix + ["env"] + unset_args + env_pairs + command
+        command = sandbox_prefix + [_sandbox_env_binary()] + unset_args + env_pairs + command
     else:
         for var in vertex_env_vars:
             environment.pop(var, None)

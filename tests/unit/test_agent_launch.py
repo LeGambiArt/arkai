@@ -1117,6 +1117,7 @@ def test_omp_sandbox_mounts_binary_and_sets_agent_dir(tmp_path: Path, monkeypatc
     """Sandboxed OMP receives its isolated config path and read-only executable mount."""
     agent_dir = tmp_path / "omp-agent"
     monkeypatch.setattr(agent_omp, "get_agent_dir", lambda: agent_dir)
+    monkeypatch.setattr(agent, "_sandbox_env_binary", lambda: "/usr/bin/env")
     with patch.object(agent, "_build_sandbox_cmd", return_value=["arapuca", "run", "--"]) as build:
         spec = agent_omp.build_launch_spec("/opt/omp/bin/omp", _cfg(), None, True, None)
 
@@ -1125,12 +1126,44 @@ def test_omp_sandbox_mounts_binary_and_sets_agent_dir(tmp_path: Path, monkeypatc
         "arapuca",
         "run",
         "--",
-        "env",
+        "/usr/bin/env",
         f"PI_CONFIG_DIR={agent_omp.OMP_CONFIG_DIR}",
         f"PI_CODING_AGENT_DIR={agent_dir}",
         "OMP_SKIP_SETUP=1",
         "/opt/omp/bin/omp",
     ]
+
+
+@pytest.mark.parametrize(
+    "launcher",
+    [
+        ("claude", agent_claude),
+        ("crush", agent_crush),
+        ("omp", agent_omp),
+        ("opencode", agent_opencode),
+    ],
+)
+def test_sandboxed_launch_uses_absolute_env_path_despite_local_env_directory(
+    tmp_path: Path, monkeypatch, launcher
+) -> None:
+    """A project-local env/ directory must not shadow env(1) in the sandbox target."""
+    name, module = launcher
+    (tmp_path / "env").mkdir()
+    monkeypatch.chdir(tmp_path)
+    sessions = tmp_path / "sessions"
+    sessions.mkdir()
+    monkeypatch.setattr(agent_claude, "_get_config_dir", lambda: sessions)
+    monkeypatch.setattr(agent_crush, "_get_config_dir", lambda: sessions)
+    monkeypatch.setattr(agent_omp, "get_agent_dir", lambda: sessions)
+    monkeypatch.setattr(agent_opencode, "_get_config_dir", lambda: sessions)
+
+    with patch.object(agent, "_build_sandbox_cmd", return_value=["arapuca", "run", "--"]):
+        spec = module.build_launch_spec("/agent", _cfg(), None, True, str(tmp_path))
+
+    target = spec.command[spec.command.index("--") + 1]
+    assert Path(target).is_absolute() and target.endswith("/env"), (
+        f"{name} sandbox target {target!r} is not an absolute env(1) path"
+    )
 
 
 def test_pi_cloud_uses_global_auth_and_openai_provider(tmp_path: Path, monkeypatch) -> None:
@@ -2248,7 +2281,6 @@ def test_sandbox_mounts_read_write_paths_without_rw_suffix(tmp_path: Path, monke
     workdir = str(tmp_path / "project")
     config_dir = str(tmp_path / "sessions")
     monkeypatch.setattr(agent.platform, "system", lambda: "Darwin")
-    monkeypatch.setattr(agent.utils, "resolve_binary", lambda _: "/arapuca")
 
     command = agent._build_sandbox_cmd(
         {

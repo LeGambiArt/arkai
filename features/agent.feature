@@ -53,6 +53,13 @@ Feature: Agent Execution
     Then the exit code is 0
     And the sandbox command does not combine arapuca network flags
 
+  Scenario: Sandboxed agent starts in a directory containing an env subdirectory
+    Given a valid .arkai.yaml file
+    And the working directory contains an env subdirectory
+    When I run "arkai agent start" in a TTY
+    Then the exit code is 0
+    And the sandbox command uses an absolute env path
+
   Scenario: Agent accepts -m/--model flag without inference.model in config
     Given a .arkai.yaml file with no model configured
     When I run "arkai agent start" with "-m test-model.gguf" in a TTY
