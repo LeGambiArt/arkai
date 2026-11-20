@@ -2281,6 +2281,7 @@ def test_sandbox_mounts_read_write_paths_without_rw_suffix(tmp_path: Path, monke
     workdir = str(tmp_path / "project")
     config_dir = str(tmp_path / "sessions")
     monkeypatch.setattr(agent.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(agent.utils, "resolve_binary", lambda _: "/arapuca")
 
     command = agent._build_sandbox_cmd(
         {

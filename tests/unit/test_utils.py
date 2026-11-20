@@ -1,5 +1,6 @@
 import signal
 import subprocess
+from unittest.mock import Mock
 
 import pytest
 
@@ -214,19 +215,29 @@ class TestBinaryResolution:
 
 
 class TestProcessExecution:
-    def test_run_command_success(self):
-        code, stdout, stderr = utils.run_command(["echo", "hello"])
-        assert code == 0
-        assert "hello" in stdout
+    def test_run_command_success(self, monkeypatch):
+        run = Mock(return_value=subprocess.CompletedProcess([], 0, "hello\n", ""))
+        monkeypatch.setattr(utils.subprocess, "run", run)
 
-    def test_run_command_failure(self):
-        code, _, _ = utils.run_command(["false"])
-        assert code != 0
+        assert utils.run_command(["fake-command", "hello"]) == (0, "hello\n", "")
+        run.assert_called_once_with(
+            ["fake-command", "hello"], capture_output=True, text=True, timeout=30, env=None
+        )
 
-    def test_run_command_without_capture(self):
-        code, stdout, stderr = utils.run_command(["echo", "test"], capture=False)
-        assert code == 0
-        assert stdout is None
+    def test_run_command_failure(self, monkeypatch):
+        run = Mock(return_value=subprocess.CompletedProcess([], 1, "", "failed"))
+        monkeypatch.setattr(utils.subprocess, "run", run)
+
+        assert utils.run_command(["fake-command"]) == (1, "", "failed")
+
+    def test_run_command_without_capture(self, monkeypatch):
+        run = Mock(return_value=subprocess.CompletedProcess([], 0, None, None))
+        monkeypatch.setattr(utils.subprocess, "run", run)
+
+        assert utils.run_command(["fake-command"], capture=False) == (0, None, None)
+        run.assert_called_once_with(
+            ["fake-command"], capture_output=False, text=True, timeout=30, env=None
+        )
 
     def test_run_command_timeout(self, monkeypatch):
         monkeypatch.setattr(

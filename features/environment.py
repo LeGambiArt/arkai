@@ -93,6 +93,7 @@ def _clean_patches(context):
         "inference_run_command_patch",
         "wait_stop_patch",
         "getenv_patch",
+        "environment_patch",
         "load_yaml_patch",
         "save_yaml_patch",
         "get_config_value_patch",
@@ -120,6 +121,10 @@ def _clean_patches(context):
 def before_scenario(context, scenario):
     """Set up test environment before each scenario."""
     _clean_patches(context)
+    context.environment_patch = patch.dict(
+        os.environ, {"HOME": "/Home/User", "XDG_CONFIG_HOME": "/Home/User/.config"}
+    )
+    context.environment_patch.start()
 
     # Mock os.getenv for HOME and XDG_CONFIG_HOME
     original_getenv = os.getenv
@@ -305,10 +310,12 @@ def before_scenario(context, scenario):
     context.models_dir = None
     context.original_get_data_home = None
 
-    # Mock utils.run_command to avoid spawning subprocesses
-    original_run_command = utils.run_command
+    # Mock utils.run_command so behavior tests never launch external commands.
 
     def mock_run_command(cmd_args):
+        # Hardware detection is platform-dependent; keep its external probe deterministic.
+        if cmd_args == ["sysctl", "-n", "hw.optional.arm64"]:
+            return 0, "1\n", ""
         if len(cmd_args) >= 1 and cmd_args[0] == "arkai":
             import sys
 
@@ -336,7 +343,7 @@ def before_scenario(context, scenario):
                 sys.stderr = old_stderr
 
             return exit_code, stdout_content, stderr_content
-        return original_run_command(cmd_args)
+        raise AssertionError(f"External command was not mocked: {cmd_args}")
 
     context.run_command_patch = patch.object(utils, "run_command", side_effect=mock_run_command)
     context.run_command_patch.start()
