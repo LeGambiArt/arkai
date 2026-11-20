@@ -4,7 +4,7 @@ Arkai is a command-line tool for orchestrating coding agents with local or
 cloud inference. It can manage model downloads, agent sessions, MCP
 integrations, and sandboxed execution.}
 
-Name:           python3-arkai
+Name:           arkai
 Version:        0.11.0
 Release:        %autorelease
 Summary:        Local AI workflow manager for coding agents
