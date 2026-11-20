@@ -5,7 +5,7 @@ cloud inference. It can manage model downloads, agent sessions, MCP
 integrations, and sandboxed execution.}
 
 Name:           arkai
-Version:        0.11.0
+Version:        0.11.1
 Release:        %autorelease
 Summary:        Local AI workflow manager for coding agents
 License:        Apache-2.0
