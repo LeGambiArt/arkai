@@ -29,6 +29,11 @@ def step_managed_omp_installed(context):
     context.tools_is_installed = True
 
 
+@given("arapuca is not available")  # ty: ignore[call-non-callable]
+def step_arapuca_unavailable(context):
+    context.tools_arapuca_available = False
+
+
 @when('I run the tools command "{arguments}"')  # ty: ignore[call-non-callable]
 def step_run_tools_command(context, arguments):
     _run_tools_command(context, arguments)
@@ -43,6 +48,7 @@ def _run_tools_command(context, arguments: str, answer: str = "yes") -> None:
     """Run the public CLI while replacing network and sandbox side effects."""
     if not hasattr(context, "tools_is_installed"):
         context.tools_is_installed = False
+    context.tools_arapuca_available = getattr(context, "tools_arapuca_available", True)
     context.tools_sandbox_calls = []
     context.tools_external_calls = []
     context.tools_installer_downloads = []
@@ -65,8 +71,9 @@ def _run_tools_command(context, arguments: str, answer: str = "yes") -> None:
                 "read_only_root": read_only_root,
             }
         )
+        prefix = [] if not context.tools_arapuca_available else ["/usr/bin/arapuca", "run", "--"]
         return (
-            ["/usr/bin/arapuca", "run", "--"],
+            prefix,
             {name: f"/sandbox/bin/{name}" for name in command_names},
             {"PATH": "/sandbox/bin", **(child_environment or {})},
         )
@@ -93,6 +100,11 @@ def _run_tools_command(context, arguments: str, answer: str = "yes") -> None:
         patch.object(tools, "_tool_root", return_value=root),
         patch.object(
             tools, "_is_tool_installed", side_effect=lambda _name: context.tools_is_installed
+        ),
+        patch.object(
+            tools,
+            "_arapuca_available",
+            side_effect=lambda *_args: context.tools_arapuca_available,
         ),
         patch.object(tools, "_build_sandbox_prefix", side_effect=build_sandbox),
         patch.object(tools, "_download_installer", side_effect=download_installer),
@@ -143,6 +155,12 @@ def step_tools_ran_inside_arapuca(context):
 def step_sandbox_network_access(context):
     assert context.tools_sandbox_calls
     assert context.tools_sandbox_calls[0]["allow_network"] is True
+
+
+@then("the tools command warns that it will run with no sandbox")  # ty: ignore[call-non-callable]
+def step_tools_command_warns_no_sandbox(context):
+    assert "🚨 arapuca is not available" in context.stderr
+    assert "with no sandbox" in context.stderr
 
 
 @then("Pi's supported extensions were updated")  # ty: ignore[call-non-callable]

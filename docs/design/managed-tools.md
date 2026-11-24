@@ -14,7 +14,12 @@ uses Strata's official installer. Managed executables are resolved from
 the Arkai-owned roots rather than from a modified global `PATH`. Install
 and update operations request confirmation and execute through the
 configured sandbox with a constrained set of host utilities and runtime
-paths.
+paths. When the configured Arapuca executable cannot be resolved, Arkai
+warns that the operation will run with no sandbox and executes the same
+commands on the host, with their writable locations still pointed at the
+Arkai-managed directories. Removal takes the same path: it warns and
+runs `rm` on the host when Arapuca is unavailable, still limited to
+Arkai-owned files.
 
 Before writing, the manager verifies that managed roots and known entries
 are not symlinks, uses private directory permissions, and refuses to

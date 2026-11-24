@@ -255,6 +255,7 @@ def test_sandbox_prefix_does_not_inherit_profile_mounts_or_secrets() -> None:
         patch.object(tools.config, "load_config", return_value=cfg),
         patch.object(tools, "_host_tool_paths", return_value={"rm": "/usr/bin/rm"}),
         patch.object(tools, "_sandbox_paths", return_value=([], "/usr/bin")),
+        patch.object(tools, "_arapuca_available", return_value=True),
         patch.object(agent, "_build_sandbox_cmd", return_value=["/arapuca", "run", "--"]) as build,
     ):
         tools._build_sandbox_prefix(Path("/install"), ("rm",), allow_network=False)
@@ -624,3 +625,186 @@ def test_update_requires_an_arkai_managed_install() -> None:
     with patch.object(tools, "_is_tool_installed", return_value=False):
         with pytest.raises(RuntimeError, match="arkai tools install strata"):
             tools.cmd_tools_update("strata")
+
+
+def test_install_warns_and_runs_without_sandbox_when_arapuca_is_missing(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """A missing Arapuca still installs Strata, after a no-sandbox warning."""
+    root = tmp_path / "strata"
+    monkeypatch.setattr(tools, "get_strata_root", lambda: root)
+    monkeypatch.setattr(tools.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(tools, "_arapuca_available", lambda: False)
+    commands: list[list[str]] = []
+
+    def run_command(command: list[str], **kwargs) -> tuple[int, str, str]:
+        commands.append(command)
+        if str(installer) in command:
+            _create_strata_install(root)
+        elif str(root / "bin" / "strata") in command:
+            return 0, "Strata 0.2.3\n", ""
+        return 0, "", ""
+
+    installer = root / "tmp" / "install.sh"
+    with (
+        patch("builtins.input", return_value="yes"),
+        patch.object(
+            tools,
+            "_download_installer",
+            side_effect=lambda path: path.write_text("#!/bin/sh\n# official installer\n"),
+        ),
+        patch.object(tools.utils, "run_command", side_effect=run_command),
+    ):
+        tools.cmd_tools_install("strata")
+
+    captured = capsys.readouterr()
+    assert "🚨 arapuca is not available" in captured.err
+    assert "no sandbox" in captured.err
+    assert len(commands) == 2
+    assert all("--" not in command for command in commands)
+    assert all(command[0].endswith("/env") for command in commands)
+    assert "Strata install complete (Strata 0.2.3)" in captured.out
+    assert tools._is_managed_strata_installed()
+
+
+def test_update_warns_and_runs_without_sandbox_when_arapuca_is_missing(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """A missing Arapuca still updates Strata, after a no-sandbox warning."""
+    root = tmp_path / "strata"
+    _create_strata_install(root, "0.2.2")
+    monkeypatch.setattr(tools, "get_strata_root", lambda: root)
+    monkeypatch.setattr(tools.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(tools, "_arapuca_available", lambda: False)
+    commands: list[list[str]] = []
+
+    def run_command(command: list[str], **kwargs) -> tuple[int, str, str]:
+        commands.append(command)
+        if str(installer) in command:
+            (root / "data" / "terminal" / "current").unlink()
+            (root / "bin" / "strata").unlink()
+            _create_strata_install(root, "0.2.3")
+        elif str(root / "bin" / "strata") in command:
+            return 0, "Strata 0.2.3\n", ""
+        return 0, "", ""
+
+    installer = root / "tmp" / "install.sh"
+    with (
+        patch("builtins.input", return_value="yes"),
+        patch.object(
+            tools,
+            "_download_installer",
+            side_effect=lambda path: path.write_text("#!/bin/sh\n# official installer\n"),
+        ),
+        patch.object(tools.utils, "run_command", side_effect=run_command),
+    ):
+        tools.cmd_tools_update("strata")
+
+    captured = capsys.readouterr()
+    assert "🚨 arapuca is not available" in captured.err
+    assert "update script will run with no sandbox" in captured.err
+    assert all("--" not in command for command in commands)
+    assert "Strata update complete (Strata 0.2.3)" in captured.out
+    assert tools._is_managed_strata_installed()
+
+
+def test_remove_warns_and_runs_without_sandbox_when_arapuca_is_missing(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    """A missing Arapuca still removes Strata, after a no-sandbox warning."""
+    root = tmp_path / "strata"
+    _create_strata_install(root)
+    monkeypatch.setattr(tools, "get_strata_root", lambda: root)
+    monkeypatch.setattr(tools.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(tools, "_arapuca_available", lambda: False)
+
+    def run_command(command: list[str], **kwargs) -> tuple[int, str, str]:
+        assert "--" not in command
+        assert command[0].endswith("/rm")
+        assert command[1] == "-rf"
+        assert {str(root / entry) for entry in tools._managed_entries("strata")} <= set(command)
+        for entry in tools._managed_entries("strata"):
+            path = root / entry
+            if path.is_dir() and not path.is_symlink():
+                shutil.rmtree(path)
+            else:
+                path.unlink(missing_ok=True)
+        return 0, "", ""
+
+    with (
+        patch("builtins.input", return_value="yes"),
+        patch.object(tools.utils, "run_command", side_effect=run_command),
+    ):
+        tools.cmd_tools_remove("strata")
+
+    captured = capsys.readouterr()
+    assert "🚨 arapuca is not available" in captured.err
+    assert "removal will run with no sandbox" in captured.err
+    assert "Removed Arkai-managed Strata" in captured.out
+    assert not root.exists()
+
+
+def test_install_with_arapuca_available_does_not_warn(tmp_path: Path, monkeypatch, capsys) -> None:
+    """No no-sandbox warning when Arapuca can be resolved."""
+    root = tmp_path / "strata"
+    monkeypatch.setattr(tools, "get_strata_root", lambda: root)
+    monkeypatch.setattr(tools.platform, "system", lambda: "Linux")
+
+    with (
+        patch("builtins.input", return_value="yes"),
+        patch.object(tools, "_arapuca_available", return_value=True),
+        patch.object(tools, "_confirm", return_value=False),
+    ):
+        tools.cmd_tools_install("strata")
+
+    captured = capsys.readouterr()
+    assert "🚨" not in captured.err
+    assert "cancelled" in captured.out.lower()
+
+
+def test_build_sandbox_prefix_returns_empty_prefix_without_arapuca(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Without Arapuca the sandbox prefix is empty and commands run on the host."""
+    from arkai import agent
+
+    monkeypatch.setattr(tools.platform, "system", lambda: "Linux")
+
+    with (
+        patch.object(tools.config, "load_config", return_value={}),
+        patch.object(tools, "_host_tool_paths", return_value={"rm": "/usr/bin/rm"}),
+        patch.object(tools.shutil, "which", return_value=None),
+        patch.object(tools, "_sandbox_paths", return_value=([], "/usr/bin")),
+        patch.object(tools, "_arapuca_available", return_value=False),
+        patch.object(agent, "_build_sandbox_cmd", return_value=["/arapuca", "run", "--"]) as build,
+    ):
+        prefix, tool_paths, environment = tools._build_sandbox_prefix(
+            tmp_path, ("rm",), allow_network=False
+        )
+
+    assert prefix == []
+    assert tool_paths == {"rm": "/usr/bin/rm"}
+    assert environment == {}
+    build.assert_not_called()
+
+
+def test_build_sandbox_prefix_uses_arapuca_when_available(tmp_path: Path, monkeypatch) -> None:
+    """With Arapuca resolved the sandbox command is built as usual."""
+    from arkai import agent
+
+    monkeypatch.setattr(tools.platform, "system", lambda: "Linux")
+
+    with (
+        patch.object(tools.config, "load_config", return_value={}),
+        patch.object(tools, "_host_tool_paths", return_value={"rm": "/usr/bin/rm"}),
+        patch.object(tools.shutil, "which", return_value=None),
+        patch.object(tools, "_sandbox_paths", return_value=([], "/usr/bin")),
+        patch.object(tools, "_arapuca_available", return_value=True),
+        patch.object(agent, "_build_sandbox_cmd", return_value=["/arapuca", "run", "--"]) as build,
+    ):
+        prefix, _tool_paths, _environment = tools._build_sandbox_prefix(
+            tmp_path, ("rm",), allow_network=False
+        )
+
+    assert prefix == ["/arapuca", "run", "--"]
+    build.assert_called_once()

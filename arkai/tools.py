@@ -302,6 +302,36 @@ def _sandbox_environment(root: Path, path: str) -> dict[str, str]:
     return {"PATH": path, **_strata_environment(root)}
 
 
+def _arapuca_available() -> bool:
+    """Return whether the configured Arapuca sandbox executable can be resolved."""
+    from arkai.agent import _resolve_sandbox_profile
+
+    try:
+        profile = _resolve_sandbox_profile(config.load_config())
+        utils.resolve_binary(profile.get("path", "arapuca"))
+    except (OSError, RuntimeError):
+        return False
+    return True
+
+
+def _sandbox_scope() -> str:
+    """Describe where tool commands run, matching the Arapuca availability check."""
+    return "inside Arapuca" if _arapuca_available() else "with no sandbox"
+
+
+def _warn_no_sandbox(action: str) -> None:
+    """Warn before a managed tool operation executes without the Arapuca sandbox."""
+    if _arapuca_available():
+        return
+    if action == "install":
+        detail = "the installation script will install the tool with no sandbox"
+    elif action == "remove":
+        detail = "the removal will run with no sandbox"
+    else:
+        detail = f"the {action} script will run with no sandbox"
+    utils.warn(f"🚨 arapuca is not available: {detail}.")
+
+
 def _build_sandbox_prefix(
     root: Path,
     command_names: tuple[str, ...],
@@ -310,7 +340,11 @@ def _build_sandbox_prefix(
     read_only_root: bool = False,
     child_environment: dict[str, str] | None = None,
 ) -> tuple[list[str], dict[str, str], dict[str, str]]:
-    """Create an Arapuca command prefix for one managed tool operation."""
+    """Create an Arapuca command prefix for one managed tool operation.
+
+    Falls back to an empty prefix — running on the host — when the configured
+    Arapuca executable cannot be resolved. Callers warn before this happens.
+    """
     if platform.system() not in {"Darwin", "Linux"}:
         raise RuntimeError("Strata tool management requires macOS or Linux and Arapuca")
 
@@ -324,6 +358,9 @@ def _build_sandbox_prefix(
     if "curl" in command_names and "sh" in command_names:
         if not ("sha256sum" in tool_paths or "shasum" in tool_paths):
             raise RuntimeError("The selected install script requires sha256sum or shasum")
+
+    if not _arapuca_available():
+        return [], tool_paths, dict(child_environment or {})
 
     volumes, path = _sandbox_paths(tool_paths)
     environment = {"PATH": path, **(child_environment or {})}
@@ -374,7 +411,7 @@ def run_sandboxed_tool(
     capture: bool = False,
     timeout: int | None = None,
 ) -> tuple[int, str, str]:
-    """Run an external tool with its writable scope confined to an Arapuca root."""
+    """Run an external tool, sandboxed with Arapuca when it is available."""
     selected_commands = tuple(dict.fromkeys(("env", *command_names)))
     prefix, tool_paths, environment = _build_sandbox_prefix(
         root,
@@ -404,7 +441,7 @@ def _run_sandboxed(
     capture: bool = False,
     timeout: int | None = None,
 ) -> tuple[int, str, str]:
-    """Execute a tool command only after Arapuca's ``--`` separator."""
+    """Execute a tool command, prefixed by Arapuca when it is available."""
     if environment:
         if env_binary is None:
             raise ValueError("env_binary is required when setting sandboxed environment values")
@@ -469,7 +506,7 @@ def _confirm(action: str, tool_name: str, location: Path) -> bool:
     display_name = _TOOL_DISPLAY_NAMES.get(tool_name, tool_name)
     if action in {"install", "update"}:
         utils.warn(
-            f"This will {action} {display_name} inside Arapuca using its supported installer. "
+            f"This will {action} {display_name} {_sandbox_scope()} using its supported installer. "
             f"Files will be kept under {location}."
         )
     else:
@@ -497,10 +534,10 @@ def _install_or_update_strata(action: str) -> None:
         allow_network=True,
         child_environment=_strata_environment(root),
     )
-    utils.info("Downloading Strata's official installer...")
+    utils.info(f"Downloading Strata's official installer {_sandbox_scope()}...")
     _download_installer(installer)
 
-    utils.info(f"Running Strata's official installer inside Arapuca ({action})...")
+    utils.info(f"Running Strata's official installer {_sandbox_scope()} ({action})...")
     _run_sandboxed(
         prefix,
         [tools["sh"], str(installer)],
@@ -519,7 +556,7 @@ def _install_or_update_strata(action: str) -> None:
 
 
 def _strata_version() -> str:
-    """Read the installed Strata version by executing its CLI inside Arapuca."""
+    """Read the installed Strata version by executing its CLI through the tool runner."""
     if not _is_managed_strata_installed():
         raise RuntimeError("Arkai-managed Strata is not installed")
     root = get_strata_root()
@@ -563,7 +600,7 @@ def _pi_version() -> str:
 
 
 def _omp_version() -> str:
-    """Read OMP's version through an Arapuca-sandboxed CLI invocation."""
+    """Read OMP's version through the sandboxed tool runner."""
     root = _tool_root("omp")
     _, stdout, stderr = run_sandboxed_tool(
         root,
@@ -591,7 +628,7 @@ def _tool_version(tool_name: str) -> str:
 
 
 def _install_or_update_pi(action: str) -> None:
-    """Install or update Pi and Arkai's supported extensions inside Arapuca."""
+    """Install or update Pi and Arkai's supported extensions, sandboxed when possible."""
     if platform.system() not in {"Darwin", "Linux"}:
         raise RuntimeError("Pi tool management requires macOS or Linux and Arapuca")
     module = _get_tool_module("pi")
@@ -613,7 +650,7 @@ def _install_or_update_pi(action: str) -> None:
     }
 
     verb = "Installing" if action == "install" else "Updating"
-    utils.info(f"{verb} {module.PI_CORE_PACKAGE} inside Arapuca...")
+    utils.info(f"{verb} {module.PI_CORE_PACKAGE} {_sandbox_scope()}...")
     _, stdout, stderr = run_sandboxed_tool(
         root,
         ("npm", "node"),
@@ -637,7 +674,7 @@ def _install_or_update_pi(action: str) -> None:
     if action == "install":
         packages_to_install = module.PI_PACKAGES
         for package in packages_to_install:
-            utils.info(f"Installing {package} inside Arapuca...")
+            utils.info(f"Installing {package} {_sandbox_scope()}...")
             _, stdout, stderr = run_sandboxed_tool(
                 root,
                 ("node", "npm"),
@@ -649,7 +686,7 @@ def _install_or_update_pi(action: str) -> None:
             )
             _report_command_output(stdout, stderr)
     else:
-        utils.info("Checking Arkai-installed Pi extensions for updates inside Arapuca...")
+        utils.info(f"Checking Arkai-installed Pi extensions for updates {_sandbox_scope()}...")
         updates = module._check_for_package_updates(str(pi_path), str(agent_dir))
         available_sources = {update.get("source") for update in updates if isinstance(update, dict)}
         packages_to_update = [
@@ -658,7 +695,7 @@ def _install_or_update_pi(action: str) -> None:
         if not packages_to_update:
             utils.info("Arkai-installed Pi extensions are already up to date.")
         for package in packages_to_update:
-            utils.info(f"Updating {package} inside Arapuca...")
+            utils.info(f"Updating {package} {_sandbox_scope()}...")
             _, stdout, stderr = run_sandboxed_tool(
                 root,
                 ("node", "npm"),
@@ -676,7 +713,7 @@ def _install_or_update_pi(action: str) -> None:
 
 
 def _install_or_update_omp(action: str) -> None:
-    """Install or update OMP's verified binary inside Arapuca."""
+    """Install or update OMP's verified binary, sandboxed when possible."""
     if platform.system() not in {"Darwin", "Linux"}:
         raise RuntimeError("OMP tool management requires macOS or Linux and Arapuca")
     module = _get_tool_module("omp")
@@ -696,7 +733,7 @@ def _install_or_update_omp(action: str) -> None:
         child_environment=environment,
     )
 
-    utils.info("Downloading the official OMP installer inside Arapuca...")
+    utils.info(f"Downloading the official OMP installer {_sandbox_scope()}...")
     _run_sandboxed(
         prefix,
         [tools["curl"], "-fsSL", module.OMP_INSTALLER_URL, "-o", str(installer)],
@@ -704,7 +741,7 @@ def _install_or_update_omp(action: str) -> None:
         environment=sandbox_environment,
         timeout=None,
     )
-    utils.info(f"Running the OMP installer inside Arapuca ({action})...")
+    utils.info(f"Running the OMP installer {_sandbox_scope()} ({action})...")
     _run_sandboxed(
         prefix,
         [tools["sh"], str(installer), "--binary"],
@@ -722,6 +759,7 @@ def _install_or_update_omp(action: str) -> None:
 
 
 def _install_or_update_tool(tool_name: str, action: str) -> None:
+    _warn_no_sandbox(action)
     if tool_name == "strata":
         _install_or_update_strata(action)
     elif tool_name == "pi":
@@ -783,6 +821,7 @@ def cmd_tools_remove(tool_name: str) -> None:
     _validate_tool(tool_name)
     if not _is_tool_installed(tool_name):
         raise RuntimeError(f"Arkai-managed {tool_name} is not installed")
+    _warn_no_sandbox("remove")
 
     root = _tool_root(tool_name)
     if not _confirm("remove", tool_name, root):
@@ -790,10 +829,12 @@ def cmd_tools_remove(tool_name: str) -> None:
         return
 
     entries = _managed_entries(tool_name)
+    # Absolute paths keep the host fallback (no Arapuca) from deleting
+    # entries relative to the user's current directory.
     run_sandboxed_tool(
         root,
         ("rm",),
-        [shutil.which("rm") or "rm", "-rf", *entries],
+        [shutil.which("rm") or "rm", "-rf", *(str(root / entry) for entry in entries)],
         allow_network=False,
     )
     try:

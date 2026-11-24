@@ -34,6 +34,30 @@ Feature: Third-party tool management
     And all external tool commands ran inside Arapuca
     And the sandbox allowed network access
 
+  Scenario: Install a tool without Arapuca available
+    Given no Arkai-managed tools are installed
+    And arapuca is not available
+    When I run the tools command with confirmation "yes" for "install strata"
+    Then the exit code is 0
+    And the output contains "Strata install complete (Strata 0.2.3)"
+    And the tools command warns that it will run with no sandbox
+
+  Scenario: Update a tool without Arapuca available
+    Given Arkai-managed Strata is installed
+    And arapuca is not available
+    When I run the tools command with confirmation "yes" for "update strata"
+    Then the exit code is 0
+    And the output contains "Strata update complete (Strata 0.2.3)"
+    And the tools command warns that it will run with no sandbox
+
+  Scenario: Remove a tool without Arapuca available
+    Given Arkai-managed Strata is installed
+    And arapuca is not available
+    When I run the tools command with confirmation "yes" for "remove strata"
+    Then the exit code is 0
+    And the output contains "Removed Arkai-managed Strata"
+    And the tools command warns that it will run with no sandbox
+
   Scenario: Use the Arkai-managed Strata executable for inference
     Given a valid Strata inference config
     And Arkai-managed Strata is installed for inference

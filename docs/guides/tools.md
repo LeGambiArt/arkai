@@ -24,7 +24,10 @@ On macOS, copying from sandboxed Pi to the system clipboard may not work
 in Terminal.app, which does not support OSC 52 clipboard writes. Use a
 terminal that supports OSC 52, such as iTerm2, kitty, or Alacritty.
 
-Installs and updates require confirmation and are run through Arkai's
-configured sandbox. See the [managed tools
+Installs, updates, and removals require confirmation and run through
+Arkai's configured `arapuca` sandbox when it is available. Without
+`arapuca`, Arkai warns that the operation will run with no sandbox and
+executes it directly on the host, with its writable locations pointed at
+Arkai's managed directories. See the [managed tools
 design](../design/managed-tools.md) for install boundaries and ownership
 rules.
