@@ -918,7 +918,7 @@ def cmd_agent_install(agent_name: str | None = None) -> None:
     Args:
         agent_name: Agent to install. If omitted, print the installable agents.
     """
-    supported_agents = ("pi", "omp")
+    supported_agents = ("pi", "omp", "opencode")
     if agent_name is not None and agent_name not in supported_agents:
         raise ValueError(
             f"Agent '{agent_name}' is not supported for installation. "

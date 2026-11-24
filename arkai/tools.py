@@ -14,11 +14,12 @@ import requests
 from arkai import config, utils
 
 STRATA_INSTALLER_URL = "https://github.com/Niko1221/Strata/releases/latest/download/install.sh"
-SUPPORTED_TOOLS = ("strata", "pi", "omp")
-_TOOL_DISPLAY_NAMES = {"strata": "Strata", "pi": "Pi", "omp": "OMP"}
+SUPPORTED_TOOLS = ("strata", "pi", "omp", "opencode")
+_TOOL_DISPLAY_NAMES = {"strata": "Strata", "pi": "Pi", "omp": "OMP", "opencode": "OpenCode"}
 _MANAGED_ENTRIES = ("bin", "data", "config", "cache", "state", "home", "tmp")
 _PI_MANAGED_ENTRIES = ("core", "agent", "npm-cache")
 _OMP_MANAGED_ENTRIES = ("bin", "agent", "tmp")
+_OPENCODE_MANAGED_ENTRIES = (".opencode", "tmp")
 _INSTALL_COMMANDS = (
     "sh",
     "env",
@@ -36,6 +37,7 @@ _INSTALL_COMMANDS = (
     "ls",
     "sed",
     "mktemp",
+    "tr",
 )
 _OPTIONAL_INSTALL_COMMANDS = (
     "sha256sum",
@@ -114,7 +116,11 @@ def get_strata_binary() -> Path:
 
 def _get_tool_module(tool_name: str) -> ModuleType:
     """Load the implementation module for a supported agent tool lazily."""
-    module_name = {"pi": "arkai.agent_pi", "omp": "arkai.agent_omp"}.get(tool_name)
+    module_name = {
+        "pi": "arkai.agent_pi",
+        "omp": "arkai.agent_omp",
+        "opencode": "arkai.agent_opencode",
+    }.get(tool_name)
     if module_name is None:
         raise ValueError(f"Tool does not have an agent installer: {tool_name}")
     return __import__(module_name, fromlist=["get_install_dir"])
@@ -135,6 +141,8 @@ def _tool_binary(tool_name: str) -> Path:
     if tool_name == "omp":
         module = _get_tool_module(tool_name)
         return module.get_core_dir() / "omp"
+    if tool_name == "opencode":
+        return _get_tool_module(tool_name).get_core_dir() / "opencode"
     raise ValueError(f"Tool is not supported: {tool_name}")
 
 
@@ -615,6 +623,22 @@ def _omp_version() -> str:
     return version.splitlines()[0] if version else "version unavailable"
 
 
+def _opencode_version() -> str:
+    """Read OpenCode's version through the sandboxed tool runner."""
+    root = _tool_root("opencode")
+    _, stdout, stderr = run_sandboxed_tool(
+        root,
+        (),
+        [str(_tool_binary("opencode")), "--version"],
+        allow_network=False,
+        read_only_root=True,
+        capture=True,
+        timeout=30,
+    )
+    version = stdout.strip() or stderr.strip()
+    return version.splitlines()[0] if version else "version unavailable"
+
+
 def _tool_version(tool_name: str) -> str:
     match tool_name:
         case "strata":
@@ -623,6 +647,8 @@ def _tool_version(tool_name: str) -> str:
             return _pi_version()
         case "omp":
             return _omp_version()
+        case "opencode":
+            return _opencode_version()
         case _:
             raise ValueError(f"Tool is not supported: {tool_name}")
 
@@ -758,6 +784,66 @@ def _install_or_update_omp(action: str) -> None:
     utils.info(f"OMP {action} complete ({_omp_version()}): {module.get_core_dir() / 'omp'}")
 
 
+def _install_or_update_opencode(action: str) -> None:
+    """Install or update OpenCode's official binary, sandboxed when possible."""
+    system = platform.system()
+    if system not in {"Darwin", "Linux"}:
+        raise RuntimeError("OpenCode tool management requires macOS or Linux and Arapuca")
+    if system == "Darwin" and platform.machine() != "arm64":
+        raise RuntimeError(
+            "Arkai manages OpenCode on Apple silicon only; on Intel Macs install it "
+            "with 'brew install opencode' or OpenCode's official instructions"
+        )
+    module = _get_tool_module("opencode")
+    root = module.get_install_dir()
+    if action == "install" and shutil.which("brew") is not None:
+        utils.info(
+            "Homebrew is available: 'brew install opencode' would install OpenCode "
+            "system-wide; Arkai keeps its own private copy under its state directory."
+        )
+    if not _confirm(action, "opencode", root):
+        utils.info(f"OpenCode {action} cancelled.")
+        return
+
+    root = _ensure_managed_root(root, _OPENCODE_MANAGED_ENTRIES)
+    installer = root / "tmp" / "install.sh"
+    # The installer hardcodes $HOME/.opencode/bin, so redirect HOME into the
+    # managed root for both the sandboxed and the host fallback run.
+    environment = {"HOME": str(root)}
+    prefix, tools, sandbox_environment = _build_sandbox_prefix(
+        root,
+        _INSTALL_COMMANDS,
+        allow_network=True,
+        child_environment=environment,
+    )
+
+    utils.info(f"Downloading the official OpenCode installer {_sandbox_scope()}...")
+    _run_sandboxed(
+        prefix,
+        [tools["curl"], "-fsSL", module.OPENCODE_INSTALLER_URL, "-o", str(installer)],
+        env_binary=tools["env"],
+        environment=sandbox_environment,
+        timeout=None,
+    )
+    utils.info(f"Running the OpenCode installer {_sandbox_scope()} ({action})...")
+    _run_sandboxed(
+        prefix,
+        [tools["sh"], str(installer), "--no-modify-path"],
+        env_binary=tools["env"],
+        environment=sandbox_environment,
+        timeout=None,
+    )
+
+    if not _is_tool_installed("opencode"):
+        raise RuntimeError(
+            "OpenCode installer completed without creating an executable at "
+            f"{module.get_core_dir() / 'opencode'}"
+        )
+    utils.info(
+        f"OpenCode {action} complete ({_opencode_version()}): {module.get_core_dir() / 'opencode'}"
+    )
+
+
 def _install_or_update_tool(tool_name: str, action: str) -> None:
     _warn_no_sandbox(action)
     if tool_name == "strata":
@@ -766,6 +852,8 @@ def _install_or_update_tool(tool_name: str, action: str) -> None:
         _install_or_update_pi(action)
     elif tool_name == "omp":
         _install_or_update_omp(action)
+    elif tool_name == "opencode":
+        _install_or_update_opencode(action)
     else:
         raise ValueError(f"Tool is not supported: {tool_name}")
 
@@ -777,6 +865,8 @@ def _managed_entries(tool_name: str) -> tuple[str, ...]:
         return _PI_MANAGED_ENTRIES
     if tool_name == "omp":
         return _OMP_MANAGED_ENTRIES
+    if tool_name == "opencode":
+        return _OPENCODE_MANAGED_ENTRIES
     raise ValueError(f"Tool is not supported: {tool_name}")
 
 

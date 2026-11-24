@@ -51,6 +51,15 @@ def _create_omp_install(root: Path, version: str = "omp test-version") -> Path:
     return binary
 
 
+def _create_opencode_install(root: Path, version: str = "opencode 1.0.0") -> Path:
+    binary = root / ".opencode" / "bin" / "opencode"
+    binary.parent.mkdir(parents=True, exist_ok=True)
+    binary.write_text("#!/bin/sh\n")
+    binary.chmod(0o755)
+    (root / "tmp").mkdir(parents=True, exist_ok=True)
+    return binary
+
+
 def _fake_sandbox_builder(calls: list[dict]):
     def build(
         root,
@@ -312,7 +321,7 @@ def test_tools_list_reports_empty_managed_installations(capsys) -> None:
 def test_tools_list_shows_versions_for_each_managed_tool(
     tmp_path: Path, monkeypatch, capsys
 ) -> None:
-    from arkai import agent_omp, agent_pi
+    from arkai import agent_omp, agent_opencode, agent_pi
 
     strata_root = tmp_path / "strata"
     _create_strata_install(strata_root)
@@ -320,13 +329,17 @@ def test_tools_list_shows_versions_for_each_managed_tool(
     _create_pi_install(pi_root, "1.2.3")
     omp_root = tmp_path / "omp"
     _create_omp_install(omp_root)
+    opencode_root = tmp_path / "opencode"
+    _create_opencode_install(opencode_root)
     monkeypatch.setattr(tools, "get_strata_root", lambda: strata_root)
     monkeypatch.setattr(agent_pi, "get_install_dir", lambda: pi_root)
     monkeypatch.setattr(agent_omp, "get_install_dir", lambda: omp_root)
+    monkeypatch.setattr(agent_opencode, "get_install_dir", lambda: opencode_root)
 
     with (
         patch.object(tools, "_strata_version", return_value="Strata 0.2.3"),
         patch.object(tools, "_omp_version", return_value="OMP 2.0"),
+        patch.object(tools, "_opencode_version", return_value="opencode 1.0.0"),
     ):
         tools.cmd_tools_list()
 
@@ -334,6 +347,7 @@ def test_tools_list_shows_versions_for_each_managed_tool(
     assert "strata: Strata 0.2.3" in output
     assert "pi: 1.2.3" in output
     assert "omp: OMP 2.0" in output
+    assert "opencode: opencode 1.0.0" in output
 
 
 def test_strata_install_downloads_and_runs_official_installer_in_sandbox(
@@ -581,6 +595,105 @@ def test_omp_install_downloads_and_runs_official_script_in_sandbox(
     assert all(prefix[:2] == ["/usr/bin/arapuca", "run"] for prefix, _, _ in commands)
     assert sandbox_calls[0]["allow_network"] is True
     assert tools._is_tool_installed("omp")
+
+
+def test_opencode_installer_url_targets_the_v2_installer() -> None:
+    """The plain /install URL is the OpenCode 1 installer and pins old versions."""
+    from arkai import agent_opencode
+
+    assert agent_opencode.OPENCODE_INSTALLER_URL == "https://opencode.ai/v2/install"
+
+
+def test_opencode_install_downloads_and_runs_official_script_in_sandbox(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    from arkai import agent_opencode
+
+    root = tmp_path / "opencode"
+    monkeypatch.setattr(agent_opencode, "get_install_dir", lambda: root)
+    monkeypatch.setattr(tools.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(
+        tools.shutil,
+        "which",
+        lambda name: "/opt/homebrew/bin/brew" if name == "brew" else f"/usr/bin/{name}",
+    )
+    sandbox_calls: list[dict] = []
+    commands: list[tuple[list[str], list[str], dict]] = []
+
+    def run_sandboxed(prefix: list[str], command: list[str], **kwargs) -> tuple[int, str, str]:
+        commands.append((prefix, command, kwargs))
+        if command[0] == "/usr/bin/curl":
+            Path(command[-1]).write_text("#!/bin/sh\n# official OpenCode installer\n")
+        elif command[0] == "/usr/bin/sh":
+            _create_opencode_install(root)
+        elif command[0] == str(root / ".opencode" / "bin" / "opencode"):
+            return 0, "opencode 1.0.0\n", ""
+        return 0, "", ""
+
+    with (
+        patch("builtins.input", return_value="yes"),
+        patch.object(
+            tools, "_build_sandbox_prefix", side_effect=_fake_sandbox_builder(sandbox_calls)
+        ),
+        patch.object(tools, "_run_sandboxed", side_effect=run_sandboxed),
+    ):
+        tools.cmd_tools_install("opencode")
+
+    assert commands[0][1] == [
+        "/usr/bin/curl",
+        "-fsSL",
+        agent_opencode.OPENCODE_INSTALLER_URL,
+        "-o",
+        str(root / "tmp" / "install.sh"),
+    ]
+    assert commands[1][1] == ["/usr/bin/sh", str(root / "tmp" / "install.sh"), "--no-modify-path"]
+    assert all(prefix[:2] == ["/usr/bin/arapuca", "run"] for prefix, _, _ in commands)
+    assert all(kwargs["environment"]["HOME"] == str(root) for _, _, kwargs in commands[:2])
+    assert sandbox_calls[0]["allow_network"] is True
+    assert "brew install opencode" in capsys.readouterr().out
+    assert tools._is_tool_installed("opencode")
+
+
+def test_opencode_install_without_homebrew_omits_suggestion(
+    tmp_path: Path, monkeypatch, capsys
+) -> None:
+    from arkai import agent_opencode
+
+    root = tmp_path / "opencode"
+    monkeypatch.setattr(agent_opencode, "get_install_dir", lambda: root)
+    monkeypatch.setattr(tools.platform, "system", lambda: "Linux")
+    monkeypatch.setattr(tools.shutil, "which", lambda _name: None)
+
+    with (
+        patch("builtins.input", return_value="n"),
+        patch.object(tools, "_build_sandbox_prefix") as build,
+        patch.object(tools, "_run_sandboxed") as run,
+    ):
+        tools.cmd_tools_install("opencode")
+
+    build.assert_not_called()
+    run.assert_not_called()
+    output = capsys.readouterr().out
+    assert "brew install opencode" not in output
+    assert "cancelled" in output.lower()
+
+
+def test_opencode_install_rejects_intel_mac(tmp_path: Path, monkeypatch) -> None:
+    from arkai import agent_opencode
+
+    monkeypatch.setattr(tools.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(tools.platform, "machine", lambda: "x86_64")
+    monkeypatch.setattr(agent_opencode, "get_install_dir", lambda: tmp_path / "opencode")
+
+    with (
+        patch.object(tools, "_confirm") as confirm,
+        patch.object(tools, "_run_sandboxed") as run,
+    ):
+        with pytest.raises(RuntimeError, match="Apple silicon only"):
+            tools.cmd_tools_install("opencode")
+
+    confirm.assert_not_called()
+    run.assert_not_called()
 
 
 def test_strata_remove_executes_rm_inside_sandbox(tmp_path: Path, monkeypatch) -> None:

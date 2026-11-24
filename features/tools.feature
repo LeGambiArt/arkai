@@ -2,7 +2,7 @@ Feature: Third-party tool management
   Scenario: List tools supported for installation
     When I run the tools command "install"
     Then the exit code is 0
-    And the output contains "Tools supported for installation: strata, pi, omp"
+    And the output contains "Tools supported for installation: strata, pi, omp, opencode"
     And no external tool was executed
 
   Scenario: List when no Arkai-managed tools are installed
@@ -112,6 +112,24 @@ Feature: Third-party tool management
     Then the exit code is 0
     And the output contains "Removed Arkai-managed OMP"
     And tool removal ran inside Arapuca without network access
+
+
+  Scenario: Install OpenCode using its official installer inside Arapuca
+    Given no Arkai-managed tools are installed
+    And Homebrew is available
+    When I run the tools command with confirmation "yes" for "install opencode"
+    Then the exit code is 0
+    And the output contains "OpenCode install complete (opencode 1.0.0)"
+    And the tools command suggests the Homebrew alternative
+    And the OpenCode installer ran inside Arapuca with the managed home
+    And the sandbox allowed network access
+
+  Scenario: Install OpenCode without Homebrew on the system
+    Given no Arkai-managed tools are installed
+    And Homebrew is not available
+    When I run the tools command with confirmation "yes" for "install opencode"
+    Then the exit code is 0
+    And the output does not contain "brew install opencode"
 
   Scenario: Update an installed Strata tool in Arapuca
     Given Arkai-managed Strata is installed

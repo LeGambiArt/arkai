@@ -11,6 +11,19 @@ from arkai import cloud_auth, config, utils
 from arkai import cloud_provider as cloud_config_utils
 from arkai.agent import AgentLaunchSpec, run_launch_spec
 
+OPENCODE_INSTALLER_URL = "https://opencode.ai/v2/install"
+OPENCODE_INSTALL_DIR = ".local/state/arkai/opencode"
+
+
+def get_install_dir() -> Path:
+    """Return the root directory for Arkai-managed OpenCode files."""
+    return Path(os.path.expanduser("~/.local/state/arkai/opencode"))
+
+
+def get_core_dir() -> Path:
+    """Return the directory containing OpenCode's Arkai-managed executable."""
+    return get_install_dir() / ".opencode" / "bin"
+
 
 def _prepare_tui_config(config_dir: str, theme: str | None) -> str | None:
     """Copy the global OpenCode TUI config and apply an optional theme override."""
@@ -51,8 +64,10 @@ def _get_config_dir() -> Path:
 
 
 def get_agent_path(cfg: dict) -> str:
-    """Resolve the configured OpenCode executable."""
-    return utils.resolve_binary(config.get_config_value(cfg, "agent.path") or "opencode")
+    """Resolve OpenCode's configured executable or Arkai-managed default."""
+    configured_path = config.get_config_value(cfg, "agent.path")
+    agent_path = configured_path or str(get_core_dir() / "opencode")
+    return utils.resolve_binary(agent_path)
 
 
 def build_launch_spec(

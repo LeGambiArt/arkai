@@ -1,12 +1,13 @@
 """Behavior steps for Arkai's third-party tool manager."""
 
+import contextlib
 import shlex
 from pathlib import Path
 from unittest.mock import patch
 
 from behave import given, then, when
 
-from arkai import agent_omp, agent_pi, tools
+from arkai import agent_omp, agent_opencode, agent_pi, tools
 
 
 @given("no Arkai-managed tools are installed")  # ty: ignore[call-non-callable]
@@ -48,6 +49,7 @@ def _run_tools_command(context, arguments: str, answer: str = "yes") -> None:
     """Run the public CLI while replacing network and sandbox side effects."""
     if not hasattr(context, "tools_is_installed"):
         context.tools_is_installed = False
+    context.tools_brew_available = getattr(context, "tools_brew_available", True)
     context.tools_arapuca_available = getattr(context, "tools_arapuca_available", True)
     context.tools_sandbox_calls = []
     context.tools_external_calls = []
@@ -89,7 +91,7 @@ def _run_tools_command(context, arguments: str, answer: str = "yes") -> None:
     def download_installer(installer: Path) -> None:
         context.tools_installer_downloads.append(installer)
 
-    with (
+    patches = [
         patch.object(
             tools,
             "_is_managed_strata_installed",
@@ -112,7 +114,18 @@ def _run_tools_command(context, arguments: str, answer: str = "yes") -> None:
         patch.object(tools, "_strata_version", return_value="Strata 0.2.3"),
         patch.object(tools, "_pi_version", return_value="1.2.3"),
         patch.object(tools, "_omp_version", return_value="omp 2.0"),
-        patch.object(tools.shutil, "which", side_effect=lambda name: f"/sandbox/bin/{name}"),
+        patch.object(tools, "_opencode_version", return_value="opencode 1.0.0"),
+        patch.object(
+            tools.shutil,
+            "which",
+            side_effect=lambda name: (
+                None
+                if name == "brew" and not context.tools_brew_available
+                else f"/sandbox/bin/{name}"
+            ),
+        ),
+        patch.object(tools.platform, "machine", return_value="arm64"),
+        patch.object(agent_opencode, "get_install_dir", return_value=root),
         patch.object(agent_pi, "get_install_dir", return_value=root),
         patch.object(agent_omp, "get_install_dir", return_value=root),
         patch.object(agent_pi, "_resolve_node_path", return_value="/sandbox/bin/node"),
@@ -126,7 +139,10 @@ def _run_tools_command(context, arguments: str, answer: str = "yes") -> None:
         ),
         patch("builtins.input", return_value=answer),
         patch.object(Path, "rmdir", return_value=None),
-    ):
+    ]
+    with contextlib.ExitStack() as stack:
+        for item in patches:
+            stack.enter_context(item)
         context.run_command(["arkai", "tools", *shlex.split(arguments)])
 
 
@@ -181,3 +197,28 @@ def step_tool_removal_sandboxed(context):
     assert prefix[0] == "/usr/bin/arapuca"
     assert prefix[-1] == "--"
     assert command[0].endswith("/rm")
+
+
+@given("Homebrew is available")  # ty: ignore[call-non-callable]
+def step_homebrew_available(context):
+    context.tools_brew_available = True
+
+
+@given("Homebrew is not available")  # ty: ignore[call-non-callable]
+def step_homebrew_unavailable(context):
+    context.tools_brew_available = False
+
+
+@then("the tools command suggests the Homebrew alternative")  # ty: ignore[call-non-callable]
+def step_tools_suggests_homebrew(context):
+    assert "brew install opencode" in context.stdout
+
+
+@then("the OpenCode installer ran inside Arapuca with the managed home")  # ty: ignore[call-non-callable]
+def step_opencode_installer_ran_with_managed_home(context):
+    root = tools.get_strata_root()
+    assert context.tools_external_calls
+    for prefix, _command, kwargs in context.tools_external_calls:
+        assert prefix[:2] == ["/usr/bin/arapuca", "run"]
+        assert prefix[-1] == "--"
+        assert kwargs["environment"]["HOME"] == str(root)

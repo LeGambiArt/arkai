@@ -51,6 +51,29 @@ def test_pi_default_binary_is_arkai_local(tmp_path: Path, monkeypatch) -> None:
     resolve.assert_called_once_with(str(core_dir / "bin" / "pi"))
 
 
+def test_opencode_default_binary_is_arkai_local(tmp_path: Path, monkeypatch) -> None:
+    """OpenCode uses the local arkai installation unless agent.path overrides it."""
+    from arkai import agent_opencode
+
+    core_dir = tmp_path / "opencode" / ".opencode" / "bin"
+    monkeypatch.setattr(agent_opencode, "get_core_dir", lambda: core_dir)
+    cfg = {"agent": {"name": "opencode"}, "inference": {"model": "test.gguf"}}
+
+    with (
+        patch.object(agent.config, "load_config", return_value=cfg),
+        patch.object(agent.config, "validate_config", return_value=True),
+        patch.object(agent.inference, "is_inference_running", return_value=True),
+        patch.object(agent.inference, "get_inference_model", return_value="test"),
+        patch.object(
+            agent.utils, "resolve_binary", return_value=str(core_dir / "opencode")
+        ) as resolve,
+    ):
+        with agent._agent_context("opencode", no_mcp=True, no_sandbox=True):
+            pass
+
+    resolve.assert_called_once_with(str(core_dir / "opencode"))
+
+
 def test_agent_cli_registers_install_subcommand() -> None:
     """The agent command exposes an install subcommand."""
     import argparse
@@ -79,8 +102,8 @@ def test_agent_install_rejects_unsupported_agent() -> None:
     """Unknown agent installers fail with supported alternatives."""
     import pytest
 
-    with pytest.raises(ValueError, match="Supported agents: pi, omp"):
-        agent.cmd_agent_install("opencode")
+    with pytest.raises(ValueError, match="Supported agents: pi, omp, opencode"):
+        agent.cmd_agent_install("crush")
 
 
 def test_omp_installer_declines_before_running_commands(capsys) -> None:
