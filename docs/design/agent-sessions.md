@@ -51,6 +51,12 @@ formats are not interchangeable.
 - Native resume flags (`--continue`, `--resume`, `--session-id`) are
   passed only when the selected agent appears in `agents_used`; adapters
   additionally withhold them when no native state is present.
+- Prompt history follows the session where the agent stores it in the
+  agent directory rather than the session: OMP's `history.db` is seeded
+  from `native/omp-history/` before launch and copied back after the run
+  (local and custom-cloud runs; OpenAI and Vertex runs keep OMP's global
+  history). Pi rebuilds its input history from the resumed session's own
+  user messages, so no extra storage is needed.
 - Sandbox environment overrides are not persisted; callers must supply
   them again when resuming.
 

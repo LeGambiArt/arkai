@@ -596,6 +596,55 @@ def _latest_native_session_id(session_dir: Path) -> str | None:
     return session_id if separator and session_id else None
 
 
+def _session_history_dir(session_dir: str | None) -> Path | None:
+    """Return the session-scoped directory holding OMP's persisted history."""
+    if not session_dir:
+        return None
+    return Path(session_dir) / "omp-history"
+
+
+def _seed_agent_history(agent_dir: Path, history_dir: Path) -> None:
+    """Make the agent dir's prompt history mirror the session record.
+
+    A session with persisted history restores it; a session without any
+    (including a new record) starts from an empty history instead of
+    inheriting whatever the agent dir currently holds.
+    """
+    persisted = history_dir / "history.db"
+    if not persisted.is_file():
+        for suffix in ("", "-wal", "-shm"):
+            live = agent_dir / f"history.db{suffix}"
+            try:
+                live.unlink()
+            except FileNotFoundError:
+                pass
+        return
+    for suffix in ("", "-wal", "-shm"):
+        source = persisted.with_name(persisted.name + suffix)
+        if source.is_file():
+            shutil.copy2(source, agent_dir / source.name)
+
+
+def _persist_agent_history(agent_dir: Path, history_dir: Path) -> None:
+    """Copy the live prompt history into the session record after a run."""
+    history_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
+    history_dir.chmod(0o700)
+    live = agent_dir / "history.db"
+    if not live.is_file():
+        return
+    for suffix in ("-wal", "-shm"):
+        stale = history_dir / f"history.db{suffix}"
+        try:
+            stale.unlink()
+        except FileNotFoundError:
+            pass
+    shutil.copy2(live, history_dir / "history.db")
+    for suffix in ("-wal", "-shm"):
+        sidecar = agent_dir / f"history.db{suffix}"
+        if sidecar.is_file():
+            shutil.copy2(sidecar, history_dir / sidecar.name)
+
+
 def start(
     agent_path: str,
     cfg: dict,
@@ -627,27 +676,50 @@ def start(
             native_session_id = _latest_native_session_id(native_session_dir)
             if native_session_id and session_record is not None:
                 session_record["native_session_id"] = native_session_id
-    result = run_launch_spec(
-        build_launch_spec(
-            agent_path,
-            cfg,
-            wtmcp_port,
-            use_sandbox,
-            workdir,
-            sandbox_profile,
-            cli_volumes,
-            cli_environment,
-            prompt,
-            cloud_services,
-            cloud_model,
-            session_dir,
-            resume_session,
-            native_session_id,
-            cloud_config,
-            cloud_api_environment,
-        ),
-        capture_stdout,
+    from arkai.agent import _cloud_provider
+
+    provider = _cloud_provider(cloud_services)
+    history_dir = _session_history_dir(session_dir)
+    # OMP keeps prompt history in the agent dir. Custom cloud runs stage a
+    # temporary copy of the user's global dir and delete it after the run,
+    # which would reset history to that copy on every launch; local runs use
+    # Arkai's persistent dir shared by all sessions. In both cases the
+    # session's recorded history is restored before launch and saved back
+    # after it, so prompt history follows the Arkai session. OpenAI and
+    # Vertex runs use the user's own global agent dir and keep omp's native
+    # behavior.
+    scoped_history = history_dir is not None and provider in (None, "custom")
+    spec = build_launch_spec(
+        agent_path,
+        cfg,
+        wtmcp_port,
+        use_sandbox,
+        workdir,
+        sandbox_profile,
+        cli_volumes,
+        cli_environment,
+        prompt,
+        cloud_services,
+        cloud_model,
+        session_dir,
+        resume_session,
+        native_session_id,
+        cloud_config,
+        cloud_api_environment,
     )
+    agent_dir = Path(spec.environment["PI_CODING_AGENT_DIR"])
+    if scoped_history:
+        _seed_agent_history(agent_dir, history_dir)
+        # Keep the run's cleanup from deleting the private agent dir before
+        # its history has been persisted.
+        spec.cleanup_paths = [path for path in spec.cleanup_paths if path != agent_dir]
+    try:
+        result = run_launch_spec(spec, capture_stdout)
+    finally:
+        if scoped_history:
+            _persist_agent_history(agent_dir, history_dir)
+            if provider == "custom":
+                shutil.rmtree(agent_dir, ignore_errors=True)
     if native_session_dir is not None and not resume_session:
         native_session_id = _latest_native_session_id(native_session_dir)
         if native_session_id and session_record is not None:

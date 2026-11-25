@@ -47,9 +47,11 @@ directory; the transcript itself remains in the agent's native store. Sessions
 belonging to `opencode`, `pi`, and `omp` share one record per directory: any
 of these agents can resume that record, and each keeps its own native thread
 inside it. Other agents always start a fresh session unless a session is
-named. When resuming, Arkai restores the saved working directory and launch
-settings, but uses the current configuration and available inference service
-rather than pinning the original model. Sandbox environment overrides must be
+named. OMP's prompt history also follows the session: prompts typed in
+one Arkai session are recalled in its next run. When resuming, Arkai
+restores the saved working directory and launch settings, but uses the
+current configuration and available inference service rather than pinning
+the original model. Sandbox environment overrides must be
 passed again. See the [session design](../design/agent-sessions.md).
 
 Codex's local inference mode requires a backend with the Responses API at

@@ -2,6 +2,7 @@
 
 import json
 import shutil
+import stat
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -2618,6 +2619,146 @@ def test_omp_captures_native_session_id_after_interactive_exit(tmp_path: Path, m
 
     resumed_command = run.call_args.args[0].command
     assert resumed_command[resumed_command.index("--resume") + 1] == "omp-native-id"
+
+
+def _write_history(path: Path, marker: str) -> None:
+    """Write marker bytes standing in for OMP's history database."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(marker.encode())
+
+
+def _history_marker(path: Path) -> str | None:
+    """Return the marker bytes of a history stand-in, or None when absent."""
+    try:
+        return path.read_bytes().decode()
+    except FileNotFoundError:
+        return None
+
+
+def test_omp_local_run_persists_prompt_history_in_session_record(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Local runs seed the session's history and save live prompts back to it."""
+    native_dir = tmp_path / "native"
+    omp_agent_dir = tmp_path / "omp-agent"
+    monkeypatch.setattr(agent_omp, "get_agent_dir", lambda: omp_agent_dir)
+
+    def run_and_write_prompt(spec, capture_stdout=False):
+        live_dir = Path(spec.environment["PI_CODING_AGENT_DIR"])
+        _write_history(live_dir / "history.db", "first-prompt-history")
+        return None
+
+    with patch.object(agent_omp, "run_launch_spec", side_effect=run_and_write_prompt):
+        agent_omp.start("/omp", _cfg(), None, False, str(tmp_path), session_dir=str(native_dir))
+
+    persisted = native_dir / "omp-history" / "history.db"
+    assert _history_marker(persisted) == "first-prompt-history"
+    assert stat.S_IMODE((native_dir / "omp-history").stat().st_mode) == 0o700
+
+    # A later run in the same session restores the prompts into the live dir.
+    def run_and_extend_prompt(spec, capture_stdout=False):
+        live_dir = Path(spec.environment["PI_CODING_AGENT_DIR"])
+        assert _history_marker(live_dir / "history.db") == "first-prompt-history"
+        _write_history(live_dir / "history.db", "second-prompt-history")
+        return None
+
+    with patch.object(agent_omp, "run_launch_spec", side_effect=run_and_extend_prompt):
+        agent_omp.start(
+            "/omp",
+            _cfg(),
+            None,
+            False,
+            str(tmp_path),
+            session_dir=str(native_dir),
+            resume_session=True,
+        )
+
+    assert _history_marker(persisted) == "second-prompt-history"
+
+
+def test_omp_custom_cloud_run_keeps_prompt_history_across_temp_dirs(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """Custom cloud runs persist history from the throwaway agent dir."""
+    native_dir = tmp_path / "native"
+    global_agent_dir = tmp_path / "global-agent"
+    _write_history(global_agent_dir / "history.db", "stale-global-history")
+    monkeypatch.setenv("OPENAI_GATEWAY_KEY", "gateway-secret")
+    monkeypatch.setenv("TEAM_MODEL_KEY", "secret")
+    monkeypatch.setattr(agent_omp, "get_global_agent_dir", lambda: global_agent_dir)
+    monkeypatch.setattr(agent_omp, "get_install_dir", lambda: tmp_path / "install")
+
+    def run_and_write_prompt(spec, capture_stdout=False):
+        live_dir = Path(spec.environment["PI_CODING_AGENT_DIR"])
+        assert live_dir != global_agent_dir
+        # The session record has no history yet, so the private copy of the
+        # stale global history must not be inherited: only the prompt typed
+        # during this run exists.
+        assert _history_marker(live_dir / "history.db") is None
+        _write_history(live_dir / "history.db", "session-history")
+        return None
+
+    with patch.object(agent_omp, "run_launch_spec", side_effect=run_and_write_prompt):
+        agent_omp.start(
+            "/omp",
+            _custom_cloud_cfg(),
+            None,
+            False,
+            str(tmp_path),
+            session_dir=str(native_dir),
+            cloud_services=["custom"],
+        )
+
+    persisted = native_dir / "omp-history" / "history.db"
+    assert _history_marker(persisted) == "session-history"
+
+    # The next run restores the session's prompts instead of the global stale
+    # copy, and the previous private dir was removed after its history was
+    # persisted.
+    def run_and_check_seed(spec, capture_stdout=False):
+        live_dir = Path(spec.environment["PI_CODING_AGENT_DIR"])
+        assert _history_marker(live_dir / "history.db") == "session-history"
+        return None
+
+    with patch.object(agent_omp, "run_launch_spec", side_effect=run_and_check_seed):
+        agent_omp.start(
+            "/omp",
+            _custom_cloud_cfg(),
+            None,
+            False,
+            str(tmp_path),
+            session_dir=str(native_dir),
+            cloud_services=["custom"],
+        )
+
+
+def test_omp_openai_cloud_run_leaves_global_history_untouched(tmp_path: Path, monkeypatch) -> None:
+    """OpenAI cloud runs keep omp's native global history behavior."""
+    native_dir = tmp_path / "native"
+    global_agent_dir = tmp_path / "global-agent"
+    _write_history(global_agent_dir / "history.db", "global-history")
+    monkeypatch.setattr(agent_omp, "get_global_agent_dir", lambda: global_agent_dir)
+    monkeypatch.setattr(
+        agent_omp.cloud_auth, "ensure_openai_api_key", lambda *args, **kwargs: "key"
+    )
+
+    def run_and_write_prompt(spec, capture_stdout=False):
+        assert Path(spec.environment["PI_CODING_AGENT_DIR"]) == global_agent_dir
+        return None
+
+    with patch.object(agent_omp, "run_launch_spec", side_effect=run_and_write_prompt):
+        agent_omp.start(
+            "/omp",
+            _cfg(),
+            None,
+            False,
+            str(tmp_path),
+            session_dir=str(native_dir),
+            cloud_services=["openai"],
+        )
+
+    assert not (native_dir / "omp-history").exists()
+    assert _history_marker(global_agent_dir / "history.db") == "global-history"
 
 
 def test_other_agents_only_build_launch_specs() -> None:
