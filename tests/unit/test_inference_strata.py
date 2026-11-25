@@ -146,8 +146,40 @@ def test_empty_strata_model_list_uses_configured_catalog_model(tmp_path: Path) -
         patch.object(inference.utils, "get_pid_dir", return_value=str(tmp_path)),
         patch.object(inference.requests, "get", return_value=response),
         patch.object(config, "load_config", return_value=cfg),
+        patch.object(
+            inference.utils, "run_command", return_value=(1, "", "not running")
+        ) as run_command,
     ):
         assert inference.get_inference_model(8081) == "q2_0"
+
+    status_command = run_command.call_args.args[0]
+    assert status_command == ["strata", "launch", "--status", "--output", "json"]
+
+
+def test_empty_strata_model_list_reports_missing_model_without_strata_cli(
+    tmp_path: Path,
+) -> None:
+    """No Strata CLI and no configured model leaves the model list unresolvable."""
+    response = MagicMock()
+    response.json.return_value = {"object": "list", "data": []}
+    cfg = {"inference": {"backend": "strata"}}
+
+    with (
+        patch.object(inference.utils, "get_pid_dir", return_value=str(tmp_path)),
+        patch.object(inference.requests, "get", return_value=response),
+        patch.object(config, "load_config", return_value=cfg),
+        patch("arkai.tools.get_managed_strata_binary", return_value=None) as managed_binary,
+        patch.object(
+            inference.utils,
+            "run_command",
+            side_effect=RuntimeError("Command not found: strata"),
+        ) as run_command,
+    ):
+        with pytest.raises(RuntimeError, match="invalid model list"):
+            inference.get_inference_model(8081)
+
+    managed_binary.assert_called_once()
+    assert run_command.call_args.args[0] == ["strata", "launch", "--status", "--output", "json"]
 
 
 def test_empty_model_list_discovers_live_strata_after_arkai_state_was_detached(

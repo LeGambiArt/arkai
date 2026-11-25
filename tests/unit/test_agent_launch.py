@@ -571,12 +571,65 @@ def test_codex_prompt_allows_a_non_git_working_directory(tmp_path: Path, monkeyp
     workdir = tmp_path / "scratch"
     workdir.mkdir()
 
-    spec = agent_codex.build_launch_spec(
-        "/bin/codex", _cfg(), None, False, str(workdir), prompt="answer briefly"
-    )
+    with patch.object(
+        agent_codex.subprocess,
+        "run",
+        return_value=MagicMock(returncode=128, stdout="", stderr="not a git repository"),
+    ) as git_status:
+        spec = agent_codex.build_launch_spec(
+            "/bin/codex", _cfg(), None, False, str(workdir), prompt="answer briefly"
+        )
 
+    assert git_status.call_args.args[0] == [
+        "git",
+        "-C",
+        str(workdir),
+        "rev-parse",
+        "--is-inside-work-tree",
+    ]
     assert "--skip-git-repo-check" in spec.command
     spec.cleanup_paths[0].unlink()
+
+
+def test_codex_prompt_in_a_git_worktree_keeps_the_startup_check(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A prompt run inside a Git worktree keeps Codex's repository startup check."""
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
+    workdir = tmp_path / "checkout"
+    workdir.mkdir()
+
+    with patch.object(
+        agent_codex.subprocess,
+        "run",
+        return_value=MagicMock(returncode=0, stdout="true\n", stderr=""),
+    ):
+        spec = agent_codex.build_launch_spec(
+            "/bin/codex", _cfg(), None, False, str(workdir), prompt="answer briefly"
+        )
+
+    assert "--skip-git-repo-check" not in spec.command
+    spec.cleanup_paths[0].unlink()
+
+
+def test_codex_git_worktree_check_treats_a_missing_git_as_no_repository(
+    tmp_path: Path,
+) -> None:
+    """A host without Git, or a hung Git, must not block the prompt launch."""
+    import subprocess as subprocess_module
+
+    def missing_git(command: list[str], **_kwargs) -> None:
+        raise FileNotFoundError
+
+    with patch.object(agent_codex.subprocess, "run", side_effect=missing_git):
+        assert agent_codex._is_git_repository(str(tmp_path)) is False
+
+    with patch.object(
+        agent_codex.subprocess,
+        "run",
+        side_effect=subprocess_module.TimeoutExpired(cmd="git", timeout=5),
+    ):
+        assert agent_codex._is_git_repository(str(tmp_path)) is False
 
 
 def test_codex_sandbox_mounts_codex_home_and_allocates_tty(tmp_path: Path, monkeypatch) -> None:
