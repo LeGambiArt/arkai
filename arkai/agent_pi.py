@@ -601,6 +601,14 @@ def _prepare_agent_dir(cfg: dict, wtmcp_port: int | None) -> str:
     return str(agent_dir)
 
 
+def _has_stored_sessions(session_dir: Path) -> bool:
+    """Return whether Pi's isolated session directory already holds sessions."""
+    try:
+        return any(session_dir.iterdir())
+    except OSError:
+        return False
+
+
 def build_launch_spec(
     agent_path: str,
     cfg: dict,
@@ -766,7 +774,7 @@ def build_launch_spec(
         native_session_dir.mkdir(parents=True, exist_ok=True, mode=0o700)
         native_session_dir.chmod(0o700)
         agent_args.extend(["--session-dir", str(native_session_dir)])
-        if resume_session:
+        if resume_session and _has_stored_sessions(native_session_dir):
             agent_args.append("--continue")
     if mcp_available:
         agent_args.extend(["--mcp-config", str(mcp_config)])

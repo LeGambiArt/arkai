@@ -3,6 +3,7 @@
 import json
 import os
 import pty
+import shlex
 import shutil
 import subprocess
 import sys
@@ -147,6 +148,7 @@ def _run_agent_in_tty(
         patch.object(agent_opencode.os, "close") as close,
         patch.object(agent_opencode.Path, "write_text") as write_text,
         patch.object(agent_opencode.Path, "chmod"),
+        patch.object(agent_session, "find_latest_session", return_value=None),
         patch.object(agent_session, "create_session", return_value=session_record),
         patch.object(agent_session, "save_session"),
         patch.object(agent_session, "get_session_dir", return_value=Path(config_dir)),
@@ -240,6 +242,7 @@ def _run_crush_agent_in_tty(
         patch.object(agent_crush, "_get_config_dir", return_value=config_dir),
         patch.object(agent_crush.Path, "write_text", autospec=True) as write_text,
         patch.dict(os.environ, {"TEAM_MODEL_KEY": "behave-secret"}),
+        patch.object(agent_session, "find_latest_session", return_value=None),
         patch.object(agent_session, "create_session", return_value=session_record),
         patch.object(agent_session, "save_session"),
         patch.object(agent_session, "get_session_dir", return_value=config_dir),
@@ -494,6 +497,7 @@ def step_run_pi_agent_with_custom_cloud(context):
             patch.object(agent_pi, "get_install_dir", return_value=install_dir),
             patch.object(agent_pi, "run_launch_spec", side_effect=capture_launch),
             patch.dict(os.environ, {"TEAM_MODEL_KEY": "behave-secret"}),
+            patch.object(agent_session, "find_latest_session", return_value=None),
             patch.object(agent_session, "create_session", return_value=session_record),
             patch.object(agent_session, "save_session"),
             patch.object(agent_session, "get_session_dir", return_value=global_agent_dir),
@@ -908,6 +912,7 @@ def step_saved_arkai_session(context, name):
         "created_at": "2026-10-22T00:00:00+00:00",
         "updated_at": "2026-10-22T00:00:00+00:00",
         "status": "paused",
+        "agents_used": ["opencode"],
         "native_session_id": None,
         "launch_options": {
             "no_mcp": True,
@@ -974,6 +979,147 @@ def step_named_arkai_session_resumed(context):
     assert (
         context.resumed_session_call.kwargs["session"]["name"]
         == context.saved_agent_session["name"]
+    )
+
+
+@when('I run "arkai agent start" in a TTY after a saved session for the directory')  # ty: ignore[call-non-callable]
+def step_run_agent_tty_after_saved_directory_session(context):
+    """Run a plain agent start that should auto-resume the directory session."""
+    _run_auto_resume_start(context, flags=[])
+
+
+@when('I run "arkai agent start" with "{flags}" in a TTY after a saved session for the directory')  # ty: ignore[call-non-callable]
+def step_run_agent_with_flags_tty_after_saved_directory_session(context, flags):
+    """Run agent start with flags that should auto-resume the directory session."""
+    _run_auto_resume_start(context, flags=shlex.split(flags))
+
+
+def _run_auto_resume_start(context, flags: list) -> None:
+    """Run agent start against a patched latest-directory session."""
+
+    @contextmanager
+    def fake_agent_context(**kwargs):
+        yield agent.AgentContext(
+            agent_name=kwargs["agent_name"],
+            workdir=kwargs["sandbox_cwd"],
+        )
+
+    context.auto_resume_context_agent = None
+
+    def track_dispatch(agent_context, **kwargs):
+        context.auto_resume_context_agent = agent_context.agent_name
+        return None
+
+    with (
+        patch.object(sys.stdin, "isatty", return_value=True),
+        patch.object(
+            agent_session, "find_latest_session", return_value=context.saved_agent_session
+        ),
+        patch.object(agent_session, "save_session"),
+        patch.object(agent, "_agent_context", side_effect=fake_agent_context),
+        patch.object(agent, "_dispatch_agent", side_effect=track_dispatch) as dispatch,
+    ):
+        context.run_command(["arkai", "agent", "start", *flags])
+    context.auto_resume_dispatch_call = dispatch.call_args
+
+
+@when('I run "arkai agent start" in a TTY with no saved directory session')  # ty: ignore[call-non-callable]
+def step_run_agent_tty_without_saved_directory_session(context):
+    """Run agent start with no directory session to recover."""
+
+    @contextmanager
+    def fake_agent_context(**kwargs):
+        yield agent.AgentContext(
+            agent_name=kwargs["agent_name"],
+            workdir=kwargs["sandbox_cwd"],
+        )
+
+    fresh_record = {
+        "id": "550e8400-e29b-41d4-a716-446655440002",
+        "name": None,
+        "agent": "opencode",
+        "working_directory": os.getcwd(),
+        "native_session_id": None,
+        "agents_used": [],
+        "launch_options": {},
+        "status": "starting",
+    }
+
+    with (
+        patch.object(sys.stdin, "isatty", return_value=True),
+        patch.object(agent_session, "find_latest_session", return_value=None),
+        patch.object(agent_session, "create_session", return_value=fresh_record),
+        patch.object(agent_session, "save_session"),
+        patch.object(agent, "_agent_context", side_effect=fake_agent_context),
+        patch.object(agent, "_dispatch_agent") as dispatch,
+    ):
+        context.run_command(["arkai", "agent", "start"])
+    context.auto_resume_dispatch_call = dispatch.call_args
+    context.auto_resume_created_record = fresh_record
+
+
+@when('I resume Arkai session "{name}" using agent "{agent_name}" in a TTY')  # ty: ignore[call-non-callable]
+def step_resume_arkai_session_with_agent(context, name, agent_name):
+    """Run a named resume with an explicit agent through the CLI."""
+
+    @contextmanager
+    def fake_agent_context(**kwargs):
+        yield agent.AgentContext(
+            agent_name=kwargs["agent_name"],
+            workdir=kwargs["sandbox_cwd"],
+        )
+
+    context.auto_resume_context_agent = None
+
+    def track_dispatch(agent_context, **kwargs):
+        context.auto_resume_context_agent = agent_context.agent_name
+        return None
+
+    with (
+        patch.object(sys.stdin, "isatty", return_value=True),
+        patch.object(agent_session, "find_session", return_value=context.saved_agent_session),
+        patch.object(agent_session, "save_session"),
+        patch.object(agent, "_agent_context", side_effect=fake_agent_context),
+        patch.object(agent, "_dispatch_agent", side_effect=track_dispatch) as dispatch,
+    ):
+        context.run_command(["arkai", "agent", "start", "--session", name, "--agent", agent_name])
+    context.auto_resume_dispatch_call = dispatch.call_args
+
+
+@then("the last directory session was resumed")  # ty: ignore[call-non-callable]
+def step_last_directory_session_resumed(context):
+    """A plain start dispatches a resume of the directory's saved session."""
+    assert context.exit_code == 0, context.stderr
+    assert context.auto_resume_dispatch_call is not None
+    assert context.auto_resume_dispatch_call.kwargs["resume_session"] is True
+    assert (
+        context.auto_resume_dispatch_call.kwargs["session"]["id"]
+        == context.saved_agent_session["id"]
+    )
+
+
+@then("the shared session is reused with the requested agent")  # ty: ignore[call-non-callable]
+def step_shared_session_reused_with_requested_agent(context):
+    """The shared record is reused and launched with the requested agent."""
+    assert context.exit_code == 0, context.stderr
+    assert context.auto_resume_dispatch_call is not None
+    assert (
+        context.auto_resume_dispatch_call.kwargs["session"]["id"]
+        == context.saved_agent_session["id"]
+    )
+    assert context.auto_resume_dispatch_call.kwargs["resume_session"] is False
+    assert context.auto_resume_context_agent == "pi"
+
+
+@then("a new Arkai session was created and started")  # ty: ignore[call-non-callable]
+def step_new_arkai_session_created_and_started(context):
+    """With no directory session a fresh record is created before dispatch."""
+    assert context.exit_code == 0, context.stderr
+    assert context.auto_resume_dispatch_call is not None
+    assert context.auto_resume_dispatch_call.kwargs["resume_session"] is False
+    assert (
+        context.auto_resume_dispatch_call.kwargs["session"]["id"]
+        == context.auto_resume_created_record["id"]
     )
 
 

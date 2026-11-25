@@ -10,6 +10,8 @@ from typing import Any
 
 from arkai import utils
 
+SHARED_SESSION_AGENTS: tuple[str, ...] = ("omp", "pi", "opencode")
+
 
 def get_sessions_dir() -> Path:
     """Return the private root directory for Arkai-managed agent sessions."""
@@ -67,6 +69,7 @@ def create_session(
         "created_at": now,
         "updated_at": now,
         "status": "starting",
+        "agents_used": [],
         "native_session_id": session_id if agent == "claude" else None,
         "launch_options": launch_options,
     }
@@ -100,7 +103,7 @@ def load_session(session_id: str) -> dict[str, Any] | None:
 
 
 def list_sessions(
-    agent: str | None = None,
+    agents: list[str] | None = None,
     working_directory: str | None = None,
 ) -> list[dict[str, Any]]:
     """List Arkai-managed sessions, newest first."""
@@ -113,7 +116,7 @@ def list_sessions(
         session = load_session(path.parent.name)
         if session is None:
             continue
-        if agent and session.get("agent") != agent:
+        if agents and session.get("agent") not in agents:
             continue
         if cwd and session.get("working_directory") != cwd:
             continue
@@ -123,7 +126,7 @@ def list_sessions(
 
 def find_session(
     reference: str,
-    agent: str | None = None,
+    agents: list[str] | None = None,
     working_directory: str | None = None,
 ) -> dict[str, Any] | None:
     """Find a session by full Arkai ID or project-scoped name."""
@@ -132,7 +135,7 @@ def find_session(
         return direct
     matches = [
         session
-        for session in list_sessions(agent=agent, working_directory=working_directory)
+        for session in list_sessions(agents=agents, working_directory=working_directory)
         if session.get("name") == reference
     ]
     if len(matches) > 1:
@@ -141,3 +144,12 @@ def find_session(
             "'arkai agent start --list-session'"
         )
     return matches[0] if matches else None
+
+
+def find_latest_session(
+    agents: list[str] | None,
+    working_directory: str,
+) -> dict[str, Any] | None:
+    """Return the most recently active session for a working directory."""
+    sessions = list_sessions(agents=agents, working_directory=working_directory)
+    return sessions[0] if sessions else None

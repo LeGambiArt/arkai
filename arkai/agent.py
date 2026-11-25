@@ -971,18 +971,19 @@ def cmd_agent(
 
     initial_workdir = os.path.abspath(sandbox_cwd or os.getcwd())
     session: dict | None = None
-    resume_session = False
+    record_resume = False
+    auto_agent: str | None = None
     requested_name = session_name
     if requested_name == "":
         session = _choose_session(initial_workdir, agent_name)
-        resume_session = session is not None
+        record_resume = session is not None
     elif requested_name:
         session = agent_session.find_session(
             requested_name,
-            agent=agent_name,
+            agents=_lookup_agent_set(agent_name),
             working_directory=initial_workdir,
         )
-        if session is None and agent_name:
+        if session is None and agent_name and agent_name not in agent_session.SHARED_SESSION_AGENTS:
             session_for_other_agent = agent_session.find_session(
                 requested_name,
                 working_directory=initial_workdir,
@@ -992,15 +993,39 @@ def cmd_agent(
                     f"Session {requested_name!r} belongs to agent "
                     f"{session_for_other_agent.get('agent')}; cannot resume it with {agent_name}"
                 )
-        resume_session = session is not None
+        record_resume = session is not None
+    else:
+        # No --session: recover the directory's most recent shared session.
+        auto_agent = _select_agent_name(agent_name)
+        if auto_agent in agent_session.SHARED_SESSION_AGENTS:
+            session = agent_session.find_latest_session(
+                _lookup_agent_set(auto_agent), initial_workdir
+            )
+            record_resume = session is not None
 
-    if resume_session and session is not None:
-        if agent_name and agent_name != session.get("agent"):
+    if record_resume and session is not None:
+        session_agent = session.get("agent")
+        if not isinstance(session_agent, str):
+            raise RuntimeError("Session metadata is missing its agent")
+        if (
+            agent_name
+            and agent_name != session_agent
+            and not (
+                agent_name in agent_session.SHARED_SESSION_AGENTS
+                and session_agent in agent_session.SHARED_SESSION_AGENTS
+            )
+        ):
             raise RuntimeError(
-                f"Session {requested_name!r} belongs to agent {session.get('agent')}; "
+                f"Session {requested_name!r} belongs to agent {session_agent}; "
                 f"cannot resume it with {agent_name}"
             )
-        selected_agent_name = session["agent"]
+        if auto_agent is not None:
+            selected_agent_name = auto_agent
+        else:
+            selected_agent_name = agent_name or session_agent
+        # Records created before cross-agent sharing recorded a single agent;
+        # that agent is exactly who has native state in the record.
+        session.setdefault("agents_used", [session_agent])
         saved_options = session.get("launch_options", {})
         no_start_inference = no_start_inference or saved_options.get("no_start_inference", False)
         no_mcp = no_mcp or saved_options.get("no_mcp", False)
@@ -1050,8 +1075,10 @@ def cmd_agent(
         )
 
     assert session is not None
+    native_resume = record_resume and selected_agent_name in session.get("agents_used", [])
     session["status"] = "starting"
     agent_session.save_session(session)
+
     try:
         with _agent_context(
             agent_name=selected_agent_name,
@@ -1077,11 +1104,15 @@ def cmd_agent(
             )
             session["status"] = "active"
             agent_session.save_session(session)
-            _dispatch_agent(ctx, session=session, resume_session=resume_session)
+            _dispatch_agent(ctx, session=session, resume_session=native_resume)
     except BaseException:
         session["status"] = "interrupted"
         agent_session.save_session(session)
         raise
+    session["agent"] = selected_agent_name
+    used = session.setdefault("agents_used", [])
+    if selected_agent_name not in used:
+        used.append(selected_agent_name)
     session["status"] = "paused"
     agent_session.save_session(session)
 
@@ -1114,10 +1145,19 @@ def _format_sessions(sessions: list[dict]) -> str:
     return "\n".join(rows)
 
 
+def _lookup_agent_set(agent_name: str | None) -> list[str] | None:
+    """Return the agent filter for session lookups; shared agents match as a group."""
+    if agent_name is None:
+        return None
+    if agent_name in agent_session.SHARED_SESSION_AGENTS:
+        return list(agent_session.SHARED_SESSION_AGENTS)
+    return [agent_name]
+
+
 def cmd_agent_list_sessions(agent_name: str | None = None, cwd: str | None = None) -> None:
     """List Arkai-managed sessions without starting agent infrastructure."""
     sessions = agent_session.list_sessions(
-        agent=agent_name,
+        agents=_lookup_agent_set(agent_name),
         working_directory=os.path.abspath(cwd) if cwd else None,
     )
     print(_format_sessions(sessions))
@@ -1126,7 +1166,7 @@ def cmd_agent_list_sessions(agent_name: str | None = None, cwd: str | None = Non
 def _choose_session(working_directory: str, agent_name: str | None = None) -> dict | None:
     """Prompt for an existing project session; return None when there are none."""
     sessions = agent_session.list_sessions(
-        agent=agent_name,
+        agents=_lookup_agent_set(agent_name),
         working_directory=working_directory,
     )
     if not sessions:
@@ -1146,7 +1186,7 @@ def _choose_session(working_directory: str, agent_name: str | None = None) -> di
         return sessions[int(selection) - 1]
     session = agent_session.find_session(
         selection,
-        agent=agent_name,
+        agents=_lookup_agent_set(agent_name),
         working_directory=working_directory,
     )
     if session is None:

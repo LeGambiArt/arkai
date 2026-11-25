@@ -2512,15 +2512,15 @@ def test_codex_uses_session_home_and_reuses_user_auth(tmp_path: Path, monkeypatc
 def test_pi_and_omp_resume_from_persistent_session_directories(tmp_path: Path, monkeypatch) -> None:
     """Pi-family agents receive isolated native storage and their resume controls."""
     native_dir = tmp_path / "native"
+    pi_session_dir = native_dir / "pi-sessions"
+    pi_session_dir.mkdir(parents=True)
+    (pi_session_dir / "2026-10-22T00-00-00_pi-native-id.jsonl").write_text("{}\n")
     monkeypatch.setattr(agent_pi, "get_agent_dir", lambda: tmp_path / "pi-agent")
     pi_spec = agent_pi.build_launch_spec(
         "/pi", _cfg(), None, False, str(tmp_path), session_dir=str(native_dir), resume_session=True
     )
-    assert pi_spec.command[pi_spec.command.index("--session-dir") + 1] == str(
-        native_dir / "pi-sessions"
-    )
+    assert pi_spec.command[pi_spec.command.index("--session-dir") + 1] == str(pi_session_dir)
     assert "--continue" in pi_spec.command
-    assert (native_dir / "pi-sessions").is_dir()
 
     omp_agent_dir = tmp_path / "omp-agent"
     monkeypatch.setattr(agent_omp, "get_agent_dir", lambda: omp_agent_dir)
@@ -2540,6 +2540,39 @@ def test_pi_and_omp_resume_from_persistent_session_directories(tmp_path: Path, m
     assert "--resume" in omp_spec.command
     assert omp_spec.command[omp_spec.command.index("--resume") + 1] == "omp-native-id"
     assert (native_dir / "omp-sessions").is_dir()
+
+
+def test_pi_and_omp_withhold_resume_flags_without_stored_native_state(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A shared record without native state for the agent starts a fresh thread."""
+    native_dir = tmp_path / "native"
+    native_dir.mkdir(parents=True)
+    monkeypatch.setattr(agent_pi, "get_agent_dir", lambda: tmp_path / "pi-agent")
+    pi_spec = agent_pi.build_launch_spec(
+        "/pi", _cfg(), None, False, str(tmp_path), session_dir=str(native_dir), resume_session=True
+    )
+    assert pi_spec.command[pi_spec.command.index("--session-dir") + 1] == str(
+        native_dir / "pi-sessions"
+    )
+    assert "--continue" not in pi_spec.command
+
+    omp_agent_dir = tmp_path / "omp-agent"
+    monkeypatch.setattr(agent_omp, "get_agent_dir", lambda: omp_agent_dir)
+    omp_spec = agent_omp.build_launch_spec(
+        "/omp",
+        _cfg(),
+        None,
+        False,
+        str(tmp_path),
+        session_dir=str(native_dir),
+        resume_session=True,
+        native_session_id=None,
+    )
+    assert omp_spec.command[omp_spec.command.index("--session-dir") + 1] == str(
+        native_dir / "omp-sessions"
+    )
+    assert "--resume" not in omp_spec.command
 
 
 def test_omp_captures_native_session_id_after_interactive_exit(tmp_path: Path, monkeypatch) -> None:

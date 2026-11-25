@@ -557,10 +557,8 @@ def build_launch_spec(
 
     if native_session_dir is not None:
         command.extend(["--session-dir", str(native_session_dir)])
-        if resume_session:
-            command.append("--resume")
-            if native_session_id:
-                command.append(native_session_id)
+        if resume_session and native_session_id:
+            command.extend(["--resume", native_session_id])
     command.append("--profile")
     command.append("default")
     command.extend(["--config", str(spelling_config)])

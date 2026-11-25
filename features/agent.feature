@@ -141,6 +141,29 @@ Feature: Agent Execution
     Then the exit code is 0
     And the named Arkai session was resumed
 
+  Scenario: Agent start resumes the directory's last session
+    Given a saved Arkai agent session named "directory-session"
+    When I run "arkai agent start" in a TTY after a saved session for the directory
+    Then the exit code is 0
+    And the last directory session was resumed
+
+  Scenario: Agent start reuses a shared session with another shared agent
+    Given a saved Arkai agent session named "shared-session"
+    When I run "arkai agent start" with "--agent pi" in a TTY after a saved session for the directory
+    Then the exit code is 0
+    And the shared session is reused with the requested agent
+
+  Scenario: Agent start creates a session when the directory has none
+    When I run "arkai agent start" in a TTY with no saved directory session
+    Then the exit code is 0
+    And a new Arkai session was created and started
+
+  Scenario: Agent resumes a named session belonging to another shared agent
+    Given a saved Arkai agent session named "session-to-share"
+    When I resume Arkai session "session-to-share" using agent "pi" in a TTY
+    Then the exit code is 0
+    And the shared session is reused with the requested agent
+
   Scenario: Pi installation can be cancelled
     When I cancel the pi agent installation
     Then the pi agent installation was not run

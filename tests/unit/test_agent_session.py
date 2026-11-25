@@ -47,7 +47,13 @@ def test_list_sessions_filters_by_agent_and_working_directory(tmp_path: Path, mo
     agent_session.create_session("opencode", "three", str(second_dir), {})
 
     assert len(agent_session.list_sessions()) == 3
-    assert [item["name"] for item in agent_session.list_sessions(agent="pi")] == ["two"]
+    assert [item["name"] for item in agent_session.list_sessions(agents=["pi"])] == ["two"]
+    assert sorted(
+        item["name"]
+        for item in agent_session.list_sessions(
+            agents=["pi", "opencode"], working_directory=str(first_dir)
+        )
+    ) == ["one", "two"]
     assert sorted(
         item["name"] for item in agent_session.list_sessions(working_directory=str(first_dir))
     ) == ["one", "two"]
@@ -133,6 +139,8 @@ def test_named_session_resumes_saved_agent_and_working_directory(
             "environment_keys": ["TOKEN"],
         },
     )
+    saved["agents_used"] = ["pi"]
+    agent_session.save_session(saved)
 
     @contextmanager
     def fake_context(**kwargs):
@@ -189,14 +197,244 @@ def test_named_session_creates_new_record_when_name_is_unknown(tmp_path: Path, m
 
 
 def test_named_session_rejects_explicit_agent_mismatch(tmp_path: Path, monkeypatch) -> None:
-    """An agent override cannot silently start a different agent for a saved name."""
+    """A non-shared agent override cannot resume another agent's saved session."""
     sessions_dir = tmp_path / "agent-sessions"
     monkeypatch.setattr(agent_session, "get_sessions_dir", lambda: sessions_dir)
     workdir = tmp_path / "project"
     workdir.mkdir()
     monkeypatch.chdir(workdir)
     monkeypatch.setattr(agent.sys.stdin, "isatty", lambda: True)
-    agent_session.create_session("pi", "topic", str(workdir), {})
+    saved = agent_session.create_session("crush", "topic", str(workdir), {})
+    saved["agents_used"] = ["crush"]
+    agent_session.save_session(saved)
 
-    with pytest.raises(RuntimeError, match="belongs to agent pi"):
+    with pytest.raises(RuntimeError, match="belongs to agent crush"):
+        agent.cmd_agent(agent_name="codex", session_name=saved["id"])
+
+
+def test_shared_agent_starts_fresh_when_only_a_non_shared_session_exists(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A shared agent ignores another agent's records instead of resuming them."""
+    sessions_dir = tmp_path / "agent-sessions"
+    monkeypatch.setattr(agent_session, "get_sessions_dir", lambda: sessions_dir)
+    workdir = tmp_path / "project"
+    workdir.mkdir()
+    monkeypatch.chdir(workdir)
+    monkeypatch.setattr(agent.sys.stdin, "isatty", lambda: True)
+    saved = agent_session.create_session("crush", "topic", str(workdir), {})
+    saved["agents_used"] = ["crush"]
+    agent_session.save_session(saved)
+
+    with (
+        patch.object(agent, "_agent_context", side_effect=_fake_agent_context()),
+        patch.object(agent, "_dispatch_agent") as dispatch,
+    ):
         agent.cmd_agent(agent_name="opencode", session_name="topic")
+
+    assert dispatch.call_args.kwargs["resume_session"] is False
+    assert dispatch.call_args.kwargs["session"]["id"] != saved["id"]
+    assert dispatch.call_args.kwargs["session"]["agent"] == "opencode"
+
+
+def _fake_agent_context():
+    @contextmanager
+    def fake_context(**kwargs):
+        yield agent.AgentContext(agent_name=kwargs["agent_name"], workdir=kwargs["sandbox_cwd"])
+
+    return fake_context
+
+
+def test_auto_resume_picks_newest_shared_session_for_directory(tmp_path: Path, monkeypatch) -> None:
+    """A plain start resumes the directory's most recent shared-session record."""
+    sessions_dir = tmp_path / "agent-sessions"
+    monkeypatch.setattr(agent_session, "get_sessions_dir", lambda: sessions_dir)
+    workdir = tmp_path / "project"
+    workdir.mkdir()
+    monkeypatch.chdir(workdir)
+    monkeypatch.setattr(agent.sys.stdin, "isatty", lambda: True)
+    older = agent_session.create_session("opencode", "older", str(workdir), {})
+    older["agents_used"] = ["opencode"]
+    agent_session.save_session(older)
+    newest = agent_session.create_session("pi", "newer", str(workdir), {})
+    newest["agents_used"] = ["pi"]
+    newest["updated_at"] = "2026-02-01T00:00:00+00:00"
+    agent_session.save_session(newest)
+
+    with (
+        patch.object(agent, "_select_agent_name", return_value="pi"),
+        patch.object(agent, "_agent_context", side_effect=_fake_agent_context()),
+        patch.object(agent, "_dispatch_agent") as dispatch,
+    ):
+        agent.cmd_agent()
+
+    assert dispatch.call_args.kwargs["session"]["id"] == newest["id"]
+    assert dispatch.call_args.kwargs["resume_session"] is True
+
+
+def test_auto_resume_ignores_non_shared_sessions(tmp_path: Path, monkeypatch) -> None:
+    """Records for agents outside the shared set never block a fresh start."""
+    sessions_dir = tmp_path / "agent-sessions"
+    monkeypatch.setattr(agent_session, "get_sessions_dir", lambda: sessions_dir)
+    workdir = tmp_path / "project"
+    workdir.mkdir()
+    monkeypatch.chdir(workdir)
+    monkeypatch.setattr(agent.sys.stdin, "isatty", lambda: True)
+    saved = agent_session.create_session("crush", "work", str(workdir), {})
+
+    with (
+        patch.object(agent, "_select_agent_name", return_value="opencode"),
+        patch.object(agent, "_agent_context", side_effect=_fake_agent_context()),
+        patch.object(agent, "_dispatch_agent") as dispatch,
+    ):
+        agent.cmd_agent()
+
+    assert dispatch.call_args.kwargs["resume_session"] is False
+    assert dispatch.call_args.kwargs["session"]["id"] != saved["id"]
+
+
+def test_auto_resume_creates_session_when_store_is_empty(tmp_path: Path, monkeypatch) -> None:
+    """With no saved directory session a plain start creates a fresh record."""
+    sessions_dir = tmp_path / "agent-sessions"
+    monkeypatch.setattr(agent_session, "get_sessions_dir", lambda: sessions_dir)
+    workdir = tmp_path / "project"
+    workdir.mkdir()
+    monkeypatch.chdir(workdir)
+    monkeypatch.setattr(agent.sys.stdin, "isatty", lambda: True)
+
+    with (
+        patch.object(agent, "_select_agent_name", return_value="opencode"),
+        patch.object(agent, "_agent_context", side_effect=_fake_agent_context()),
+        patch.object(agent, "_dispatch_agent") as dispatch,
+    ):
+        agent.cmd_agent()
+
+    assert dispatch.call_args.kwargs["resume_session"] is False
+    assert dispatch.call_args.kwargs["session"]["name"] is None
+
+
+def test_auto_resume_reuses_record_with_requested_shared_agent(tmp_path: Path, monkeypatch) -> None:
+    """A shared record is resumed by another shared agent without native resume."""
+    sessions_dir = tmp_path / "agent-sessions"
+    monkeypatch.setattr(agent_session, "get_sessions_dir", lambda: sessions_dir)
+    workdir = tmp_path / "project"
+    workdir.mkdir()
+    monkeypatch.chdir(workdir)
+    monkeypatch.setattr(agent.sys.stdin, "isatty", lambda: True)
+    saved = agent_session.create_session("opencode", "shared", str(workdir), {})
+    saved["agents_used"] = ["opencode"]
+    agent_session.save_session(saved)
+
+    with (
+        patch.object(agent, "_agent_context", side_effect=_fake_agent_context()),
+        patch.object(agent, "_dispatch_agent") as dispatch,
+    ):
+        agent.cmd_agent(agent_name="pi")
+
+    assert dispatch.call_args.kwargs["session"]["id"] == saved["id"]
+    assert dispatch.call_args.kwargs["resume_session"] is False
+    reloaded = agent_session.load_session(saved["id"])
+    assert reloaded is not None
+    assert reloaded["agent"] == "pi"
+    assert reloaded["agents_used"] == ["opencode", "pi"]
+
+
+def test_shared_agent_reuses_named_session_of_another_shared_agent(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A named resume crosses shared agents, launching the requested agent."""
+    sessions_dir = tmp_path / "agent-sessions"
+    monkeypatch.setattr(agent_session, "get_sessions_dir", lambda: sessions_dir)
+    workdir = tmp_path / "project"
+    workdir.mkdir()
+    monkeypatch.chdir(workdir)
+    monkeypatch.setattr(agent.sys.stdin, "isatty", lambda: True)
+    saved = agent_session.create_session("opencode", "topic", str(workdir), {})
+    saved["agents_used"] = ["opencode"]
+    agent_session.save_session(saved)
+
+    with (
+        patch.object(agent, "_agent_context", side_effect=_fake_agent_context()) as context,
+        patch.object(agent, "_dispatch_agent") as dispatch,
+    ):
+        agent.cmd_agent(agent_name="pi", session_name="topic")
+
+    assert dispatch.call_args.kwargs["session"]["id"] == saved["id"]
+    assert dispatch.call_args.kwargs["resume_session"] is False
+    assert context.call_args.kwargs["agent_name"] == "pi"
+
+
+def test_legacy_record_without_agents_used_resumes_natively(tmp_path: Path, monkeypatch) -> None:
+    """Records saved before sharing resume natively with their recorded agent."""
+    sessions_dir = tmp_path / "agent-sessions"
+    monkeypatch.setattr(agent_session, "get_sessions_dir", lambda: sessions_dir)
+    workdir = tmp_path / "project"
+    workdir.mkdir()
+    monkeypatch.chdir(workdir)
+    monkeypatch.setattr(agent.sys.stdin, "isatty", lambda: True)
+    saved = agent_session.create_session("opencode", "legacy", str(workdir), {})
+    saved.pop("agents_used")
+    agent_session.save_session(saved)
+
+    with (
+        patch.object(agent, "_agent_context", side_effect=_fake_agent_context()),
+        patch.object(agent, "_dispatch_agent") as dispatch,
+    ):
+        agent.cmd_agent(session_name="legacy")
+
+    assert dispatch.call_args.kwargs["session"]["id"] == saved["id"]
+    assert dispatch.call_args.kwargs["resume_session"] is True
+
+
+def test_find_latest_session_returns_newest_matching_filter(tmp_path: Path, monkeypatch) -> None:
+    """find_latest_session honors recency, agent sets, directories, and emptiness."""
+    sessions_dir = tmp_path / "agent-sessions"
+    monkeypatch.setattr(agent_session, "get_sessions_dir", lambda: sessions_dir)
+    workdir = tmp_path / "project"
+    other_dir = tmp_path / "other"
+    workdir.mkdir()
+    other_dir.mkdir()
+    older = agent_session.create_session("opencode", "older", str(workdir), {})
+    agent_session.create_session("crush", "crushed", str(workdir), {})
+    newest = agent_session.create_session("pi", "newest", str(workdir), {})
+    agent_session.create_session("pi", "elsewhere", str(other_dir), {})
+    # Force deterministic ordering; create_session stamps identical timestamps.
+    older["updated_at"] = "2026-01-01T00:00:00+00:00"
+    agent_session.save_session(older)
+    newest["updated_at"] = "2026-02-01T00:00:00+00:00"
+    agent_session.save_session(newest)
+
+    latest = agent_session.find_latest_session(
+        list(agent_session.SHARED_SESSION_AGENTS), str(workdir)
+    )
+    assert latest is not None
+    assert latest["id"] == newest["id"]
+    only_opencode = agent_session.find_latest_session(["opencode"], str(workdir))
+    assert only_opencode is not None
+    assert only_opencode["id"] == older["id"]
+    assert agent_session.find_latest_session(["crush"], str(other_dir)) is None
+    assert agent_session.find_latest_session(None, str(workdir)) is not None
+
+
+def test_first_run_of_new_record_records_agent_usage(tmp_path: Path, monkeypatch) -> None:
+    """A brand-new record ends paused with exactly its launching agent in use."""
+    sessions_dir = tmp_path / "agent-sessions"
+    monkeypatch.setattr(agent_session, "get_sessions_dir", lambda: sessions_dir)
+    workdir = tmp_path / "project"
+    workdir.mkdir()
+    monkeypatch.chdir(workdir)
+    monkeypatch.setattr(agent.sys.stdin, "isatty", lambda: True)
+
+    with (
+        patch.object(agent, "_select_agent_name", return_value="opencode"),
+        patch.object(agent, "_agent_context", side_effect=_fake_agent_context()),
+        patch.object(agent, "_dispatch_agent") as dispatch,
+    ):
+        agent.cmd_agent()
+
+    session = dispatch.call_args.kwargs["session"]
+    assert session["agents_used"] == ["opencode"]
+    reloaded = agent_session.load_session(session["id"])
+    assert reloaded is not None
+    assert reloaded["agents_used"] == ["opencode"]
+    assert reloaded["status"] == "paused"

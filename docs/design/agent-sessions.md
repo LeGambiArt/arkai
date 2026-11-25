@@ -12,9 +12,15 @@ agent's transcript format or session database.
 `arkai.agent_session` stores one JSON metadata file per Arkai session
 under the Arkai state directory's `agent-sessions` folder. A record
 includes an Arkai UUID, optional project-scoped name, agent, working
-directory, timestamps, status, launch options, and an optional native
-session identifier. The per-session `native` directory is available to
-adapters that need private agent state.
+directory, timestamps, status, launch options, an `agents_used` list, and
+an optional native session identifier. The per-session `native` directory
+is available to adapters that need private agent state.
+
+`agents_used` records every agent that has completed a run inside the
+record and therefore has native state under its `native` directory; it
+gates native resume. Records written before this field existed are
+migrated lazily to `[<recorded agent>]`, which is exact for their
+single-agent lifetime.
 
 Directories are created with owner-only permissions; metadata writes use
 a private temporary file and atomic replacement. Session transcripts
@@ -22,13 +28,29 @@ remain in the native agent's normal session store.
 
 ## Lookup and resume behavior
 
+The agents `omp`, `pi`, and `opencode` (`SHARED_SESSION_AGENTS`) share
+one session record per working directory: any of them may resume the
+record, launching the requested agent into it while each agent keeps its
+own native thread. Sharing is at the record level only; native transcript
+formats are not interchangeable.
+
 - Full Arkai IDs can be loaded directly.
-- Names are resolved within the working directory and optional agent
-  filter. Ambiguous names require the full ID.
+- Names are resolved within the working directory and an agent filter
+  (`agents=...`); a shared agent matches the whole shared set, other
+  agents match exactly themselves. Ambiguous names require the full ID.
+- `find_latest_session(agents, working_directory)` returns the record
+  with the highest `updated_at`, used by plain `arkai agent start`.
+- A plain `arkai agent start` (no `--session`) with a shared effective
+  agent auto-resumes the directory's most recent shared record and
+  creates a new one when none exists. Other agents always start fresh
+  unless a session is named.
 - Listing does not start agent infrastructure.
 - Resume restores the recorded working directory and saved launch
   options, then uses current Arkai configuration and available inference
   services. A session is not pinned to the original model or server.
+- Native resume flags (`--continue`, `--resume`, `--session-id`) are
+  passed only when the selected agent appears in `agents_used`; adapters
+  additionally withhold them when no native state is present.
 - Sandbox environment overrides are not persisted; callers must supply
   them again when resuming.
 
