@@ -921,3 +921,39 @@ def test_build_sandbox_prefix_uses_arapuca_when_available(tmp_path: Path, monkey
 
     assert prefix == ["/arapuca", "run", "--"]
     build.assert_called_once()
+
+
+def test_host_fallback_keeps_the_caller_command_without_symlink_resolution() -> None:
+    """The host fallback runs the caller's command, not its symlink-resolved target.
+
+    Distributions like Ubuntu 26 install GNU coreutils through symlinks
+    (rm -> gnurm), so resolving the host path yields /usr/bin/gnurm. Only the
+    Arapuca sandbox needs the resolved target, since it mounts the real file
+    read-only and restricts PATH to the mount directories; the host fallback
+    must execute the command exactly as the caller resolved it. The resolved
+    tool map is injected instead of built from the host filesystem so the test
+    creates no files or symlinks and reproduces on every machine.
+    """
+    commands: list[list[str]] = []
+
+    def run_command(command: list[str], **kwargs) -> tuple[int, str, str]:
+        commands.append(command)
+        return 0, "", ""
+
+    with (
+        patch.object(tools, "_arapuca_available", return_value=False),
+        patch.object(
+            tools,
+            "_build_sandbox_prefix",
+            return_value=([], {"env": "/usr/bin/env", "rm": "/usr/bin/gnurm"}, {}),
+        ),
+        patch.object(tools.utils, "run_command", side_effect=run_command),
+    ):
+        tools.run_sandboxed_tool(
+            Path("/install"),
+            ("rm",),
+            ["/usr/bin/rm", "-rf", "/install/bin"],
+            allow_network=False,
+        )
+
+    assert commands[0][0] == "/usr/bin/rm"

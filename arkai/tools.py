@@ -428,7 +428,11 @@ def run_sandboxed_tool(
         read_only_root=read_only_root,
         child_environment=child_environment,
     )
-    if command and Path(command[0]).name in tool_paths:
+    # Inside Arapuca the command must target the resolved host file that the
+    # sandbox mounts read-only. On the host fallback the caller's path is kept
+    # as-is: distributions like Ubuntu 26 symlink coreutils (rm -> gnurm), and
+    # resolving would rewrite host commands to the symlink target.
+    if prefix and command and Path(command[0]).name in tool_paths:
         command = [tool_paths[Path(command[0]).name], *command[1:]]
     return _run_sandboxed(
         prefix,
