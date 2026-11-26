@@ -59,6 +59,13 @@ formats are not interchangeable.
   user messages, so no extra storage is needed.
 - Sandbox environment overrides are not persisted; callers must supply
   them again when resuming.
+- `-S` / `--reset-session` deletes the directory's current session (the
+  same record auto-resume would use) via `delete_session`, which removes
+  the record's metadata and its entire `native` directory including
+  transcripts and OMP prompt history, then starts a new record in its
+  place without resuming older ones. It is mutually exclusive with
+  `--session` and `--list-session`, and only targets shared-set records;
+  with a non-shared effective agent it is a plain fresh start.
 
 ## Implementation map
 

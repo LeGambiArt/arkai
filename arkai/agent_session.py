@@ -2,6 +2,7 @@
 
 import json
 import os
+import shutil
 import tempfile
 import uuid
 from datetime import datetime, timezone
@@ -83,6 +84,11 @@ def save_session(session: dict[str, Any]) -> None:
     """Persist an updated session record."""
     session["updated_at"] = _now()
     _write_session(session)
+
+
+def delete_session(session_id: str) -> None:
+    """Delete one Arkai session record and all of its native storage."""
+    shutil.rmtree(get_session_dir(session_id))
 
 
 def load_session(session_id: str) -> dict[str, Any] | None:

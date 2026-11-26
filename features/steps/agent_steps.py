@@ -1123,6 +1123,53 @@ def step_new_arkai_session_created_and_started(context):
     )
 
 
+@when('I run "arkai agent start" with "{flags}" in a TTY resetting the directory session')  # ty: ignore[call-non-callable]
+def step_run_agent_tty_resetting_directory_session(context, flags):
+    """Run agent start with -S against a real isolated session store."""
+
+    @contextmanager
+    def fake_agent_context(**kwargs):
+        yield agent.AgentContext(
+            agent_name=kwargs["agent_name"],
+            workdir=kwargs["sandbox_cwd"],
+        )
+
+    sessions_dir = Path(tempfile.mkdtemp(prefix="arkai-behave-reset-"))
+    saved = dict(context.saved_agent_session)
+    context.reset_saved_id = saved["id"]
+    saved["working_directory"] = os.getcwd()
+    filesystem_patches = [context.mkdir_patch, context.makedirs_patch, context.path_mkdir_patch]
+    for filesystem_patch in filesystem_patches:
+        filesystem_patch.stop()
+    try:
+        with patch.object(agent_session, "get_sessions_dir", lambda: sessions_dir):
+            agent_session.save_session(saved)
+        with (
+            patch.object(sys.stdin, "isatty", return_value=True),
+            patch.object(agent_session, "get_sessions_dir", lambda: sessions_dir),
+            patch.object(agent, "_select_agent_name", return_value="opencode"),
+            patch.object(agent, "_agent_context", side_effect=fake_agent_context),
+            patch.object(agent, "_dispatch_agent") as dispatch,
+        ):
+            context.run_command(["arkai", "agent", "start", *shlex.split(flags)])
+    finally:
+        for filesystem_patch in filesystem_patches:
+            filesystem_patch.start()
+        context.reset_deleted = not (sessions_dir / saved["id"]).exists()
+        shutil.rmtree(sessions_dir, ignore_errors=True)
+    context.auto_resume_dispatch_call = dispatch.call_args
+
+
+@then("the directory session was reset and replaced by a new one")  # ty: ignore[call-non-callable]
+def step_directory_session_was_reset(context):
+    """-S deletes the directory's session and starts a new record."""
+    assert context.exit_code == 0, context.stderr
+    assert context.auto_resume_dispatch_call is not None
+    assert context.auto_resume_dispatch_call.kwargs["resume_session"] is False
+    assert context.auto_resume_dispatch_call.kwargs["session"]["id"] != context.reset_saved_id
+    assert context.reset_deleted
+
+
 @when('I run "arkai agent start" with stdin piped')  # ty: ignore[call-non-callable]
 def step_run_agent_piped(context):
     """Run arkai agent start with stdin piped (non-interactive)."""

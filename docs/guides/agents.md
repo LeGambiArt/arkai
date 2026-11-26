@@ -40,7 +40,11 @@ arkai agent start --session
 When `arkai agent start` is run without `--session`, it resumes the most
 recent session recorded for the current directory, or creates a new one when
 none exists. To start a fresh session explicitly, give it a new name with
-`--session NEW-NAME`. Session names are scoped to a working directory.
+`--session NEW-NAME`, or reset the directory's current session with `-S`
+(also `--reset-session`): the current session — metadata, native threads,
+transcripts, and OMP prompt history — is permanently deleted and a new one
+is started in its place. There is no confirmation prompt and no undo.
+Session names are scoped to a working directory.
 
 Arkai stores session metadata and private native state under its state
 directory; the transcript itself remains in the agent's native store. Sessions

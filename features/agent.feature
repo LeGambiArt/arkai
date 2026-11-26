@@ -158,6 +158,12 @@ Feature: Agent Execution
     Then the exit code is 0
     And a new Arkai session was created and started
 
+  Scenario: Agent start resets the directory session with -S
+    Given a saved Arkai agent session named "directory-session"
+    When I run "arkai agent start" with "-S" in a TTY resetting the directory session
+    Then the exit code is 0
+    And the directory session was reset and replaced by a new one
+
   Scenario: Agent resumes a named session belonging to another shared agent
     Given a saved Arkai agent session named "session-to-share"
     When I resume Arkai session "session-to-share" using agent "pi" in a TTY

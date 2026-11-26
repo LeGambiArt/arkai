@@ -42,6 +42,7 @@ def exec_cmd(args: argparse.Namespace | None = None) -> None:
                 getattr(args, "cloud", None),
                 getattr(args, "local", False),
                 session_name=args.session_name,  # ty: ignore[missing-union-attribute]
+                reset_session=args.reset_session,  # ty: ignore[missing-union-attribute]
             )
         case "prompt":
             cmd_agent_prompt(
@@ -133,6 +134,13 @@ def ingest_cli_options(subparsers: argparse._SubParsersAction) -> None:
         dest="session_name",
         metavar="NAME",
         help="Resume a session by name/ID, create it if NAME is new, or choose one if omitted",
+    )
+    session_options.add_argument(
+        "-S",
+        "--reset-session",
+        action="store_true",
+        help="Delete the directory's current session (including transcripts and prompt "
+        "history) and start a new one",
     )
     agent_start_parser.add_argument(
         "--cloud",
@@ -946,6 +954,7 @@ def cmd_agent(
     cloud_services: list[str] | None = None,
     local_inference: bool = False,
     session_name: str | None = None,
+    reset_session: bool = False,
 ) -> None:
     """Start interactive agent session (requires TTY).
 
@@ -961,6 +970,7 @@ def cmd_agent(
         sandbox_profile: Use specific sandbox profile for this run
         sandbox_volume: List of volumes to mount in the sandbox
         local_inference: Force local inference, overriding agent.mode
+        reset_session: Delete the directory's current session and start a new one
 
     Raises:
         RuntimeError: If not in TTY or config invalid
@@ -998,10 +1008,21 @@ def cmd_agent(
         # No --session: recover the directory's most recent shared session.
         auto_agent = _select_agent_name(agent_name)
         if auto_agent in agent_session.SHARED_SESSION_AGENTS:
-            session = agent_session.find_latest_session(
-                _lookup_agent_set(auto_agent), initial_workdir
-            )
-            record_resume = session is not None
+            if reset_session:
+                current = agent_session.find_latest_session(
+                    _lookup_agent_set(auto_agent), initial_workdir
+                )
+                if current is not None:
+                    agent_session.delete_session(current["id"])
+                    utils.info(
+                        "Deleted session "
+                        f"{current.get('name') or current['id'][:8]} for {initial_workdir}."
+                    )
+            else:
+                session = agent_session.find_latest_session(
+                    _lookup_agent_set(auto_agent), initial_workdir
+                )
+                record_resume = session is not None
 
     if record_resume and session is not None:
         session_agent = session.get("agent")
