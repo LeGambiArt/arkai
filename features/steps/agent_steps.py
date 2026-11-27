@@ -1134,14 +1134,23 @@ def step_run_agent_tty_resetting_directory_session(context, flags):
             workdir=kwargs["sandbox_cwd"],
         )
 
-    sessions_dir = Path(tempfile.mkdtemp(prefix="arkai-behave-reset-"))
-    saved = dict(context.saved_agent_session)
-    context.reset_saved_id = saved["id"]
-    saved["working_directory"] = os.getcwd()
-    filesystem_patches = [context.mkdir_patch, context.makedirs_patch, context.path_mkdir_patch]
+    filesystem_patches = [
+        context.exists_patch,
+        context.open_patch,
+        context.makedirs_patch,
+        context.mkdir_patch,
+        context.path_mkdir_patch,
+        context.glob_patch,
+        context.listdir_patch,
+        context.remove_patch,
+    ]
     for filesystem_patch in filesystem_patches:
         filesystem_patch.stop()
     try:
+        sessions_dir = Path(tempfile.mkdtemp(prefix="arkai-behave-reset-"))
+        saved = dict(context.saved_agent_session)
+        context.reset_saved_id = saved["id"]
+        saved["working_directory"] = os.getcwd()
         with patch.object(agent_session, "get_sessions_dir", lambda: sessions_dir):
             agent_session.save_session(saved)
         with (
@@ -1155,8 +1164,9 @@ def step_run_agent_tty_resetting_directory_session(context, flags):
     finally:
         for filesystem_patch in filesystem_patches:
             filesystem_patch.start()
-        context.reset_deleted = not (sessions_dir / saved["id"]).exists()
-        shutil.rmtree(sessions_dir, ignore_errors=True)
+        if "sessions_dir" in locals():
+            context.reset_deleted = not (sessions_dir / saved["id"]).exists()
+            shutil.rmtree(sessions_dir, ignore_errors=True)
     context.auto_resume_dispatch_call = dispatch.call_args
 
 
@@ -1164,10 +1174,11 @@ def step_run_agent_tty_resetting_directory_session(context, flags):
 def step_directory_session_was_reset(context):
     """-S deletes the directory's session and starts a new record."""
     assert context.exit_code == 0, context.stderr
-    assert context.auto_resume_dispatch_call is not None
-    assert context.auto_resume_dispatch_call.kwargs["resume_session"] is False
-    assert context.auto_resume_dispatch_call.kwargs["session"]["id"] != context.reset_saved_id
-    assert context.reset_deleted
+    assert context.auto_resume_dispatch_call is not None, "agent start did not dispatch"
+    dispatched = context.auto_resume_dispatch_call.kwargs
+    assert dispatched["resume_session"] is False, "reset dispatch resumed an existing record"
+    assert dispatched["session"]["id"] != context.reset_saved_id, "reset reused the deleted record"
+    assert context.reset_deleted, "the directory session record was not deleted"
 
 
 @when('I run "arkai agent start" with stdin piped')  # ty: ignore[call-non-callable]
